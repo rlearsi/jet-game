@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { getTerrainHeight, WATER_LEVEL } from './world.js?v=5';
+import { getTerrainHeight, WATER_LEVEL } from './world.js?v=6';
 
 function createDitherExplosionMat(hex) {
   return new THREE.ShaderMaterial({
@@ -249,20 +249,21 @@ export class MissileSystem {
         this.spawnParticle(pos, vel, 0.55 + Math.random() * 0.5, 0.36 + Math.random() * 0.2, 0xeef9fc, 1.8, true);
       }
     } else {
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 7; i++) {
         const vel = new THREE.Vector3(
-          (Math.random() - 0.5) * 14,
-          5 + Math.random() * 12,
-          (Math.random() - 0.5) * 14
+          (Math.random() - 0.5) * 18,
+          7 + Math.random() * 16,
+          (Math.random() - 0.5) * 18
         );
-        const col = Math.random() < 0.55 ? 0xfff088 : 0xf27d30;
-        this.spawnParticle(pos, vel, 0.65 + Math.random() * 0.6, 0.32 + Math.random() * 0.22, col, 2.0, true);
+        const r = Math.random();
+        const col = r < 0.4 ? 0xfff088 : r < 0.72 ? 0xf27d30 : 0x56485c;
+        this.spawnParticle(pos, vel, 0.75 + Math.random() * 0.75, 0.4 + Math.random() * 0.3, col, 2.0, true);
       }
     }
   }
 
   spawnImpact(pos, isWater, time) {
-    this.shake = Math.max(this.shake, isWater ? 0.3 : 0.72);
+    this.shake = Math.max(this.shake, isWater ? 0.3 : 0.85);
     this.sound.playImpact(isWater);
 
     if (isWater) {
@@ -279,15 +280,16 @@ export class MissileSystem {
         this.spawnParticle(pos, vel, 0.9 + Math.random() * 1.2, 0.65 + Math.random() * 0.45, col, 2.2, true);
       }
     } else {
-      for (let i = 0; i < 20; i++) {
+      // Big mountain-carving fireball + flying rock chunks
+      for (let i = 0; i < 28; i++) {
         const vel = new THREE.Vector3(
-          (Math.random() - 0.5) * 32,
-          8 + Math.random() * 26,
-          (Math.random() - 0.5) * 32
+          (Math.random() - 0.5) * 42,
+          12 + Math.random() * 34,
+          (Math.random() - 0.5) * 42
         );
         const r = Math.random();
-        const col = r < 0.3 ? 0xfff08a : r < 0.65 ? 0xf27d30 : r < 0.85 ? 0xd94126 : 0xaba3ba;
-        this.spawnParticle(pos, vel, 1.4 + Math.random() * 1.8, 0.7 + Math.random() * 0.55, col, 2.8, true);
+        const col = r < 0.25 ? 0xfff08a : r < 0.55 ? 0xf27d30 : r < 0.75 ? 0xd94126 : r < 0.9 ? 0x5c5064 : 0xaba3ba;
+        this.spawnParticle(pos, vel, 1.6 + Math.random() * 2.4, 0.8 + Math.random() * 0.65, col, 2.9, true);
       }
     }
   }
@@ -348,23 +350,33 @@ export class MissileSystem {
 
       let hit = false;
       let isWater = false;
-      if (b.pos.y <= WATER_LEVEL) {
-        hit = true;
-        isWater = true;
-        b.pos.y = WATER_LEVEL + 0.35;
-      } else {
-        const th = getTerrainHeight(b.pos.x, b.pos.z);
-        if (b.pos.y <= th) {
+      // Sweep segment against terrain & water so fast rounds bite into steep mountain peaks!
+      for (let k = 1; k <= 5; k++) {
+        const sp = bPrev.clone().lerp(b.pos, k / 5);
+        if (sp.y <= WATER_LEVEL) {
           hit = true;
-          b.pos.y = th + 0.4;
+          isWater = true;
+          b.pos.set(sp.x, WATER_LEVEL + 0.35, sp.z);
+          break;
+        }
+        const th = getTerrainHeight(sp.x, sp.z);
+        if (sp.y <= th) {
+          hit = true;
+          b.pos.set(sp.x, th + 0.4, sp.z);
+          break;
         }
       }
 
       if (hit || b.life <= 0) {
         if (hit) {
           this.spawnCannonImpact(b.pos, isWater, time);
-          // Splash destruction even if hitting the ground/water right beside a tree, house, or ship!
-          this.destroyAt(b.pos, 7.5, time);
+          if (!isWater) {
+            const hl = Math.hypot(b.vel.x, b.vel.z) || 1;
+            // Carve craters & trenches into mountains with cannon bursts!
+            this.world.deformTerrain(b.pos.x, b.pos.z, 18, 10.5, b.vel.x / hl, b.vel.z / hl);
+          }
+          // Splash destruction for any trees, houses, boats or ships on/beside the blast!
+          this.destroyAt(b.pos, isWater ? 8.5 : 16, time);
         }
         this.scene.remove(b.mesh);
         this.bullets.splice(i, 1);
@@ -400,7 +412,11 @@ export class MissileSystem {
       }
       if (directHit) {
         this.spawnImpact(m.pos, false, time);
-        this.destroyAt(m.pos, 36, time);
+        const hl = Math.hypot(m.vel.x, m.vel.z) || 1;
+        if (m.pos.y < getTerrainHeight(m.pos.x, m.pos.z) + 22) {
+          this.world.deformTerrain(m.pos.x, m.pos.z, 46, 32, m.vel.x / hl, m.vel.z / hl);
+        }
+        this.destroyAt(m.pos, 46, time);
         this.scene.remove(m.mesh);
         this.missiles.splice(i, 1);
         continue;
@@ -431,23 +447,39 @@ export class MissileSystem {
       let hit = false;
       let isWater = false;
 
-      if (m.pos.y <= WATER_LEVEL) {
-        hit = true;
-        isWater = true;
-        m.pos.y = WATER_LEVEL + 0.5;
-      } else {
-        const th = getTerrainHeight(m.pos.x, m.pos.z);
-        if (m.pos.y <= th) {
+      // Sweep segment against mountain walls & ocean surface
+      for (let k = 1; k <= 6; k++) {
+        const sp = mPrev.clone().lerp(m.pos, k / 6);
+        if (sp.y <= WATER_LEVEL) {
           hit = true;
-          m.pos.y = th + 0.6;
+          isWater = true;
+          m.pos.set(sp.x, WATER_LEVEL + 0.5, sp.z);
+          break;
+        }
+        const th = getTerrainHeight(sp.x, sp.z);
+        if (sp.y <= th) {
+          hit = true;
+          m.pos.set(sp.x, th + 0.6, sp.z);
+          break;
         }
       }
 
       if (hit || m.life <= 0) {
         if (hit) {
           this.spawnImpact(m.pos, isWater, time);
+          if (!isWater) {
+            const hl = Math.hypot(m.vel.x, m.vel.z) || 1;
+            // Blast massive holes & passes straight through mountains!
+            this.world.deformTerrain(m.pos.x, m.pos.z, 52, 38, m.vel.x / hl, m.vel.z / hl);
+            this.burners.push({
+              pos: new THREE.Vector3(m.pos.x, Math.max(WATER_LEVEL + 0.8, getTerrainHeight(m.pos.x, m.pos.z) + 1.0), m.pos.z),
+              life: 8.5,
+              acc: 0,
+              big: true,
+            });
+          }
           // Always blast nearby ships, boats, trees, houses & structures on BOTH water & land!
-          this.destroyAt(m.pos, 36, time);
+          this.destroyAt(m.pos, 48, time);
         }
         this.scene.remove(m.mesh);
         this.missiles.splice(i, 1);

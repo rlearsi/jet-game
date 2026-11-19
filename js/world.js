@@ -4,6 +4,13 @@ export const WORLD_SIZE = 2800;
 export const WATER_LEVEL = 0.0;
 export const SUN_DIR = new THREE.Vector3(-0.62, 0.34, -0.71).normalize();
 
+// Live deformable terrain grid state (shared so flight collision, missiles, radar & water stay in sync!)
+const TERRAIN_SEGS = 280;
+const TERRAIN_STRIDE = TERRAIN_SEGS + 1;
+const CELL_SIZE = WORLD_SIZE / TERRAIN_SEGS;
+let liveHeights = null;
+let baseHeights = null;
+
 function mulberry32(seed) {
   let a = seed >>> 0;
   return function () {
@@ -51,15 +58,9 @@ function ridgeNoise(x, z) {
 }
 
 /**
- * Vast multi-biome coastal archipelago heightmap:
- * - Sweeping central turquoise bays, coral lagoons & sea stacks
- * - Autumn-forested coastal hills & emerald pine headlands
- * - Towering Eastern & Northern snow-capped Alpine ranges
- * - Northwestern volcanic caldera peak
- * - Southwestern stepped terracotta canyon mesas
- * - Flat coastal airstrip plateau at (-175, 115)
+ * Procedural base heightmap before player craters / mountain excavations.
  */
-export function getTerrainHeight(x, z) {
+export function getBaseTerrainHeight(x, z) {
   const nLarge = fbm(x * 0.0017 + 3.1, z * 0.0017 - 1.7, 4);
   const nMed = fbm(x * 0.0052 - 5.2, z * 0.0052 + 4.3, 3);
   const nDetail = fbm(x * 0.015 + 1.4, z * 0.015 + 2.8, 2);
@@ -164,6 +165,32 @@ export function getTerrainHeight(x, z) {
   return base;
 }
 
+/**
+ * Live terrain elevation at (x, z) with bilinear interpolation over the deformable height grid.
+ * Reflects all holes, trenches, and craters blasted into mountains in real time!
+ */
+export function getTerrainHeight(x, z) {
+  if (!liveHeights) return getBaseTerrainHeight(x, z);
+  const gx = ((x / WORLD_SIZE) + 0.5) * TERRAIN_SEGS;
+  const gz = ((z / WORLD_SIZE) + 0.5) * TERRAIN_SEGS;
+  if (gx < 0 || gx >= TERRAIN_SEGS || gz < 0 || gz >= TERRAIN_SEGS) {
+    return getBaseTerrainHeight(x, z);
+  }
+  const ix = Math.floor(gx);
+  const iz = Math.floor(gz);
+  const fx = gx - ix;
+  const fz = gz - iz;
+  const row0 = iz * TERRAIN_STRIDE;
+  const row1 = row0 + TERRAIN_STRIDE;
+  const h00 = liveHeights[row0 + ix];
+  const h10 = liveHeights[row0 + ix + 1];
+  const h01 = liveHeights[row1 + ix];
+  const h11 = liveHeights[row1 + ix + 1];
+  const top = h00 + (h10 - h00) * fx;
+  const bot = h01 + (h11 - h01) * fx;
+  return top + (bot - top) * fz;
+}
+
 function buildHeightTexture() {
   const size = 512;
   const data = new Uint8Array(size * size * 4);
@@ -185,12 +212,29 @@ function buildHeightTexture() {
   tex.magFilter = THREE.LinearFilter;
   tex.minFilter = THREE.LinearFilter;
   tex.needsUpdate = true;
-  return tex;
+  return { tex, data, size };
 }
 
 export function buildWorld(scene) {
   const rand = mulberry32(90210);
-  const heightTex = buildHeightTexture();
+
+  // Initialize live deformable heightmap arrays first so buildHeightTexture & objects align cleanly
+  liveHeights = new Float32Array(TERRAIN_STRIDE * TERRAIN_STRIDE);
+  baseHeights = new Float32Array(TERRAIN_STRIDE * TERRAIN_STRIDE);
+  const scorchData = new Float32Array(TERRAIN_STRIDE * TERRAIN_STRIDE);
+  for (let iz = 0; iz <= TERRAIN_SEGS; iz++) {
+    const z = ((iz / TERRAIN_SEGS) - 0.5) * WORLD_SIZE;
+    for (let ix = 0; ix <= TERRAIN_SEGS; ix++) {
+      const x = ((ix / TERRAIN_SEGS) - 0.5) * WORLD_SIZE;
+      const h = getBaseTerrainHeight(x, z);
+      const idx = iz * TERRAIN_STRIDE + ix;
+      liveHeights[idx] = h;
+      baseHeights[idx] = h;
+    }
+  }
+
+  const heightTexObj = buildHeightTexture();
+  const heightTex = heightTexObj.tex;
 
   const MAX_CLOUDS = 24;
   const cloudShadowUniforms = [];
@@ -294,21 +338,20 @@ export function buildWorld(scene) {
   scene.add(new THREE.Mesh(skyGeo, skyMat));
 
   // =========================================================================
-  // 2. MULTI-BIOME TERRAIN SHADER
-  //    (Golden dunes, Autumn crimson/gold forests, Emerald pines, Flower meadows,
-  //     Terracotta canyon mesas, Volcanic basalt + lava fissures, Alpine snow!)
+  // 2. DEFORMABLE MULTI-BIOME TERRAIN SHADER
+  //    (Supports blasting real craters & holes through mountains with scorched rock!)
   // =========================================================================
-  const segs = 280;
-  const terrainGeo = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE, segs, segs);
+  const terrainGeo = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE, TERRAIN_SEGS, TERRAIN_SEGS);
   terrainGeo.rotateX(-Math.PI / 2);
 
   const posAttr = terrainGeo.attributes.position;
   for (let i = 0; i < posAttr.count; i++) {
-    const x = posAttr.getX(i);
-    const z = posAttr.getZ(i);
-    posAttr.setY(i, getTerrainHeight(x, z));
+    posAttr.setY(i, liveHeights[i]);
   }
+  const scorchAttr = new THREE.BufferAttribute(scorchData, 1);
+  terrainGeo.setAttribute('aScorch', scorchAttr);
   terrainGeo.computeVertexNormals();
+  const normAttr = terrainGeo.attributes.normal;
 
   const terrainMat = new THREE.ShaderMaterial({
     uniforms: {
@@ -318,9 +361,12 @@ export function buildWorld(scene) {
       uTime: { value: 0 },
     },
     vertexShader: `
+      attribute float aScorch;
       varying vec3 vWorldPos;
       varying vec3 vNormal;
+      varying float vScorch;
       void main() {
+        vScorch = aScorch;
         vec4 wp = modelMatrix * vec4(position, 1.0);
         vWorldPos = wp.xyz;
         vNormal = normalize(mat3(modelMatrix) * normal);
@@ -334,6 +380,7 @@ export function buildWorld(scene) {
       uniform float uTime;
       varying vec3 vWorldPos;
       varying vec3 vNormal;
+      varying float vScorch;
 
       float hash(vec2 p) {
         return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
@@ -466,6 +513,18 @@ export function buildWorld(scene) {
         float snowLine = 112.0 + (biomeA - 0.5) * 22.0 - slope * 24.0;
         float snowMask = smoothstep(snowLine, snowLine + 16.0, h) * (1.0 - volcanoMask * 0.9) * (1.0 - canyonMask);
         baseCol = mix(baseCol, colSnow, snowMask);
+
+        // 7. Blasted craters & excavated mountain holes (charred fractured rock + glowing embers!)
+        if (vScorch > 0.04) {
+          vec3 craterRock = mix(vec3(0.24, 0.20, 0.28), vec3(0.46, 0.36, 0.38), step(0.45, stipple * 0.65 + fineCluster * 0.35));
+          float scorchEdge = step(1.0 - clamp(vScorch * 1.15, 0.0, 1.0), stipple * 0.55 + 0.25);
+          baseCol = mix(baseCol, craterRock, clamp(vScorch * 0.85 + scorchEdge * 0.35, 0.0, 1.0));
+          // Hot embers deep inside freshly blasted rock craters
+          if (vScorch > 0.68 && stipple > 0.76) {
+            float emberPulse = 0.7 + 0.3 * sin(uTime * 4.5 + p.x * 0.2);
+            baseCol = mix(baseCol, vec3(1.0, 0.45, 0.14) * emberPulse, (vScorch - 0.68) * 2.2);
+          }
+        }
 
         // Stepped sunset cel-lighting with lavender-purple shadows
         float ndl = dot(N, normalize(uSunDir));
@@ -1181,8 +1240,140 @@ export function buildWorld(scene) {
     return best;
   }
 
+  // Real-time terrain deformation: carves craters, trenches & holes right through mountains!
+  // Updates local vertex heights, local normals (fast 60fps), scorch shader mask, and ocean heightTex!
+  function deformTerrain(wx, wz, radius, depth, dirX = 0, dirZ = 0) {
+    // Push excavation slightly inward along projectile direction so shooting mountain walls bites deep!
+    const cxWorld = wx + dirX * radius * 0.25;
+    const czWorld = wz + dirZ * radius * 0.25;
+
+    const gxCenter = ((cxWorld / WORLD_SIZE) + 0.5) * TERRAIN_SEGS;
+    const gzCenter = ((czWorld / WORLD_SIZE) + 0.5) * TERRAIN_SEGS;
+    const cellRadius = Math.ceil(radius / CELL_SIZE) + 1;
+
+    const ixMin = Math.max(1, Math.floor(gxCenter - cellRadius));
+    const ixMax = Math.min(TERRAIN_SEGS - 1, Math.ceil(gxCenter + cellRadius));
+    const izMin = Math.max(1, Math.floor(gzCenter - cellRadius));
+    const izMax = Math.min(TERRAIN_SEGS - 1, Math.ceil(gzCenter + cellRadius));
+
+    if (ixMin > ixMax || izMin > izMax) return false;
+
+    let changed = false;
+    const rSq = radius * radius;
+
+    for (let iz = izMin; iz <= izMax; iz++) {
+      const vz = ((iz / TERRAIN_SEGS) - 0.5) * WORLD_SIZE;
+      const dz = vz - czWorld;
+      const row = iz * TERRAIN_STRIDE;
+      for (let ix = ixMin; ix <= ixMax; ix++) {
+        const vx = ((ix / TERRAIN_SEGS) - 0.5) * WORLD_SIZE;
+        const dx = vx - cxWorld;
+        const dSq = dx * dx + dz * dz;
+        if (dSq >= rSq) continue;
+
+        const t = Math.sqrt(dSq) / radius;
+        const idx = row + ix;
+        const cragVar = 0.84 + 0.32 * hash2(ix * 1.7, iz * 2.3);
+        const carve = Math.pow(1.0 - t * t, 1.35) * depth * cragVar;
+
+        const newH = Math.max(-34.0, liveHeights[idx] - carve);
+        if (newH < liveHeights[idx] - 0.01) {
+          liveHeights[idx] = newH;
+          posAttr.setY(idx, newH);
+          scorchData[idx] = Math.min(1.0, scorchData[idx] + Math.pow(1.0 - t, 0.72) * 1.18);
+          changed = true;
+        }
+      }
+    }
+
+    if (!changed) return false;
+
+    // Fast local normal recalculation around the crater only (~0.05ms)
+    const nxMin = Math.max(1, ixMin - 1);
+    const nxMax = Math.min(TERRAIN_SEGS - 1, ixMax + 1);
+    const nzMin = Math.max(1, izMin - 1);
+    const nzMax = Math.min(TERRAIN_SEGS - 1, izMax + 1);
+    const twoCell = CELL_SIZE * 2.0;
+
+    for (let iz = nzMin; iz <= nzMax; iz++) {
+      const row = iz * TERRAIN_STRIDE;
+      for (let ix = nxMin; ix <= nxMax; ix++) {
+        const idx = row + ix;
+        const hL = liveHeights[idx - 1];
+        const hR = liveHeights[idx + 1];
+        const hU = liveHeights[idx - TERRAIN_STRIDE];
+        const hD = liveHeights[idx + TERRAIN_STRIDE];
+        const nx = hL - hR;
+        const ny = twoCell;
+        const nz = hU - hD;
+        const invLen = 1.0 / Math.hypot(nx, ny, nz);
+        normAttr.setXYZ(idx, nx * invLen, ny * invLen, nz * invLen);
+      }
+    }
+
+    posAttr.needsUpdate = true;
+    normAttr.needsUpdate = true;
+    scorchAttr.needsUpdate = true;
+
+    // Update ocean heightTex patch locally so deep holes below sea level flood with foam & turquoise water!
+    const tSize = heightTexObj.size;
+    const tData = heightTexObj.data;
+    const txMin = Math.max(0, Math.floor((((cxWorld - radius - CELL_SIZE) / WORLD_SIZE) + 0.5) * (tSize - 1)));
+    const txMax = Math.min(tSize - 1, Math.ceil((((cxWorld + radius + CELL_SIZE) / WORLD_SIZE) + 0.5) * (tSize - 1)));
+    const tzMin = Math.max(0, Math.floor((((czWorld - radius - CELL_SIZE) / WORLD_SIZE) + 0.5) * (tSize - 1)));
+    const tzMax = Math.min(tSize - 1, Math.ceil((((czWorld + radius + CELL_SIZE) / WORLD_SIZE) + 0.5) * (tSize - 1)));
+
+    for (let tz = tzMin; tz <= tzMax; tz++) {
+      const z = ((tz / (tSize - 1)) - 0.5) * WORLD_SIZE;
+      for (let tx = txMin; tx <= txMax; tx++) {
+        const x = ((tx / (tSize - 1)) - 0.5) * WORLD_SIZE;
+        const h = getTerrainHeight(x, z);
+        const norm = THREE.MathUtils.clamp((h + 50.0) / 300.0, 0.0, 1.0);
+        const v = Math.round(norm * 255);
+        const off = (tz * tSize + tx) * 4;
+        tData[off] = v;
+        tData[off + 1] = v;
+        tData[off + 2] = v;
+      }
+    }
+    heightTex.needsUpdate = true;
+    return true;
+  }
+
+  // Restore all mountains and terrain back to original state
+  function resetTerrain() {
+    liveHeights.set(baseHeights);
+    scorchData.fill(0);
+    for (let i = 0; i < posAttr.count; i++) {
+      posAttr.setY(i, liveHeights[i]);
+    }
+    terrainGeo.computeVertexNormals();
+    posAttr.needsUpdate = true;
+    normAttr.needsUpdate = true;
+    scorchAttr.needsUpdate = true;
+
+    const tSize = heightTexObj.size;
+    const tData = heightTexObj.data;
+    for (let tz = 0; tz < tSize; tz++) {
+      const z = ((tz / (tSize - 1)) - 0.5) * WORLD_SIZE;
+      for (let tx = 0; tx < tSize; tx++) {
+        const x = ((tx / (tSize - 1)) - 0.5) * WORLD_SIZE;
+        const h = getTerrainHeight(x, z);
+        const norm = THREE.MathUtils.clamp((h + 50.0) / 300.0, 0.0, 1.0);
+        const v = Math.round(norm * 255);
+        const off = (tz * tSize + tx) * 4;
+        tData[off] = v;
+        tData[off + 1] = v;
+        tData[off + 2] = v;
+      }
+    }
+    heightTex.needsUpdate = true;
+  }
+
   return {
     damage,
+    deformTerrain,
+    resetTerrain,
     findLockTarget,
     addWaterRipple(x, z, time) {
       rippleUniforms[nextRippleIdx].set(x, z, time, 1.0);

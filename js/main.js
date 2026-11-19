@@ -1,9 +1,9 @@
 import * as THREE from 'three';
-import { buildWorld, SUN_DIR } from './world.js?v=5';
-import { FighterJet } from './jet.js?v=5';
-import { MissileSystem } from './weapons.js?v=5';
-import { FighterCockpit } from './cockpit.js?v=5';
-import { JetSoundEngine } from './audio.js?v=5';
+import { buildWorld, SUN_DIR } from './world.js?v=6';
+import { FighterJet } from './jet.js?v=6';
+import { MissileSystem } from './weapons.js?v=6';
+import { FighterCockpit } from './cockpit.js?v=6';
+import { JetSoundEngine } from './audio.js?v=6';
 
 const PIXEL_HEIGHT = 270;
 
@@ -243,6 +243,14 @@ vpResetBtn.addEventListener('click', () => {
   syncViewUI();
 });
 
+const rebuildTerrainBtn = document.getElementById('rebuild-terrain-btn');
+if (rebuildTerrainBtn) {
+  rebuildTerrainBtn.addEventListener('click', () => {
+    world.resetTerrain();
+    sound.playSwitch();
+  });
+}
+
 // Input state
 const input = {
   mouseX: 0,
@@ -325,6 +333,9 @@ window.addEventListener('keydown', (e) => {
     weapons.tryFireMissile(jet);
   } else if (e.code === 'KeyM') {
     toggleSound();
+  } else if (e.code === 'KeyR') {
+    world.resetTerrain();
+    sound.playSwitch();
   } else if (e.code === 'BracketRight' || e.code === 'Equal') {
     viewSettings.camDist = THREE.MathUtils.clamp(viewSettings.camDist + 0.12, 0.5, 2.6);
     syncViewUI();

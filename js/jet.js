@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { getTerrainHeight, WATER_LEVEL, SUN_DIR } from './world.js?v=5';
+import { getTerrainHeight, WATER_LEVEL, SUN_DIR } from './world.js?v=6';
 
 /**
  * Custom top-down pixel-art texture mapped directly onto the sculpted 3D fighter planform.
