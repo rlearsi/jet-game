@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { SHIP_STYLES, createNavalFleetMeshes } from './ships/index.js?v=24';
+import { SHIP_STYLES, createNavalFleetMeshes } from './ships/index.js?v=26';
 
 export const WORLD_SIZE = 2800;
 export const WATER_LEVEL = 0.0;
@@ -1154,11 +1154,174 @@ export function buildWorld(scene) {
     if (lIdx >= 0) lockableTargets.splice(lIdx, 1);
   }
 
-  const treeGeo = new THREE.ConeGeometry(2.8, 7.6, 5);
-  const treeMat = new THREE.MeshLambertMaterial({ flatShading: true });
-  const jungleLightCols = [0x438a40, 0x387a38, 0x529947];
-  const jungleDeepCols = [0x296333, 0x1e4d29, 0x31703a];
-  const alpinePineCols = [0x1c462c, 0x245636, 0x173a24];
+  const treeGeo = new THREE.PlaneGeometry(1, 1);
+  treeGeo.translate(0, 0.45, 0);
+
+  const spriteTexLoader = new THREE.TextureLoader();
+  function loadPixelBillboardTexture(relPath) {
+    const resolvedUrl = new URL(`../${relPath}`, import.meta.url).href;
+    const tex = spriteTexLoader.load(resolvedUrl);
+    tex.magFilter = THREE.NearestFilter;
+    tex.minFilter = THREE.NearestFilter;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.generateMipmaps = false;
+    return tex;
+  }
+
+  const billboardSpriteUniforms = [];
+  function createBillboardSpriteMaterial(tex, frames = 1, fps = 8.0, alphaTest = 0.25, cloudShading = false) {
+    const u = {
+      uMap: { value: tex },
+      uTime: { value: 0 },
+      uFrames: { value: frames },
+      uFps: { value: fps },
+      uCamPos: { value: new THREE.Vector3() },
+      uTerrainTheme: { value: 0.0 },
+    };
+    billboardSpriteUniforms.push(u);
+
+    return new THREE.ShaderMaterial({
+      uniforms: u,
+      transparent: cloudShading,
+      depthWrite: !cloudShading,
+      side: THREE.DoubleSide,
+      vertexShader: `
+        attribute float aPhase;
+        uniform vec3 uCamPos;
+        varying vec2 vUv;
+        varying float vPhase;
+        varying vec3 vWorldPos;
+        void main() {
+          vUv = uv;
+          vPhase = aPhase;
+
+          vec3 centerWorld = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+          float sx = length(instanceMatrix[0].xyz);
+          float sy = length(instanceMatrix[1].xyz);
+
+          // Cylindrical Y-axis billboard facing camera horizontally
+          vec3 toCam = uCamPos - centerWorld;
+          toCam.y = 0.0;
+          float len = length(toCam);
+          vec3 fwd = len > 0.001 ? (toCam / len) : vec3(0.0, 0.0, 1.0);
+          vec3 right = normalize(cross(vec3(0.0, 1.0, 0.0), fwd));
+          vec3 up = vec3(0.0, 1.0, 0.0);
+
+          vec3 worldPos = centerWorld + right * (position.x * sx) + up * (position.y * sy);
+          vWorldPos = worldPos;
+          gl_Position = projectionMatrix * viewMatrix * vec4(worldPos, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D uMap;
+        uniform float uTime;
+        uniform float uFrames;
+        uniform float uFps;
+        uniform vec3 uCamPos;
+        uniform float uTerrainTheme;
+        varying vec2 vUv;
+        varying float vPhase;
+        varying vec3 vWorldPos;
+
+        void main() {
+          float frame = 0.0;
+          if (uFrames > 1.5) {
+            frame = mod(floor(uTime * uFps + vPhase * uFrames), uFrames);
+          }
+          vec2 uv = vec2((vUv.x + frame) / uFrames, vUv.y);
+          vec4 texel = texture2D(uMap, uv);
+          if (texel.a < ${alphaTest.toFixed(2)}) discard;
+
+          vec3 col = texel.rgb;
+          vec3 fogCol = vec3(0.94, 0.83, 0.72);
+          vec3 themeTint = vec3(1.03, 0.98, 0.94);
+          if (uTerrainTheme > 0.5 && uTerrainTheme < 1.5) {
+            fogCol = vec3(0.92, 0.89, 0.78);
+            themeTint = vec3(1.04, 1.03, 0.98);
+          } else if (uTerrainTheme >= 1.5 && uTerrainTheme < 2.5) {
+            fogCol = vec3(0.56, 0.32, 0.28);
+            themeTint = vec3(1.05, 0.82, 0.72);
+          } else if (uTerrainTheme >= 2.5) {
+            fogCol = vec3(0.84, 0.86, 0.95);
+            themeTint = vec3(0.96, 1.00, 1.06);
+          }
+          col *= themeTint;
+
+          float dist = length(uCamPos - vWorldPos);
+          float fog = smoothstep(${cloudShading ? '580.0, 2050.0' : '420.0, 1850.0'}, dist);
+          col = mix(col, fogCol, fog);
+
+          gl_FragColor = vec4(col, ${cloudShading ? 'texel.a' : '1.0'});
+        }
+      `,
+    });
+  }
+
+  // 4 Animated Tree Billboards (8 frames each) + 4 Matching Stump Billboards when destroyed
+  const treeDefs = [
+    {
+      treeMat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Trees/Tree1.png'), 8, 7.5),
+      stumpMat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Trees/Stump 1.png'), 1, 0),
+      aspect: 192 / 256,
+      baseH: 18.5,
+      color: 0x387a38,
+    },
+    {
+      treeMat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Trees/Tree2.png'), 8, 7.5),
+      stumpMat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Trees/Stump 2.png'), 1, 0),
+      aspect: 192 / 256,
+      baseH: 19.5,
+      color: 0x438a40,
+    },
+    {
+      treeMat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Trees/Tree3.png'), 8, 7.0),
+      stumpMat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Trees/Stump 3.png'), 1, 0),
+      aspect: 192 / 192,
+      baseH: 16.0,
+      color: 0x529947,
+    },
+    {
+      treeMat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Trees/Tree4.png'), 8, 7.0),
+      stumpMat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Trees/Stump 4.png'), 1, 0),
+      aspect: 192 / 192,
+      baseH: 15.8,
+      color: 0xd4a438,
+    },
+  ];
+
+  // 4 Animated Bush Billboards (8 frames each, 128x128 per frame)
+  const bushDefs = [
+    { mat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Bushes/Bushe1.png'), 8, 7.0), baseW: 11.5, baseH: 11.5, color: 0x438a40 },
+    { mat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Bushes/Bushe2.png'), 8, 7.0), baseW: 10.5, baseH: 10.5, color: 0x387a38 },
+    { mat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Bushes/Bushe3.png'), 8, 7.5), baseW: 11.2, baseH: 11.2, color: 0x296333 },
+    { mat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Bushes/Bushe4.png'), 8, 7.5), baseW: 10.2, baseH: 10.2, color: 0x31703a },
+  ];
+
+  // 4 Land Rock Billboards (single frame 64x64)
+  const rockDefs = [
+    { mat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Rocks/Rock1.png'), 1, 0), baseW: 9.5, baseH: 9.5, color: 0x668488 },
+    { mat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Rocks/Rock2.png'), 1, 0), baseW: 10.5, baseH: 10.5, color: 0x668488 },
+    { mat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Rocks/Rock3.png'), 1, 0), baseW: 10.0, baseH: 10.0, color: 0x5c7a7e },
+    { mat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Rocks/Rock4.png'), 1, 0), baseW: 11.5, baseH: 11.5, color: 0x5c7a7e },
+  ];
+
+  // 4 Animated Water Rock Billboards (16 frames each, 64x64 per frame with animated foam waves)
+  const waterRockDefs = [
+    { mat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Rocks in the Water/Water Rocks_01.png'), 16, 10.0), baseW: 15.0, baseH: 15.0, color: 0x729ca2 },
+    { mat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Rocks in the Water/Water Rocks_02.png'), 16, 10.0), baseW: 16.5, baseH: 16.5, color: 0x729ca2 },
+    { mat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Rocks in the Water/Water Rocks_03.png'), 16, 10.0), baseW: 15.8, baseH: 15.8, color: 0x729ca2 },
+    { mat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Rocks in the Water/Water Rocks_04.png'), 16, 10.0), baseW: 18.0, baseH: 18.0, color: 0x729ca2 },
+  ];
+
+  // 8 Cloud Sprite Billboards (576x256)
+  const cloudSpriteGeo = new THREE.PlaneGeometry(1, 1);
+  const cloudSpriteMats = [];
+  for (let ci = 1; ci <= 8; ci++) {
+    const num = String(ci).padStart(2, '0');
+    cloudSpriteMats.push(
+      createBillboardSpriteMaterial(loadPixelBillboardTexture(`assets/Clouds/Clouds_${num}.png`), 1, 0, 0.08, true)
+    );
+  }
 
   const houseWallsGeo = new THREE.BoxGeometry(4.4, 3.2, 4.4);
   const houseRoofGeo = new THREE.ConeGeometry(3.6, 2.2, 4);
@@ -1404,11 +1567,12 @@ export function buildWorld(scene) {
       deadSet.add(localId);
     }
 
-    // 1. Chunk Biome Trees (InstancedMesh per chunk, ONLY placed in Jungle biome below the snowline!)
+    // 1. Chunk Biome Animated Billboard Trees + Stumps (ONLY placed in Jungle biome below the snowline!)
     const maxChunkTrees = (cx === 0 && cz === 0) ? 240 : 165;
-    const treePlacements = [];
+    const treeBuckets = [[], [], [], []];
+    let totalPlacedTrees = 0;
     let tAttempts = 0;
-    while (treePlacements.length < maxChunkTrees && tAttempts < maxChunkTrees * 8) {
+    while (totalPlacedTrees < maxChunkTrees && tAttempts < maxChunkTrees * 8) {
       tAttempts++;
       const tx = minX + cRand() * CHUNK_SIZE;
       const tz = minZ + cRand() * CHUNK_SIZE;
@@ -1421,50 +1585,70 @@ export function buildWorld(scene) {
       // Strict biome separation: NO trees in Desert, Canyon, or Volcano biomes!
       if (biomes.jungle < 0.62) continue;
 
-      const s = 0.78 + cRand() * 1.22;
-      const sy = s * (0.92 + cRand() * 0.52);
-      const rotY = cRand() * Math.PI * 2;
-      let hex;
-      if (ty > 46) {
-        hex = alpinePineCols[Math.floor(cRand() * alpinePineCols.length)];
-      } else if (cRand() < 0.52) {
-        hex = jungleDeepCols[Math.floor(cRand() * jungleDeepCols.length)];
+      const s = 0.85 + cRand() * 0.72;
+      const phase = cRand();
+      let variantIdx;
+      if (ty > 42) {
+        variantIdx = cRand() < 0.65 ? 0 : 1; // pines at higher elevations
       } else {
-        hex = jungleLightCols[Math.floor(cRand() * jungleLightCols.length)];
+        const rVar = cRand();
+        variantIdx = rVar < 0.28 ? 0 : rVar < 0.56 ? 1 : rVar < 0.84 ? 2 : 3;
       }
-      treePlacements.push({ tx, ty, tz, s, sy, rotY, hex, localId: `t_${treePlacements.length}` });
+      const localId = `t_${totalPlacedTrees++}`;
+      treeBuckets[variantIdx].push({ tx, ty, tz, s, phase, localId });
     }
 
-    if (treePlacements.length > 0) {
-      const treesMesh = new THREE.InstancedMesh(treeGeo, treeMat, treePlacements.length);
-      for (let i = 0; i < treePlacements.length; i++) {
-        const tp = treePlacements[i];
+    for (let vIdx = 0; vIdx < treeDefs.length; vIdx++) {
+      const list = treeBuckets[vIdx];
+      if (list.length === 0) continue;
+      const def = treeDefs[vIdx];
+
+      const tGeo = treeGeo.clone();
+      const sGeo = treeGeo.clone();
+      const phases = new Float32Array(list.length);
+      for (let i = 0; i < list.length; i++) phases[i] = list[i].phase;
+      tGeo.setAttribute('aPhase', new THREE.InstancedBufferAttribute(phases, 1));
+      sGeo.setAttribute('aPhase', new THREE.InstancedBufferAttribute(new Float32Array(list.length), 1));
+
+      const treesMesh = new THREE.InstancedMesh(tGeo, def.treeMat, list.length);
+      const stumpsMesh = new THREE.InstancedMesh(sGeo, def.stumpMat, list.length);
+      treesMesh.frustumCulled = false;
+      stumpsMesh.frustumCulled = false;
+
+      for (let i = 0; i < list.length; i++) {
+        const tp = list[i];
+        const w = def.baseH * def.aspect * tp.s;
+        const h = def.baseH * tp.s;
         const isDead = deadSet.has(tp.localId);
+
+        dummy.position.set(tp.tx, tp.ty - 0.25, tp.tz);
+        dummy.scale.set(w, h, 1);
+        dummy.rotation.set(0, 0, 0);
+        dummy.updateMatrix();
+
         if (isDead) {
           treesMesh.setMatrixAt(i, ZERO_M);
+          stumpsMesh.setMatrixAt(i, dummy.matrix);
         } else {
-          dummy.position.set(tp.tx, tp.ty + 3.0 * tp.s, tp.tz);
-          dummy.scale.set(tp.s, tp.sy, tp.s);
-          dummy.rotation.set(0, tp.rotY, 0);
-          dummy.updateMatrix();
           treesMesh.setMatrixAt(i, dummy.matrix);
-        }
-        treesMesh.setColorAt(i, new THREE.Color(tp.hex));
+          stumpsMesh.setMatrixAt(i, ZERO_M);
 
-        if (!isDead) {
+          const stumpM = dummy.matrix.clone();
           const dObj = {
             type: 'tree',
             x: tp.tx,
             y: tp.ty,
             z: tp.tz,
             r: 3.2 * tp.s,
-            h: 9 * tp.s,
-            color: tp.hex,
+            h: h * 0.85,
+            color: def.color,
             alive: true,
             kill() {
               markChunkPropDead(tp.localId);
               treesMesh.setMatrixAt(i, ZERO_M);
+              stumpsMesh.setMatrixAt(i, stumpM);
               dirtyMeshes.add(treesMesh);
+              dirtyMeshes.add(stumpsMesh);
             },
           };
           registerDestructible(dObj, false);
@@ -1472,9 +1656,220 @@ export function buildWorld(scene) {
         }
       }
       treesMesh.instanceMatrix.needsUpdate = true;
-      if (treesMesh.instanceColor) treesMesh.instanceColor.needsUpdate = true;
-      scene.add(treesMesh);
-      chunk.propMeshes.push(treesMesh);
+      stumpsMesh.instanceMatrix.needsUpdate = true;
+      scene.add(treesMesh, stumpsMesh);
+      chunk.propMeshes.push(treesMesh, stumpsMesh);
+    }
+
+    // 1B. Animated Billboard Bushes (Bushe1..4, placed in Jungle meadows & light scrub)
+    const maxChunkBushes = (cx === 0 && cz === 0) ? 140 : 100;
+    const bushBuckets = [[], [], [], []];
+    let totalPlacedBushes = 0;
+    let bAttempts = 0;
+    while (totalPlacedBushes < maxChunkBushes && bAttempts < maxChunkBushes * 6) {
+      bAttempts++;
+      const bx = minX + cRand() * CHUNK_SIZE;
+      const bz = minZ + cRand() * CHUNK_SIZE;
+      if (Math.abs(bx + 215) < 56 && Math.abs(bz - 225) < 108) continue;
+      const by = getBaseTerrainHeight(bx, bz);
+      if (by < 3.6 || by > 58.0) continue;
+      const biomes = getBiomeWeightsAt(bx, bz);
+      if (biomes.jungle < 0.45) continue;
+
+      const s = 0.80 + cRand() * 0.65;
+      const phase = cRand();
+      const vIdx = Math.floor(cRand() * bushDefs.length);
+      const localId = `b_${totalPlacedBushes++}`;
+      bushBuckets[vIdx].push({ bx, by, bz, s, phase, localId });
+    }
+
+    for (let vIdx = 0; vIdx < bushDefs.length; vIdx++) {
+      const list = bushBuckets[vIdx];
+      if (list.length === 0) continue;
+      const def = bushDefs[vIdx];
+
+      const bGeo = treeGeo.clone();
+      const phases = new Float32Array(list.length);
+      for (let i = 0; i < list.length; i++) phases[i] = list[i].phase;
+      bGeo.setAttribute('aPhase', new THREE.InstancedBufferAttribute(phases, 1));
+
+      const bushMesh = new THREE.InstancedMesh(bGeo, def.mat, list.length);
+      bushMesh.frustumCulled = false;
+      for (let i = 0; i < list.length; i++) {
+        const bp = list[i];
+        const w = def.baseW * bp.s;
+        const h = def.baseH * bp.s;
+        const isDead = deadSet.has(bp.localId);
+        if (isDead) {
+          bushMesh.setMatrixAt(i, ZERO_M);
+        } else {
+          dummy.position.set(bp.bx, bp.by - 0.15, bp.bz);
+          dummy.scale.set(w, h, 1);
+          dummy.rotation.set(0, 0, 0);
+          dummy.updateMatrix();
+          bushMesh.setMatrixAt(i, dummy.matrix);
+
+          const dObj = {
+            type: 'bush',
+            label: 'BUSH',
+            x: bp.bx,
+            y: bp.by,
+            z: bp.bz,
+            r: 2.0 * bp.s,
+            h: h * 0.75,
+            color: def.color,
+            alive: true,
+            kill() {
+              markChunkPropDead(bp.localId);
+              bushMesh.setMatrixAt(i, ZERO_M);
+              dirtyMeshes.add(bushMesh);
+            },
+          };
+          registerDestructible(dObj, false);
+          chunk.destructibles.push(dObj);
+        }
+      }
+      bushMesh.instanceMatrix.needsUpdate = true;
+      scene.add(bushMesh);
+      chunk.propMeshes.push(bushMesh);
+    }
+
+    // 1C. Land Rocks (Rock1..4) & Animated Water Rocks (Water Rocks_01..04)
+    const maxLandRocks = (cx === 0 && cz === 0) ? 95 : 70;
+    const rockBuckets = [[], [], [], []];
+    let totalLandRocks = 0;
+    let rAttempts = 0;
+    while (totalLandRocks < maxLandRocks && rAttempts < maxLandRocks * 6) {
+      rAttempts++;
+      const rx = minX + cRand() * CHUNK_SIZE;
+      const rz = minZ + cRand() * CHUNK_SIZE;
+      if (Math.abs(rx + 215) < 58 && Math.abs(rz - 225) < 110) continue;
+      const ry = getBaseTerrainHeight(rx, rz);
+      if (ry < 1.8 || ry > 92.0) continue;
+
+      const s = 0.75 + cRand() * 0.90;
+      const vIdx = Math.floor(cRand() * rockDefs.length);
+      const localId = `rk_${totalLandRocks++}`;
+      rockBuckets[vIdx].push({ rx, ry, rz, s, localId });
+    }
+
+    for (let vIdx = 0; vIdx < rockDefs.length; vIdx++) {
+      const list = rockBuckets[vIdx];
+      if (list.length === 0) continue;
+      const def = rockDefs[vIdx];
+
+      const rGeo = treeGeo.clone();
+      rGeo.setAttribute('aPhase', new THREE.InstancedBufferAttribute(new Float32Array(list.length), 1));
+      const rockMesh = new THREE.InstancedMesh(rGeo, def.mat, list.length);
+      rockMesh.frustumCulled = false;
+
+      for (let i = 0; i < list.length; i++) {
+        const rp = list[i];
+        const w = def.baseW * rp.s;
+        const h = def.baseH * rp.s;
+        const isDead = deadSet.has(rp.localId);
+        if (isDead) {
+          rockMesh.setMatrixAt(i, ZERO_M);
+        } else {
+          dummy.position.set(rp.rx, rp.ry - 0.2, rp.rz);
+          dummy.scale.set(w, h, 1);
+          dummy.rotation.set(0, 0, 0);
+          dummy.updateMatrix();
+          rockMesh.setMatrixAt(i, dummy.matrix);
+
+          const dObj = {
+            type: 'rock',
+            label: 'ROCHA',
+            x: rp.rx,
+            y: rp.ry,
+            z: rp.rz,
+            r: 2.3 * rp.s,
+            h: h * 0.7,
+            color: def.color,
+            alive: true,
+            kill() {
+              markChunkPropDead(rp.localId);
+              rockMesh.setMatrixAt(i, ZERO_M);
+              dirtyMeshes.add(rockMesh);
+            },
+          };
+          registerDestructible(dObj, false);
+          chunk.destructibles.push(dObj);
+        }
+      }
+      rockMesh.instanceMatrix.needsUpdate = true;
+      scene.add(rockMesh);
+      chunk.propMeshes.push(rockMesh);
+    }
+
+    const maxWaterRocks = (cx === 0 && cz === 0) ? 75 : 55;
+    const waterRockBuckets = [[], [], [], []];
+    let totalWaterRocks = 0;
+    let wrAttempts = 0;
+    while (totalWaterRocks < maxWaterRocks && wrAttempts < maxWaterRocks * 10) {
+      wrAttempts++;
+      const wx = minX + cRand() * CHUNK_SIZE;
+      const wz = minZ + cRand() * CHUNK_SIZE;
+      const wy = getBaseTerrainHeight(wx, wz);
+      // Place in shallow/coastal water near islands & reefs (-9.5m to -0.4m)
+      if (wy > -0.35 || wy < -9.5) continue;
+
+      const s = 0.85 + cRand() * 0.95;
+      const phase = cRand();
+      const vIdx = Math.floor(cRand() * waterRockDefs.length);
+      const localId = `wrk_${totalWaterRocks++}`;
+      waterRockBuckets[vIdx].push({ wx, wz, s, phase, localId });
+    }
+
+    for (let vIdx = 0; vIdx < waterRockDefs.length; vIdx++) {
+      const list = waterRockBuckets[vIdx];
+      if (list.length === 0) continue;
+      const def = waterRockDefs[vIdx];
+
+      const wrGeo = treeGeo.clone();
+      const phases = new Float32Array(list.length);
+      for (let i = 0; i < list.length; i++) phases[i] = list[i].phase;
+      wrGeo.setAttribute('aPhase', new THREE.InstancedBufferAttribute(phases, 1));
+
+      const wRockMesh = new THREE.InstancedMesh(wrGeo, def.mat, list.length);
+      wRockMesh.frustumCulled = false;
+      for (let i = 0; i < list.length; i++) {
+        const wrp = list[i];
+        const w = def.baseW * wrp.s;
+        const h = def.baseH * wrp.s;
+        const isDead = deadSet.has(wrp.localId);
+        if (isDead) {
+          wRockMesh.setMatrixAt(i, ZERO_M);
+        } else {
+          dummy.position.set(wrp.wx, WATER_LEVEL + 0.15, wrp.wz);
+          dummy.scale.set(w, h, 1);
+          dummy.rotation.set(0, 0, 0);
+          dummy.updateMatrix();
+          wRockMesh.setMatrixAt(i, dummy.matrix);
+
+          const dObj = {
+            type: 'water_rock',
+            label: 'ROCHA MARINHA',
+            x: wrp.wx,
+            y: WATER_LEVEL,
+            z: wrp.wz,
+            r: 2.8 * wrp.s,
+            h: h * 0.55,
+            color: def.color,
+            alive: true,
+            kill() {
+              markChunkPropDead(wrp.localId);
+              wRockMesh.setMatrixAt(i, ZERO_M);
+              dirtyMeshes.add(wRockMesh);
+            },
+          };
+          registerDestructible(dObj, false);
+          chunk.destructibles.push(dObj);
+        }
+      }
+      wRockMesh.instanceMatrix.needsUpdate = true;
+      scene.add(wRockMesh);
+      chunk.propMeshes.push(wRockMesh);
     }
 
     // 2. Coastal Villages (Origin villages in chunk 0,0 + procedural coastal villages in outer chunks!)
@@ -1513,6 +1908,8 @@ export function buildWorld(scene) {
     if (housePlacements.length > 0) {
       const houseWalls = new THREE.InstancedMesh(houseWallsGeo, houseWallMat, housePlacements.length);
       const houseRoofs = new THREE.InstancedMesh(houseRoofGeo, houseRoofMat, housePlacements.length);
+      houseWalls.frustumCulled = false;
+      houseRoofs.frustumCulled = false;
       for (let i = 0; i < housePlacements.length; i++) {
         const hp = housePlacements[i];
         const isDead = deadSet.has(hp.localId);
@@ -1763,6 +2160,9 @@ export function buildWorld(scene) {
     for (const pm of chunk.propMeshes) {
       scene.remove(pm);
       if (pm.isInstancedMesh) {
+        if (pm.geometry && pm.geometry !== treeGeo && pm.geometry !== houseWallsGeo && pm.geometry !== houseRoofGeo && pm.geometry !== dashGeo && pm.geometry !== rLightGeo) {
+          pm.geometry.dispose();
+        }
         pm.dispose();
       }
     }
@@ -2028,155 +2428,53 @@ export function buildWorld(scene) {
   scene.add(boatHulls, boatSails);
 
   // =========================================================================
-  // 5. PUFFY 3D CUMULUS CLOUDS (InstancedMesh: 54 clouds -> 2 draw calls, wraps around camera!)
+  // 5. PIXEL-ART BILLBOARD CLOUDS (8 variants from assets/Clouds/Clouds_01..08.png)
   // =========================================================================
-  const cloudMat = new THREE.ShaderMaterial({
-    uniforms: {
-      uSunDir: { value: SUN_DIR.clone() },
-      uCamPos: { value: new THREE.Vector3() },
-      uTerrainTheme: { value: 0.0 },
-    },
-    vertexShader: `
-      varying vec3 vNormal;
-      varying vec3 vWorldPos;
-      void main() {
-        vec4 wp = modelMatrix * instanceMatrix * vec4(position, 1.0);
-        vWorldPos = wp.xyz;
-        mat3 instMat3 = mat3(instanceMatrix[0].xyz, instanceMatrix[1].xyz, instanceMatrix[2].xyz);
-        vNormal = normalize(mat3(modelMatrix) * instMat3 * normal);
-        gl_Position = projectionMatrix * viewMatrix * wp;
-      }
-    `,
-    fragmentShader: `
-      uniform vec3 uSunDir;
-      uniform vec3 uCamPos;
-      uniform float uTerrainTheme;
-      varying vec3 vNormal;
-      varying vec3 vWorldPos;
-
-      float bayer2(vec2 p) {
-        int x = int(mod(p.x, 2.0));
-        int y = int(mod(p.y, 2.0));
-        if (x == 0 && y == 0) return 0.25;
-        if (x == 1 && y == 1) return 0.50;
-        if (x == 1 && y == 0) return 0.75;
-        return 1.0;
-      }
-
-      void main() {
-        vec3 N = normalize(vNormal);
-        float ndl = dot(N, uSunDir) * 0.5 + 0.5;
-        float topness = clamp(N.y * 0.65 + 0.45, 0.0, 1.0);
-        float lightVal = ndl * 0.5 + topness * 0.5;
-
-        vec3 cCream    = vec3(0.99, 0.96, 0.93);
-        vec3 cPink     = vec3(0.93, 0.78, 0.79);
-        vec3 cLavender = vec3(0.56, 0.51, 0.66);
-        vec3 fogCol    = vec3(0.94, 0.83, 0.72);
-        if (uTerrainTheme > 0.5 && uTerrainTheme < 1.5) {
-          cCream    = vec3(1.00, 0.99, 0.96);
-          cPink     = vec3(0.96, 0.92, 0.84);
-          cLavender = vec3(0.68, 0.74, 0.84);
-          fogCol    = vec3(0.92, 0.89, 0.78);
-        } else if (uTerrainTheme >= 1.5 && uTerrainTheme < 2.5) {
-          cCream    = vec3(0.84, 0.62, 0.52);
-          cPink     = vec3(0.58, 0.36, 0.38);
-          cLavender = vec3(0.32, 0.22, 0.30);
-          fogCol    = vec3(0.56, 0.32, 0.28);
-        } else if (uTerrainTheme >= 2.5) {
-          cCream    = vec3(0.98, 0.98, 1.00);
-          cPink     = vec3(0.86, 0.86, 0.94);
-          cLavender = vec3(0.54, 0.60, 0.78);
-          fogCol    = vec3(0.84, 0.86, 0.95);
-        }
-
-        float d = bayer2(floor(gl_FragCoord.xy));
-        vec3 col;
-        if (N.y < -0.25) {
-          col = cLavender;
-        } else if (lightVal + (d - 0.5) * 0.18 > 0.64) {
-          col = cCream;
-        } else if (lightVal + (d - 0.5) * 0.18 > 0.42) {
-          col = cPink;
-        } else {
-          col = cLavender;
-        }
-
-        float dist = length(uCamPos - vWorldPos);
-        float fog = smoothstep(580.0, 2050.0, dist);
-        col = mix(col, fogCol, fog);
-
-        gl_FragColor = vec4(col, 1.0);
-      }
-    `,
-  });
-
-  function createDomeGeo(radius) {
-    const geo = new THREE.SphereGeometry(radius, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.56);
-    const pa = geo.attributes.position;
-    for (let i = 0; i < pa.count; i++) {
-      if (pa.getY(i) < 0) pa.setY(i, 0);
-    }
-    geo.computeVertexNormals();
-    const cap = new THREE.CircleGeometry(radius * Math.sin(Math.PI * 0.56), 12);
-    cap.rotateX(Math.PI / 2);
-    return { dome: geo, cap };
-  }
-
-  const baseDome = createDomeGeo(1.0);
   const cloudGroup = new THREE.Group();
   scene.add(cloudGroup);
   const clouds = [];
-  let totalCloudPuffs = 0;
+  const cloudBuckets = Array.from({ length: cloudSpriteMats.length }, () => []);
 
   for (let i = 0; i < 54; i++) {
     const isShadowCaster = i < MAX_CLOUDS;
-    const scaleBase = isShadowCaster ? 32 + rand() * 44 : 22 + rand() * 32;
-    const puffs = 3 + Math.floor(rand() * 3);
-    const puffList = [];
-
-    for (let p = 0; p < puffs; p++) {
-      const r = scaleBase * (p === 0 ? 1.0 : 0.52 + rand() * 0.44);
-      const hScale = 0.45 + rand() * 0.25;
-      const ox = p === 0 ? 0 : (rand() - 0.5) * scaleBase * 1.45;
-      const oz = p === 0 ? 0 : (rand() - 0.5) * scaleBase * 1.15;
-      const szDome = r * (0.8 + rand() * 0.35);
-      const szCap = r * (0.8 + rand() * 0.35);
-
-      puffList.push({
-        idx: totalCloudPuffs++,
-        ox,
-        oz,
-        sx: r,
-        sy: r * hScale,
-        szDome,
-        szCap,
-      });
-    }
-
+    const scaleBase = isShadowCaster ? 42 + rand() * 52 : 28 + rand() * 38;
+    const variantIdx = i % cloudSpriteMats.length;
+    const instIdx = cloudBuckets[variantIdx].length;
     const cx = (rand() - 0.5) * 2500;
     const cz = (rand() - 0.5) * 2500;
-    const cy = isShadowCaster ? 85 + rand() * 65 : 185 + rand() * 95;
+    const cy = isShadowCaster ? 88 + rand() * 65 : 175 + rand() * 95;
+    const width = scaleBase * 3.1;
+    const height = width * (256 / 576);
 
-    clouds.push({
+    const cloudRec = {
       x: cx,
       y: cy,
       z: cz,
-      puffs: puffList,
+      w: width,
+      h: height,
+      variantIdx,
+      instIdx,
       visible: true,
       speed: 2.2 + rand() * 2.4,
       shadowRadius: scaleBase * 1.15,
       shadowIndex: isShadowCaster ? i : -1,
-    });
+    };
+    clouds.push(cloudRec);
+    cloudBuckets[variantIdx].push(cloudRec);
   }
 
-  const cloudDomes = new THREE.InstancedMesh(baseDome.dome, cloudMat, totalCloudPuffs);
-  const cloudCaps = new THREE.InstancedMesh(baseDome.cap, cloudMat, totalCloudPuffs);
-  cloudDomes.frustumCulled = false;
-  cloudCaps.frustumCulled = false;
-  cloudDomes.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-  cloudCaps.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-  cloudGroup.add(cloudDomes, cloudCaps);
+  const cloudVariantMeshes = [];
+  for (let vIdx = 0; vIdx < cloudSpriteMats.length; vIdx++) {
+    const bucket = cloudBuckets[vIdx];
+    const cGeo = cloudSpriteGeo.clone();
+    cGeo.setAttribute('aPhase', new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, bucket.length)), 1));
+    const cMesh = new THREE.InstancedMesh(cGeo, cloudSpriteMats[vIdx], Math.max(1, bucket.length));
+    cMesh.count = bucket.length;
+    cMesh.frustumCulled = false;
+    cMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    cloudGroup.add(cMesh);
+    cloudVariantMeshes.push(cMesh);
+  }
 
   let cloudMatricesDirty = true;
   function syncCloudMatrices() {
@@ -2184,28 +2482,19 @@ export function buildWorld(scene) {
       cloudMatricesDirty = false;
       return;
     }
-    const domeArr = cloudDomes.instanceMatrix.array;
-    const capArr = cloudCaps.instanceMatrix.array;
     for (let i = 0; i < clouds.length; i++) {
       const c = clouds[i];
+      const mesh = cloudVariantMeshes[c.variantIdx];
+      const arr = mesh.instanceMatrix.array;
       if (!c.visible) {
-        for (let j = 0; j < c.puffs.length; j++) {
-          const idx = c.puffs[j].idx;
-          writeZeroMatrix(domeArr, idx);
-          writeZeroMatrix(capArr, idx);
-        }
-        continue;
-      }
-      for (let j = 0; j < c.puffs.length; j++) {
-        const pf = c.puffs[j];
-        const px = c.x + pf.ox;
-        const pz = c.z + pf.oz;
-        writeTSMatrix(domeArr, pf.idx, px, c.y, pz, pf.sx, pf.sy, pf.szDome);
-        writeTSMatrix(capArr, pf.idx, px, c.y + 0.02, pz, pf.sx, 1, pf.szCap);
+        writeZeroMatrix(arr, c.instIdx);
+      } else {
+        writeTSMatrix(arr, c.instIdx, c.x, c.y, c.z, c.w, c.h, 1);
       }
     }
-    cloudDomes.instanceMatrix.needsUpdate = true;
-    cloudCaps.instanceMatrix.needsUpdate = true;
+    for (let vIdx = 0; vIdx < cloudVariantMeshes.length; vIdx++) {
+      cloudVariantMeshes[vIdx].instanceMatrix.needsUpdate = true;
+    }
     cloudMatricesDirty = false;
   }
   syncCloudMatrices();
@@ -2643,7 +2932,9 @@ export function buildWorld(scene) {
     skyMat.uniforms.uTerrainTheme.value = themeIdx;
     terrainMat.uniforms.uTerrainTheme.value = themeIdx;
     waterMat.uniforms.uTerrainTheme.value = themeIdx;
-    cloudMat.uniforms.uTerrainTheme.value = themeIdx;
+    for (let i = 0; i < billboardSpriteUniforms.length; i++) {
+      billboardSpriteUniforms[i].uTerrainTheme.value = themeIdx;
+    }
 
     deformScale = deformMode === 'off' ? 0.0 : deformMode === 'deep' ? 1.5 : 1.0;
     applyCloudDensity(cloudsMode);
@@ -2699,7 +2990,10 @@ export function buildWorld(scene) {
       terrainMat.uniforms.uTime.value = time;
       waterMat.uniforms.uTime.value = time;
       waterMat.uniforms.uCamPos.value.copy(camPos);
-      cloudMat.uniforms.uCamPos.value.copy(camPos);
+      for (let i = 0; i < billboardSpriteUniforms.length; i++) {
+        billboardSpriteUniforms[i].uTime.value = time;
+        billboardSpriteUniforms[i].uCamPos.value.copy(camPos);
+      }
       waterMat.uniforms.uRippleCount.value = lastRippleAt >= 0 && time - lastRippleAt < 4.8 ? MAX_RIPPLES : 0;
 
       // Drift clouds & wrap them seamlessly around the camera's active region
