@@ -46,21 +46,50 @@
       <span id="cockpit-toggle-btn" class="clickable"><b>E</b> COCKPIT</span>
       <span class="sep">&middot;</span>
       <span id="cam-switch-btn" class="clickable"><b>SPACE</b> <span id="cam-next-label">TOP VIEW</span></span>
+      <span class="sep">&middot;</span>
+      <span id="style-cycle-btn" class="clickable"><b>V</b> <span id="style-short-label">CRISP 480P</span></span>
     </div>
   </div>
 
-  <!-- Top-right buttons: VIEW (POV/FOV/Distance controls) + SOUND -->
+  <!-- Top-right buttons: VIEW / RENDER + SOUND -->
   <div id="hud-top-right">
-    <button id="view-btn" class="hud-btn" type="button">VIEW / FOV</button>
+    <button id="view-btn" class="hud-btn" type="button">VIEW / RENDER</button>
     <button id="sound-btn" class="hud-btn" type="button">SOUND: OFF</button>
   </div>
 
-  <!-- Collapsible POV / FOV / Object Distance panel -->
+  <!-- Collapsible Camera, Distance & Render Style panel -->
   <div id="view-panel" class="view-panel hidden">
     <div class="vp-header">
-      <span>CAMERA &amp; DISTANCE</span>
+      <span>CAMERA &amp; RENDER</span>
       <button id="vp-reset" class="vp-reset-btn" type="button">RESET</button>
     </div>
+    <label class="vp-row">
+      <span>STYLE</span>
+      <select id="style-select" class="vp-select">
+        <option value="crisp480">CRISP 480P (CLEAN)</option>
+        <option value="ghibli">GHIBLI / ANIME HD</option>
+        <option value="cleanHD">CLEAN NATIVE HD</option>
+        <option value="comic">COMIC / INK SOBEL</option>
+        <option value="crt">CRT ARCADE 360P</option>
+        <option value="pixel270">RETRO PIXEL 270P</option>
+      </select>
+    </label>
+    <label class="vp-row">
+      <span>RES</span>
+      <select id="res-select" class="vp-select">
+        <option value="270">270p (Retro)</option>
+        <option value="360">360p (Arcade)</option>
+        <option value="480" selected>480p (Crisp)</option>
+        <option value="720">720p (HD)</option>
+        <option value="0">NATIVE HD</option>
+      </select>
+    </label>
+    <label class="vp-row">
+      <span>DITHER</span>
+      <input id="dither-slider" type="range" min="0" max="1" step="0.05" value="0.25" />
+      <span id="dither-val" class="vp-val">25%</span>
+    </label>
+    <div class="vp-divider"></div>
     <label class="vp-row">
       <span>FOV</span>
       <input id="fov-slider" type="range" min="45" max="110" step="1" value="80" />
@@ -76,7 +105,7 @@
       <input id="scale-slider" type="range" min="0.5" max="2.2" step="0.05" value="1.00" />
       <span id="scale-val" class="vp-val">1.00x</span>
     </label>
-    <div class="vp-tip">TIP: SCROLL WHEEL OR [ / ] ADJUSTS DISTANCE</div>
+    <div class="vp-tip">V: CYCLE STYLE &middot; SCROLL / [ ]: DIST</div>
     <button id="rebuild-terrain-btn" class="vp-reset-btn" style="width:100%;margin-top:6px;padding:4px 6px;" type="button">RESTORE MOUNTAINS (R)</button>
   </div>
 
@@ -104,6 +133,6 @@
       }
     }
   </script>
-  <script type="module" src="js/main.js?v=6"></script>
+  <script type="module" src="js/main.js?v=7"></script>
 </body>
 </html>

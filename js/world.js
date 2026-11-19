@@ -359,6 +359,7 @@ export function buildWorld(scene) {
       uCamPos: { value: new THREE.Vector3() },
       uClouds: { value: cloudShadowUniforms },
       uTime: { value: 0 },
+      uTerrainGrain: { value: 0.35 },
     },
     vertexShader: `
       attribute float aScorch;
@@ -378,6 +379,7 @@ export function buildWorld(scene) {
       uniform vec3 uCamPos;
       uniform vec4 uClouds[${MAX_CLOUDS}];
       uniform float uTime;
+      uniform float uTerrainGrain;
       varying vec3 vWorldPos;
       varying vec3 vNormal;
       varying float vScorch;
@@ -409,10 +411,12 @@ export function buildWorld(scene) {
         vec3 N = normalize(vNormal);
         float slope = 1.0 - clamp(N.y, 0.0, 1.0);
 
-        // Crisp world-space pixel stippling for dense foliage & sand texture
+        // Crisp world-space pixel stippling (controlled by uTerrainGrain so HD/Anime styles look clean!)
         vec2 pixCell = floor(p * 0.72);
-        float stipple = hash(pixCell);
-        float fineCluster = noise(floor(p * 0.30) * 0.55);
+        float rawStipple = hash(pixCell);
+        float smoothCluster = noise(p * 0.14);
+        float fineCluster = mix(smoothCluster, noise(floor(p * 0.30) * 0.55), uTerrainGrain);
+        float stipple = mix(smoothCluster, rawStipple, uTerrainGrain);
 
         // Regional biome weights
         float biomeA = fbm(p * 0.0085 + vec2(2.1, -4.3));
@@ -1375,6 +1379,9 @@ export function buildWorld(scene) {
     deformTerrain,
     resetTerrain,
     findLockTarget,
+    setTerrainGrain(v) {
+      terrainMat.uniforms.uTerrainGrain.value = THREE.MathUtils.clamp(v, 0, 1);
+    },
     addWaterRipple(x, z, time) {
       rippleUniforms[nextRippleIdx].set(x, z, time, 1.0);
       nextRippleIdx = (nextRippleIdx + 1) % MAX_RIPPLES;

@@ -135,14 +135,32 @@ html, body {
   position: fixed;
   top: 32px;
   right: 8px;
-  width: 224px;
+  width: 248px;
   z-index: 15;
-  background: rgba(16, 18, 28, 0.92);
+  background: rgba(16, 18, 28, 0.94);
   border: 1px solid rgba(255, 224, 190, 0.28);
   padding: 8px 10px;
   font-size: 10px;
   letter-spacing: 0.06em;
   color: #e4ded6;
+}
+
+.vp-select {
+  grid-column: 2 / span 2;
+  background: #1d2233;
+  border: 1px solid rgba(255, 210, 160, 0.35);
+  color: #ffeec8;
+  font-family: inherit;
+  font-size: 9.5px;
+  font-weight: 700;
+  padding: 2px 4px;
+  cursor: pointer;
+}
+
+.vp-divider {
+  height: 1px;
+  background: rgba(255, 224, 190, 0.16);
+  margin: 7px 0;
 }
 
 .view-panel.hidden {

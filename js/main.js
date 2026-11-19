@@ -1,11 +1,74 @@
 import * as THREE from 'three';
-import { buildWorld, SUN_DIR } from './world.js?v=6';
-import { FighterJet } from './jet.js?v=6';
-import { MissileSystem } from './weapons.js?v=6';
-import { FighterCockpit } from './cockpit.js?v=6';
-import { JetSoundEngine } from './audio.js?v=6';
+import { buildWorld, SUN_DIR } from './world.js?v=7';
+import { FighterJet } from './jet.js?v=7';
+import { MissileSystem } from './weapons.js?v=7';
+import { FighterCockpit } from './cockpit.js?v=7';
+import { JetSoundEngine } from './audio.js?v=7';
 
-const PIXEL_HEIGHT = 270;
+// 6 live-switchable rendering styles (V key or VIEW / RENDER panel)
+const RENDER_PRESETS = {
+  crisp480: {
+    id: 'crisp480',
+    shortLabel: 'CRISP 480P',
+    resHeight: 480,
+    filter: 'nearest',
+    dither: 0.25,
+    levels: 48,
+    terrainGrain: 0.35,
+    styleMode: 0,
+  },
+  ghibli: {
+    id: 'ghibli',
+    shortLabel: 'GHIBLI HD',
+    resHeight: 720,
+    filter: 'linear',
+    dither: 0.0,
+    levels: 255,
+    terrainGrain: 0.06,
+    styleMode: 1,
+  },
+  cleanHD: {
+    id: 'cleanHD',
+    shortLabel: 'CLEAN HD',
+    resHeight: 0, // native window height
+    filter: 'linear',
+    dither: 0.0,
+    levels: 255,
+    terrainGrain: 0.0,
+    styleMode: 0,
+  },
+  comic: {
+    id: 'comic',
+    shortLabel: 'COMIC INK',
+    resHeight: 720,
+    filter: 'linear',
+    dither: 0.0,
+    levels: 18,
+    terrainGrain: 0.0,
+    styleMode: 2,
+  },
+  crt: {
+    id: 'crt',
+    shortLabel: 'CRT 360P',
+    resHeight: 360,
+    filter: 'nearest',
+    dither: 0.45,
+    levels: 32,
+    terrainGrain: 0.65,
+    styleMode: 3,
+  },
+  pixel270: {
+    id: 'pixel270',
+    shortLabel: 'PIXEL 270P',
+    resHeight: 270,
+    filter: 'nearest',
+    dither: 1.0,
+    levels: 28,
+    terrainGrain: 1.0,
+    styleMode: 0,
+  },
+};
+const PRESET_ORDER = ['crisp480', 'ghibli', 'cleanHD', 'comic', 'crt', 'pixel270'];
 
 const canvas = document.getElementById('game-canvas');
 const cockpitCanvas = document.getElementById('cockpit-canvas');
@@ -18,11 +81,17 @@ const destroyedBadge = document.getElementById('destroyed-badge');
 const ammoPipsEl = document.getElementById('ammo-pips');
 const camNextLabel = document.getElementById('cam-next-label');
 const camSwitchBtn = document.getElementById('cam-switch-btn');
+const styleCycleBtn = document.getElementById('style-cycle-btn');
+const styleShortLabel = document.getElementById('style-short-label');
 const cockpitToggleBtn = document.getElementById('cockpit-toggle-btn');
 const soundBtn = document.getElementById('sound-btn');
 const viewBtn = document.getElementById('view-btn');
 const viewPanel = document.getElementById('view-panel');
 const vpResetBtn = document.getElementById('vp-reset');
+const styleSelect = document.getElementById('style-select');
+const resSelect = document.getElementById('res-select');
+const ditherSlider = document.getElementById('dither-slider');
+const ditherVal = document.getElementById('dither-val');
 const fovSlider = document.getElementById('fov-slider');
 const fovVal = document.getElementById('fov-val');
 const distSlider = document.getElementById('dist-slider');
@@ -35,14 +104,13 @@ const telemBadge = document.getElementById('telem-badge');
 const distBadge = document.getElementById('dist-badge');
 const startHint = document.getElementById('start-hint');
 
-// Renderer configured for crisp pixel-art
+// Renderer
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
 renderer.setPixelRatio(1);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 const scene = new THREE.Scene();
 
-// Bright sunset lighting
 const hemiLight = new THREE.HemisphereLight(0xfbe0ce, 0x5c6282, 1.25);
 scene.add(hemiLight);
 
@@ -50,7 +118,7 @@ const sunLight = new THREE.DirectionalLight(0xffe7b8, 1.45);
 sunLight.position.copy(SUN_DIR).multiplyScalar(600);
 scene.add(sunLight);
 
-// View / POV / Object Distance user-adjustable settings
+// Camera & Render settings
 const DEFAULT_VIEW = {
   fov: 80,
   camDist: 1.35,
@@ -58,11 +126,20 @@ const DEFAULT_VIEW = {
 };
 const viewSettings = { ...DEFAULT_VIEW };
 
+let savedStyleId = 'crisp480';
+try {
+  const s = localStorage.getItem('sunsetStriker_renderStyle');
+  if (s && RENDER_PRESETS[s]) savedStyleId = s;
+} catch (_) {
+  // ignore storage errors
+}
+const renderSettings = { ...RENDER_PRESETS[savedStyleId] };
+
 const camera = new THREE.PerspectiveCamera(viewSettings.fov, window.innerWidth / window.innerHeight, 0.5, 3600);
 
-// Low-res render targets: scene color + 1px jet silhouette mask for crisp ink outlines
-let rtHeight = PIXEL_HEIGHT;
-let rtWidth = Math.max(360, Math.round(PIXEL_HEIGHT * (window.innerWidth / window.innerHeight)));
+// Render targets: main scene + fighter jet silhouette mask
+let rtHeight = 480;
+let rtWidth = Math.max(480, Math.round(rtHeight * (window.innerWidth / window.innerHeight)));
 
 const rtOpts = {
   minFilter: THREE.NearestFilter,
@@ -81,6 +158,9 @@ const postMat = new THREE.ShaderMaterial({
     tJetMask: { value: jetMaskTarget.texture },
     uResolution: { value: new THREE.Vector2(rtWidth, rtHeight) },
     uOutlineEnabled: { value: 1.0 },
+    uDither: { value: renderSettings.dither },
+    uLevels: { value: renderSettings.levels },
+    uStyleMode: { value: renderSettings.styleMode }, // 0=Std, 1=Ghibli, 2=Comic Sobel, 3=CRT
   },
   vertexShader: `
     varying vec2 vUv;
@@ -94,6 +174,9 @@ const postMat = new THREE.ShaderMaterial({
     uniform sampler2D tJetMask;
     uniform vec2 uResolution;
     uniform float uOutlineEnabled;
+    uniform float uDither;
+    uniform float uLevels;
+    uniform float uStyleMode;
     varying vec2 vUv;
 
     float bayer4(vec2 pos) {
@@ -118,22 +201,77 @@ const postMat = new THREE.ShaderMaterial({
       return 5.0 / 16.0;
     }
 
-    void main() {
-      vec3 col = texture2D(tDiffuse, vUv).rgb;
-      vec2 pix = floor(vUv * uResolution);
-      float d = bayer4(pix) - 0.5;
-      float levels = 28.0;
-      col = floor((col + d / levels) * levels + 0.5) / levels;
+    float luma(vec3 c) {
+      return dot(c, vec3(0.299, 0.587, 0.114));
+    }
 
-      // Exact 1-pixel crisp dark ink silhouette outline around the fighter jet
+    void main() {
+      vec2 texel = 1.0 / uResolution;
+      vec3 col = texture2D(tDiffuse, vUv).rgb;
+
+      // Mode 1: GHIBLI / ANIME HD (soft sunset highlight bloom + rich painterly vibrance, zero grain)
+      if (uStyleMode > 0.5 && uStyleMode < 1.5) {
+        vec3 blur = (
+          texture2D(tDiffuse, vUv + vec2( texel.x * 2.5, 0.0)).rgb +
+          texture2D(tDiffuse, vUv + vec2(-texel.x * 2.5, 0.0)).rgb +
+          texture2D(tDiffuse, vUv + vec2(0.0,  texel.y * 2.5)).rgb +
+          texture2D(tDiffuse, vUv + vec2(0.0, -texel.y * 2.5)).rgb
+        ) * 0.25;
+        vec3 bright = max(blur - vec3(0.72), vec3(0.0));
+        col += bright * vec3(1.05, 0.90, 0.72) * 0.45;
+        // Gentle saturation lift
+        float g = luma(col);
+        col = mix(vec3(g), col, 1.14);
+      }
+
+      // Mode 2: COMIC / INK (Moebius-style Sobel ink outlines across terrain, mountains, craters & clouds!)
+      if (uStyleMode > 1.5 && uStyleMode < 2.5) {
+        float tl = luma(texture2D(tDiffuse, vUv + vec2(-texel.x,  texel.y)).rgb);
+        float t  = luma(texture2D(tDiffuse, vUv + vec2( 0.0,      texel.y)).rgb);
+        float tr = luma(texture2D(tDiffuse, vUv + vec2( texel.x,  texel.y)).rgb);
+        float l  = luma(texture2D(tDiffuse, vUv + vec2(-texel.x,  0.0)).rgb);
+        float r  = luma(texture2D(tDiffuse, vUv + vec2( texel.x,  0.0)).rgb);
+        float bl = luma(texture2D(tDiffuse, vUv + vec2(-texel.x, -texel.y)).rgb);
+        float b  = luma(texture2D(tDiffuse, vUv + vec2( 0.0,     -texel.y)).rgb);
+        float br = luma(texture2D(tDiffuse, vUv + vec2( texel.x, -texel.y)).rgb);
+
+        float gx = -tl - 2.0 * l - bl + tr + 2.0 * r + br;
+        float gy = -tl - 2.0 * t - tr + bl + 2.0 * b + br;
+        float edge = sqrt(gx * gx + gy * gy);
+
+        // Clean flat comic color stepping
+        float comicLevels = 16.0;
+        col = floor(col * comicLevels + 0.5) / comicLevels;
+        float ink = smoothstep(0.18, 0.38, edge);
+        col = mix(col, vec3(0.13, 0.12, 0.21), ink * 0.85);
+      }
+
+      // Optional Bayer 4x4 ordered dithering & color quantization (0% = completely smooth HD!)
+      if (uDither > 0.01) {
+        vec2 pix = floor(vUv * uResolution);
+        float d = (bayer4(pix) - 0.5) * uDither;
+        vec3 quant = floor((col + d / uLevels) * uLevels + 0.5) / uLevels;
+        col = mix(col, quant, clamp(uDither * 1.15, 0.0, 1.0));
+      }
+
+      // Mode 3: CRT ARCADE (soft horizontal scanlines + warm vignette)
+      if (uStyleMode > 2.5) {
+        float scan = 0.90 + 0.10 * sin(vUv.y * uResolution.y * 3.14159 * 2.0);
+        vec2 vigUv = vUv * 2.0 - 1.0;
+        float vig = 1.0 - dot(vigUv, vigUv) * 0.16;
+        col *= scan * vig;
+      }
+
+      // Crisp fighter jet silhouette ink outline (adapts thickness cleanly to resolution!)
       if (uOutlineEnabled > 0.5) {
-        vec2 texel = 1.0 / uResolution;
+        float stepPx = max(1.0, floor(uResolution.y / 380.0));
+        vec2 oStep = texel * stepPx;
         float center = texture2D(tJetMask, vUv).r;
         if (center < 0.5) {
-          float nL = texture2D(tJetMask, vUv + vec2(-texel.x, 0.0)).r;
-          float nR = texture2D(tJetMask, vUv + vec2( texel.x, 0.0)).r;
-          float nU = texture2D(tJetMask, vUv + vec2(0.0,  texel.y)).r;
-          float nD = texture2D(tJetMask, vUv + vec2(0.0, -texel.y)).r;
+          float nL = texture2D(tJetMask, vUv + vec2(-oStep.x, 0.0)).r;
+          float nR = texture2D(tJetMask, vUv + vec2( oStep.x, 0.0)).r;
+          float nU = texture2D(tJetMask, vUv + vec2(0.0,  oStep.y)).r;
+          float nD = texture2D(tJetMask, vUv + vec2(0.0, -oStep.y)).r;
           if (max(max(nL, nR), max(nU, nD)) > 0.5) {
             col = vec3(0.10, 0.11, 0.18);
           }
@@ -153,12 +291,10 @@ const jet = new FighterJet(scene);
 const weapons = new MissileSystem(scene, sound, world);
 const cockpit = new FighterCockpit(cockpitCanvas);
 
-// Put jet hull meshes on Layer 1 so we can render an exact 1px silhouette mask cleanly
 jet.hullGroup.traverse((obj) => {
   if (obj.isMesh) obj.layers.enable(1);
 });
 
-// Build 4 missile pips in top bar
 const ammoPipEls = [];
 for (let i = 0; i < weapons.maxAmmo; i++) {
   const el = document.createElement('span');
@@ -176,8 +312,8 @@ const CAMERA_MODES = [
 let camModeIdx = 0;
 let lastExternalMode = 0;
 
-const camPosSmooth = new THREE.Vector3(-90, 108, 245);
-const camLookSmooth = new THREE.Vector3(-90, 96, 175);
+const camPosSmooth = new THREE.Vector3(-85, 102, 232);
+const camLookSmooth = new THREE.Vector3(-85, 86, 160);
 let camRollSmooth = 0;
 
 function setCameraMode(idx) {
@@ -200,11 +336,72 @@ function toggleCockpit() {
   if (CAMERA_MODES[camModeIdx].id === 'COCKPIT') {
     setCameraMode(lastExternalMode);
   } else {
-    setCameraMode(1); // COCKPIT
+    setCameraMode(1);
   }
 }
 
-// Sync View / FOV / Object Distance UI & apply object-distance scaling
+function applyRenderSettings() {
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  const targetH = renderSettings.resHeight === 0 ? Math.min(1080, h) : renderSettings.resHeight;
+  rtHeight = Math.max(240, targetH);
+  rtWidth = Math.max(320, Math.round(rtHeight * (w / h)));
+
+  const texFilter = renderSettings.filter === 'linear' ? THREE.LinearFilter : THREE.NearestFilter;
+  renderTarget.texture.magFilter = texFilter;
+  renderTarget.texture.minFilter = texFilter;
+  renderTarget.texture.needsUpdate = true;
+
+  renderer.setSize(rtWidth, rtHeight, false);
+  renderTarget.setSize(rtWidth, rtHeight);
+  jetMaskTarget.setSize(rtWidth, rtHeight);
+  postMat.uniforms.uResolution.value.set(rtWidth, rtHeight);
+  postMat.uniforms.uDither.value = renderSettings.dither;
+  postMat.uniforms.uLevels.value = renderSettings.levels;
+  postMat.uniforms.uStyleMode.value = renderSettings.styleMode;
+
+  canvas.style.imageRendering = renderSettings.filter === 'linear' ? 'auto' : 'pixelated';
+
+  // Keep pixel-art cockpit crisp at 270p internal height scaled to aspect
+  const cpH = 270;
+  const cpW = Math.max(360, Math.round(cpH * (w / h)));
+  cockpitCanvas.width = cpW;
+  cockpitCanvas.height = cpH;
+  cockpit.w = cpW;
+  cockpit.h = cpH;
+
+  world.setTerrainGrain(renderSettings.terrainGrain);
+
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+
+  // Sync UI
+  styleSelect.value = renderSettings.id;
+  resSelect.value = String(renderSettings.resHeight);
+  ditherSlider.value = renderSettings.dither.toFixed(2);
+  ditherVal.textContent = `${Math.round(renderSettings.dither * 100)}%`;
+  styleShortLabel.textContent = renderSettings.shortLabel;
+}
+
+function selectRenderPreset(presetId) {
+  const p = RENDER_PRESETS[presetId];
+  if (!p) return;
+  Object.assign(renderSettings, p);
+  try {
+    localStorage.setItem('sunsetStriker_renderStyle', presetId);
+  } catch (_) {
+    // ignore
+  }
+  applyRenderSettings();
+  sound.playSwitch();
+}
+
+function cycleRenderPreset() {
+  const idx = PRESET_ORDER.indexOf(renderSettings.id);
+  const nextId = PRESET_ORDER[(idx + 1) % PRESET_ORDER.length];
+  selectRenderPreset(nextId);
+}
+
 function syncViewUI() {
   fovSlider.value = String(viewSettings.fov);
   fovVal.innerHTML = `${Math.round(viewSettings.fov)}&deg;`;
@@ -214,13 +411,30 @@ function syncViewUI() {
   scaleVal.textContent = `${viewSettings.objDist.toFixed(2)}x`;
   distBadge.textContent = `FOV ${Math.round(viewSettings.fov)}° · DIST ${viewSettings.camDist.toFixed(2)}x`;
 
-  // Adjust fighter apparent scale slightly with objDist while keeping contrails & physics consistent
   jet.visual.scale.setScalar(0.74 / Math.sqrt(viewSettings.objDist));
 }
 
 viewBtn.addEventListener('click', () => {
-  const open = viewPanel.classList.toggle('hidden');
-  viewBtn.classList.toggle('active', !open);
+  const hidden = viewPanel.classList.toggle('hidden');
+  viewBtn.classList.toggle('active', !hidden);
+});
+
+styleSelect.addEventListener('change', () => {
+  selectRenderPreset(styleSelect.value);
+});
+
+resSelect.addEventListener('change', () => {
+  renderSettings.resHeight = Number(resSelect.value);
+  renderSettings.filter = renderSettings.resHeight === 0 || renderSettings.resHeight >= 720 ? 'linear' : 'nearest';
+  applyRenderSettings();
+});
+
+ditherSlider.addEventListener('input', () => {
+  const v = Number(ditherSlider.value);
+  renderSettings.dither = v;
+  renderSettings.terrainGrain = v;
+  renderSettings.levels = v > 0.05 ? Math.round(64 - v * 36) : 255;
+  applyRenderSettings();
 });
 
 fovSlider.addEventListener('input', () => {
@@ -240,6 +454,7 @@ scaleSlider.addEventListener('input', () => {
 
 vpResetBtn.addEventListener('click', () => {
   Object.assign(viewSettings, DEFAULT_VIEW);
+  selectRenderPreset('crisp480');
   syncViewUI();
 });
 
@@ -277,17 +492,15 @@ window.addEventListener('mousemove', (e) => {
 });
 
 window.addEventListener('mousedown', (e) => {
-  if (e.target.closest('button') || e.target.closest('.clickable') || e.target.closest('#view-panel')) return;
+  if (e.target.closest('button') || e.target.closest('select') || e.target.closest('.clickable') || e.target.closest('#view-panel')) return;
   dismissIntro();
   if (e.button === 0) {
     leftDownAt = performance.now();
     input.boost = true;
   } else if (e.button === 2) {
-    // RIGHT CLICK = Autocannon!
     input.cannonFiring = true;
     weapons.tryFireCannon(jet);
   } else if (e.button === 1) {
-    // MIDDLE CLICK = Missiles (FOX 2)
     e.preventDefault();
     weapons.tryFireMissile(jet);
   }
@@ -304,7 +517,6 @@ window.addEventListener('mouseup', (e) => {
   }
 });
 
-// Scroll wheel adjusts camera / object distance seamlessly
 window.addEventListener(
   'wheel',
   (e) => {
@@ -323,9 +535,11 @@ window.addEventListener('keydown', (e) => {
   dismissIntro();
 
   if (e.code === 'KeyE') {
-    // E toggles COCKPIT directly!
     e.preventDefault();
     toggleCockpit();
+  } else if (e.code === 'KeyV') {
+    e.preventDefault();
+    cycleRenderPreset();
   } else if (e.code === 'Space' || e.code === 'KeyC') {
     e.preventDefault();
     setCameraMode(camModeIdx + 1);
@@ -356,39 +570,18 @@ function toggleSound() {
 
 soundBtn.addEventListener('click', toggleSound);
 camSwitchBtn.addEventListener('click', () => setCameraMode(camModeIdx + 1));
+styleCycleBtn.addEventListener('click', cycleRenderPreset);
 cockpitToggleBtn.addEventListener('click', toggleCockpit);
 
-function handleResize() {
-  const w = window.innerWidth;
-  const h = window.innerHeight;
-  rtHeight = PIXEL_HEIGHT;
-  rtWidth = Math.max(360, Math.round(PIXEL_HEIGHT * (w / h)));
-
-  renderer.setSize(rtWidth, rtHeight, false);
-  renderTarget.setSize(rtWidth, rtHeight);
-  jetMaskTarget.setSize(rtWidth, rtHeight);
-  postMat.uniforms.uResolution.value.set(rtWidth, rtHeight);
-
-  cockpitCanvas.width = rtWidth;
-  cockpitCanvas.height = rtHeight;
-  cockpit.w = rtWidth;
-  cockpit.h = rtHeight;
-
-  camera.aspect = w / h;
-  camera.updateProjectionMatrix();
-}
-
-window.addEventListener('resize', handleResize);
-handleResize();
+window.addEventListener('resize', applyRenderSettings);
+applyRenderSettings();
 syncViewUI();
 setCameraMode(0);
 
-// Camera controller honoring user FOV, Cam Distance & Object Distance settings
 function updateCamera(dt) {
   const mode = CAMERA_MODES[camModeIdx].id;
   const fwd = jet.getForwardDirection();
 
-  // Dynamic FOV based on user FOV setting + objDist perspective adjustment + afterburner kick
   const objFovOffset = (viewSettings.objDist - 1.0) * 14.0;
   let targetFov = viewSettings.fov + objFovOffset + (jet.afterburner ? 8.5 : 0);
   if (mode === 'COCKPIT') {
@@ -441,7 +634,6 @@ function updateCamera(dt) {
     const euler = new THREE.Euler(jet.pitch, jet.yaw, jet.bank + extraRoll, 'YXZ');
     camera.quaternion.setFromEuler(euler);
   } else {
-    // TOP VIEW scaled cleanly with distance setting
     const horizFwd = new THREE.Vector3(-Math.sin(jet.yaw), 0, -Math.cos(jet.yaw));
     const desiredPos = jet.position
       .clone()
@@ -469,7 +661,7 @@ const projVec = new THREE.Vector3();
 
 function projectToScreen(worldPos) {
   projVec.copy(worldPos).project(camera);
-  if (projVec.z > 1.0) return null; // behind camera
+  if (projVec.z > 1.0) return null;
   return {
     x: (projVec.x * 0.5 + 0.5) * window.innerWidth,
     y: (-projVec.y * 0.5 + 0.5) * window.innerHeight,
@@ -495,7 +687,6 @@ function animate() {
 
   sound.updateJet(jet.throttle, jet.afterburner, isCockpit);
 
-  // Sync top-bar missile pips, telemetry & destruction feedback
   for (let i = 0; i < ammoPipEls.length; i++) {
     ammoPipEls[i].classList.toggle('ready', i < weapons.ammo);
   }
@@ -511,7 +702,6 @@ function animate() {
     killBanner.classList.add('hidden');
   }
 
-  // Project boresight aim reticle in CHASE view so aiming cannon/missiles is accurate
   if (modeId === 'CHASE') {
     const aimPt = jet.position.clone().addScaledVector(jet.getForwardDirection(), 180);
     const sp = projectToScreen(aimPt);
@@ -527,7 +717,6 @@ function animate() {
     aimReticle.classList.add('hidden');
   }
 
-  // Project target lock-on bracket over nearest destructible target ahead
   if (weapons.lockedTarget && weapons.lockedTarget.alive && modeId !== 'TOP') {
     const t = weapons.lockedTarget;
     const tPos = new THREE.Vector3(t.x, t.y + (t.h || 6) * 0.5, t.z);
@@ -545,15 +734,14 @@ function animate() {
     lockBox.classList.add('hidden');
   }
 
-  // Expose debug handle for live inspection
-  window.__GAME__ = { jet, weapons, world, setCameraMode };
+  window.__GAME__ = { jet, weapons, world, setCameraMode, selectRenderPreset, renderSettings };
 
-  // Pass 1: Render main 3D scene to low-res renderTarget
+  // Pass 1: Render 3D scene
   camera.layers.set(0);
   renderer.setRenderTarget(renderTarget);
   renderer.render(scene, camera);
 
-  // Pass 2: Render jet hull silhouette mask (Layer 1) for exact 1px pixel-art ink outline
+  // Pass 2: Jet hull silhouette mask (Layer 1)
   if (!isCockpit) {
     camera.layers.set(1);
     scene.overrideMaterial = maskWhiteMat;
@@ -565,11 +753,11 @@ function animate() {
     camera.layers.set(0);
   }
 
-  // Pass 3: Bayer 4x4 dithering + crisp 1px jet ink outline to screen
+  // Pass 3: Selected Render Style post-pass + jet outline
   renderer.setRenderTarget(null);
   renderer.render(postScene, postCam);
 
-  // Pass 4: Cockpit pixel-art overlay
+  // Pass 4: Cockpit 2D pixel-art overlay
   if (isCockpit) {
     cockpit.render(dt, jet, weapons);
   }
