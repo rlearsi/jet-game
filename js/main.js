@@ -9,14 +9,14 @@ import {
   DEFAULT_WORLD_SEED,
   sanitizeSeedString,
   generateRandomSeed,
-} from './world.js?v=23';
-import { FighterJet, RemoteJet, SHIP_CATALOG, SHIP_IDS } from './jet.js?v=23';
-import { MissileSystem } from './weapons.js?v=23';
-import { FighterCockpit } from './cockpit.js?v=23';
-import { JetSoundEngine } from './audio.js?v=23';
-import { MultiplayerManager } from './multiplayer.js?v=23';
-import { GamepadController, DEFAULT_GAMEPAD_DEADZONE } from './gamepad.js?v=23';
-import { TouchController } from './touch.js?v=23';
+} from './world.js?v=24';
+import { FighterJet, RemoteJet, SHIP_CATALOG, SHIP_IDS, buildJetVisualRig } from './jet.js?v=24';
+import { MissileSystem } from './weapons.js?v=24';
+import { FighterCockpit } from './cockpit.js?v=24';
+import { JetSoundEngine } from './audio.js?v=24';
+import { MultiplayerManager } from './multiplayer.js?v=24';
+import { GamepadController, DEFAULT_GAMEPAD_DEADZONE } from './gamepad.js?v=24';
+import { TouchController } from './touch.js?v=24';
 
 // 6 live-switchable rendering styles (exclusively configurable inside Settings -> Render, plus V in flight)
 const RENDER_PRESETS = {
@@ -218,6 +218,11 @@ const menuHangarBox = document.getElementById('menu-hangar-box');
 const menuHangarCount = document.getElementById('menu-hangar-count');
 const menuHangarList = document.getElementById('menu-hangar-list');
 const menuTerrainChip = document.getElementById('menu-terrain-chip');
+const menuHangarPreviewStage = document.getElementById('menu-hangar-preview-stage');
+const menuHangarPreviewCanvas = document.getElementById('menu-hangar-preview-canvas');
+const menuPreviewShipName = document.getElementById('menu-preview-ship-name');
+const menuPreviewShipRole = document.getElementById('menu-preview-ship-role');
+const menuPreviewShipMeta = document.getElementById('menu-preview-ship-meta');
 
 const menuMatchStatusBox = document.getElementById('menu-match-status-box');
 const menuLockedShipCard = document.getElementById('menu-locked-ship-card');
@@ -236,6 +241,11 @@ const mpBackBtn = document.getElementById('mp-back-btn');
 const mpStatusBadge = document.getElementById('mp-status-badge');
 const mpHangarLockNote = document.getElementById('mp-hangar-lock-note');
 const mpHangarList = document.getElementById('mp-hangar-list');
+const mpHangarPreviewStage = document.getElementById('mp-hangar-preview-stage');
+const mpHangarPreviewCanvas = document.getElementById('mp-hangar-preview-canvas');
+const mpPreviewShipName = document.getElementById('mp-preview-ship-name');
+const mpPreviewShipRole = document.getElementById('mp-preview-ship-role');
+const mpPreviewShipMeta = document.getElementById('mp-preview-ship-meta');
 const mpNameInput = document.getElementById('mp-name-input');
 const mpSignalSelect = document.getElementById('mp-signal-select');
 const mpTerrainText = document.getElementById('mp-terrain-text');
@@ -598,8 +608,267 @@ let rebindingAction = null;
 let showcaseOrbitAngle = 0.25;
 
 // =========================================================================
-// Ammo pips, Ship Cards & Hangar Locks
+// Ammo pips, Hangar 3D Preview Stage, Ship Cards & Hangar Locks
 // =========================================================================
+const HANGAR_PREVIEW_W = 380;
+const HANGAR_PREVIEW_H = 148;
+const hangarPreviewRT = new THREE.WebGLRenderTarget(HANGAR_PREVIEW_W, HANGAR_PREVIEW_H, {
+  minFilter: THREE.NearestFilter,
+  magFilter: THREE.NearestFilter,
+  format: THREE.RGBAFormat,
+});
+const hangarPreviewPixels = new Uint8Array(HANGAR_PREVIEW_W * HANGAR_PREVIEW_H * 4);
+const hangarPreviewScene = new THREE.Scene();
+const hangarPreviewCam = new THREE.PerspectiveCamera(34, HANGAR_PREVIEW_W / HANGAR_PREVIEW_H, 0.2, 80);
+
+const hangarHemiLight = new THREE.HemisphereLight(0xffe8d2, 0x3a4062, 1.35);
+hangarPreviewScene.add(hangarHemiLight);
+const hangarKeyLight = new THREE.DirectionalLight(0xfff0c8, 1.55);
+hangarKeyLight.position.set(10, 16, 12);
+hangarPreviewScene.add(hangarKeyLight);
+const hangarRimLight = new THREE.DirectionalLight(0xff8e52, 0.85);
+hangarRimLight.position.set(-12, 5, -10);
+hangarPreviewScene.add(hangarRimLight);
+
+// Hangar turntable pedestal
+const hangarTurntableGroup = new THREE.Group();
+hangarTurntableGroup.position.set(0, -1.25, 0);
+const pedestalBase = new THREE.Mesh(
+  new THREE.CylinderGeometry(4.1, 4.45, 0.24, 24),
+  new THREE.MeshBasicMaterial({ color: 0x1a2034 })
+);
+const pedestalRingOuter = new THREE.Mesh(
+  new THREE.RingGeometry(3.82, 4.02, 28),
+  new THREE.MeshBasicMaterial({ color: 0xf28c38, side: THREE.DoubleSide })
+);
+pedestalRingOuter.rotation.x = -Math.PI / 2;
+pedestalRingOuter.position.y = 0.13;
+const pedestalRingInner = new THREE.Mesh(
+  new THREE.RingGeometry(2.35, 2.45, 24),
+  new THREE.MeshBasicMaterial({ color: 0x58668a, side: THREE.DoubleSide })
+);
+pedestalRingInner.rotation.x = -Math.PI / 2;
+pedestalRingInner.position.y = 0.13;
+hangarTurntableGroup.add(pedestalBase, pedestalRingOuter, pedestalRingInner);
+hangarPreviewScene.add(hangarTurntableGroup);
+
+const hangarRigCache = new Map();
+let activeHangarPreviewRig = null;
+let activeHangarPreviewShipId = null;
+let hoveredShipId = null;
+let hangarPreviewYaw = 0.68;
+let hangarPreviewPitch = 0.34;
+let hangarDragPointerId = null;
+let hangarDragLastX = 0;
+let hangarDragLastY = 0;
+let hangarShowcasePulse = 0;
+
+const menuPreviewCtx = menuHangarPreviewCanvas ? menuHangarPreviewCanvas.getContext('2d') : null;
+const mpPreviewCtx = mpHangarPreviewCanvas ? mpHangarPreviewCanvas.getContext('2d') : null;
+const menuPreviewImgData = menuPreviewCtx ? menuPreviewCtx.createImageData(HANGAR_PREVIEW_W, HANGAR_PREVIEW_H) : null;
+const mpPreviewImgData = mpPreviewCtx ? mpPreviewCtx.createImageData(HANGAR_PREVIEW_W, HANGAR_PREVIEW_H) : null;
+
+const shipThumbDataUrls = new Map();
+
+function getHangarPreviewRig(shipId) {
+  const id = SHIP_CATALOG[shipId] ? shipId : 'striker';
+  let rig = hangarRigCache.get(id);
+  if (!rig) {
+    rig = buildJetVisualRig(id);
+    hangarRigCache.set(id, rig);
+  }
+  return rig;
+}
+
+function getDisplayedHangarShipId() {
+  if (hoveredShipId && SHIP_CATALOG[hoveredShipId] && !isShipLocked()) {
+    return hoveredShipId;
+  }
+  return jet.shipId;
+}
+
+function syncHangarPreviewHud() {
+  const shownId = getDisplayedHangarShipId();
+  const spec = SHIP_CATALOG[shownId] || SHIP_CATALOG.striker;
+  const isHoverPreview = shownId !== jet.shipId;
+  const titleText = isHoverPreview ? `PRÉVIA: ${spec.name}` : `SELECIONADA: ${spec.name}`;
+  const metaText = `${spec.maxHp} HP · ${spec.maxMissiles} MÍSSEIS · VEL ${spec.abSpeed}`;
+
+  for (const [stageEl, nameEl, roleEl, metaEl] of [
+    [menuHangarPreviewStage, menuPreviewShipName, menuPreviewShipRole, menuPreviewShipMeta],
+    [mpHangarPreviewStage, mpPreviewShipName, mpPreviewShipRole, mpPreviewShipMeta],
+  ]) {
+    if (stageEl) stageEl.classList.toggle('previewing', isHoverPreview);
+    if (nameEl) {
+      nameEl.textContent = titleText;
+      nameEl.style.color = isHoverPreview ? '#9ee8ff' : '#fff2d6';
+    }
+    if (roleEl) roleEl.textContent = spec.role;
+    if (metaEl) metaEl.textContent = metaText;
+  }
+
+  if (pedestalRingOuter && pedestalRingOuter.material) {
+    pedestalRingOuter.material.color.set(spec.palette?.accent || '#f28c38');
+  }
+}
+
+function attachHangarStageDrag(stageEl) {
+  if (!stageEl) return;
+  stageEl.addEventListener('pointerdown', (e) => {
+    hangarDragPointerId = e.pointerId;
+    hangarDragLastX = e.clientX;
+    hangarDragLastY = e.clientY;
+    try {
+      stageEl.setPointerCapture(e.pointerId);
+    } catch (_) {}
+  });
+  stageEl.addEventListener('pointermove', (e) => {
+    if (hangarDragPointerId !== e.pointerId) return;
+    const dx = e.clientX - hangarDragLastX;
+    const dy = e.clientY - hangarDragLastY;
+    hangarDragLastX = e.clientX;
+    hangarDragLastY = e.clientY;
+    hangarPreviewYaw += dx * 0.014;
+    hangarPreviewPitch = THREE.MathUtils.clamp(hangarPreviewPitch + dy * 0.008, 0.12, 0.78);
+  });
+  const endDrag = (e) => {
+    if (hangarDragPointerId === e.pointerId) {
+      hangarDragPointerId = null;
+    }
+  };
+  stageEl.addEventListener('pointerup', endDrag);
+  stageEl.addEventListener('pointercancel', endDrag);
+}
+
+attachHangarStageDrag(menuHangarPreviewStage);
+attachHangarStageDrag(mpHangarPreviewStage);
+
+function renderHangarPreviewToContext(ctx, imgData, drawTurntable = true) {
+  if (!ctx || !imgData) return;
+  const prevTarget = renderer.getRenderTarget();
+  const prevClearColor = renderer.getClearColor(new THREE.Color());
+  const prevClearAlpha = renderer.getClearAlpha();
+
+  hangarTurntableGroup.visible = drawTurntable;
+  renderer.setRenderTarget(hangarPreviewRT);
+  renderer.setClearColor(0x000000, 0);
+  renderer.clear();
+  renderer.render(hangarPreviewScene, hangarPreviewCam);
+  renderer.readRenderTargetPixels(hangarPreviewRT, 0, 0, HANGAR_PREVIEW_W, HANGAR_PREVIEW_H, hangarPreviewPixels);
+
+  renderer.setClearColor(prevClearColor, prevClearAlpha);
+  renderer.setRenderTarget(prevTarget);
+  hangarTurntableGroup.visible = true;
+
+  const dst = imgData.data;
+  const rowBytes = HANGAR_PREVIEW_W * 4;
+  for (let y = 0; y < HANGAR_PREVIEW_H; y++) {
+    const srcRow = (HANGAR_PREVIEW_H - 1 - y) * rowBytes;
+    const dstRow = y * rowBytes;
+    dst.set(hangarPreviewPixels.subarray(srcRow, srcRow + rowBytes), dstRow);
+  }
+  ctx.putImageData(imgData, 0, 0);
+}
+
+function generateShipCardThumbnails() {
+  if (!menuPreviewCtx || !menuPreviewImgData) return;
+  const thumbCanvas = document.createElement('canvas');
+  thumbCanvas.width = 88;
+  thumbCanvas.height = 64;
+  const thumbCtx = thumbCanvas.getContext('2d');
+  if (!thumbCtx) return;
+
+  for (const id of SHIP_IDS) {
+    if (activeHangarPreviewRig) {
+      hangarPreviewScene.remove(activeHangarPreviewRig.group);
+    }
+    const rig = getHangarPreviewRig(id);
+    activeHangarPreviewRig = rig;
+    activeHangarPreviewShipId = id;
+    rig.group.position.set(0, 0.1, 0);
+    rig.group.rotation.order = 'YXZ';
+    rig.group.rotation.set(0.32, 0.65, 0);
+    rig.visual.rotation.z = -0.18;
+    rig.flameL.scale.set(0.85, 0.85, 0.9);
+    rig.flameR.scale.set(0.85, 0.85, 0.9);
+    hangarPreviewScene.add(rig.group);
+
+    hangarPreviewCam.position.set(0, 3.8, 8.9);
+    hangarPreviewCam.lookAt(0, 0.0, 0);
+
+    renderHangarPreviewToContext(menuPreviewCtx, menuPreviewImgData, false);
+    thumbCtx.clearRect(0, 0, thumbCanvas.width, thumbCanvas.height);
+    const cropW = HANGAR_PREVIEW_W * 0.56;
+    const cropH = HANGAR_PREVIEW_H * 0.78;
+    const cropX = (HANGAR_PREVIEW_W - cropW) * 0.5;
+    const cropY = (HANGAR_PREVIEW_H - cropH) * 0.5;
+    thumbCtx.drawImage(
+      menuHangarPreviewCanvas,
+      cropX,
+      cropY,
+      cropW,
+      cropH,
+      0,
+      0,
+      thumbCanvas.width,
+      thumbCanvas.height
+    );
+    shipThumbDataUrls.set(id, thumbCanvas.toDataURL());
+  }
+}
+
+function updateHangarPreviewStage(dt, elapsed) {
+  if (!menuOpen || gameState !== 'menu') return;
+  if (activeMenuView !== 'main' && activeMenuView !== 'mp') return;
+
+  const targetCtx = activeMenuView === 'mp' ? mpPreviewCtx : menuPreviewCtx;
+  const targetImgData = activeMenuView === 'mp' ? mpPreviewImgData : menuPreviewImgData;
+  if (!targetCtx || !targetImgData) return;
+
+  const shownId = getDisplayedHangarShipId();
+  if (activeHangarPreviewShipId !== shownId || !activeHangarPreviewRig) {
+    if (activeHangarPreviewRig) {
+      hangarPreviewScene.remove(activeHangarPreviewRig.group);
+    }
+    activeHangarPreviewRig = getHangarPreviewRig(shownId);
+    activeHangarPreviewShipId = shownId;
+    hangarPreviewScene.add(activeHangarPreviewRig.group);
+    syncHangarPreviewHud();
+  }
+
+  if (hangarDragPointerId === null) {
+    hangarPreviewYaw += dt * 0.65;
+  }
+  if (hangarShowcasePulse > 0) {
+    hangarShowcasePulse = Math.max(0, hangarShowcasePulse - dt * 2.4);
+  }
+
+  const rig = activeHangarPreviewRig;
+  const bob = Math.sin(elapsed * 2.6) * 0.12;
+  const pulseScale = 1.0 + Math.sin(hangarShowcasePulse * Math.PI) * 0.10;
+  rig.visual.scale.setScalar(pulseScale);
+  rig.group.position.set(0, 0.15 + bob, 0);
+  rig.group.rotation.order = 'YXZ';
+  rig.group.rotation.y = hangarPreviewYaw;
+  rig.group.rotation.x = Math.sin(elapsed * 1.5) * 0.05;
+  rig.visual.rotation.z = Math.cos(hangarPreviewYaw) * 0.16;
+
+  const flicker = 0.88 + Math.random() * 0.28;
+  const fLen = (1.1 + hangarShowcasePulse * 0.6) * flicker;
+  rig.flameL.scale.set(0.95, 0.95, fLen);
+  rig.flameR.scale.set(0.95, 0.95, fLen);
+
+  hangarTurntableGroup.rotation.y = hangarPreviewYaw;
+
+  const camDist = 9.8;
+  const camY = Math.sin(hangarPreviewPitch) * camDist;
+  const camZ = Math.cos(hangarPreviewPitch) * camDist;
+  hangarPreviewCam.position.set(0, camY, camZ);
+  hangarPreviewCam.lookAt(0, -0.1, 0);
+
+  renderHangarPreviewToContext(targetCtx, targetImgData, true);
+}
+
 const ammoPipEls = [];
 function rebuildAmmoPips() {
   ammoPipsEl.innerHTML = '';
@@ -624,6 +893,7 @@ function createShipCardEl(id, locked) {
   const spec = SHIP_CATALOG[id];
   const card = document.createElement('button');
   card.type = 'button';
+  card.dataset.shipId = id;
   card.className = 'ship-card' + (jet.shipId === id ? ' selected' : '') + (locked ? ' locked' : '');
   card.disabled = locked;
 
@@ -631,24 +901,34 @@ function createShipCardEl(id, locked) {
   const agiPct = Math.round((spec.turnRate / 1.65) * 100);
   const hpPct = Math.round((spec.maxHp / 150) * 100);
   const mslPct = Math.round((spec.maxMissiles / 8) * 100);
+  const thumbUrl = shipThumbDataUrls.get(id) || '';
 
   card.innerHTML = `
-    <div class="ship-card-head">
-      <span class="ship-card-name"><span class="ship-swatch" style="background:${spec.palette.base};border-color:${spec.palette.accent}"></span>${spec.name}</span>
-      <span class="ship-card-role">${spec.role}</span>
-    </div>
-    <div class="ship-stats">
-      <div class="ship-stat-row"><span>SPD</span><div class="ship-stat-bar"><div class="ship-stat-fill" style="width:${spdPct}%"></div></div></div>
-      <div class="ship-stat-row"><span>AGI</span><div class="ship-stat-bar"><div class="ship-stat-fill" style="width:${agiPct}%"></div></div></div>
-      <div class="ship-stat-row"><span>HP</span><div class="ship-stat-bar"><div class="ship-stat-fill" style="width:${hpPct}%;background:#4cff88"></div></div></div>
-      <div class="ship-stat-row"><span>MSL</span><div class="ship-stat-bar"><div class="ship-stat-fill" style="width:${mslPct}%;background:#ffb842"></div></div></div>
+    <div class="ship-card-top-row">
+      ${thumbUrl ? `<img class="ship-card-thumb" src="${thumbUrl}" alt="${spec.name}" />` : ''}
+      <div class="ship-card-info">
+        <div class="ship-card-head">
+          <span class="ship-card-name"><span class="ship-swatch" style="background:${spec.palette.base};border-color:${spec.palette.accent}"></span>${spec.name}</span>
+          <span class="ship-card-role">${spec.role}</span>
+        </div>
+        <div class="ship-stats">
+          <div class="ship-stat-row"><span>SPD</span><div class="ship-stat-bar"><div class="ship-stat-fill" style="width:${spdPct}%"></div></div></div>
+          <div class="ship-stat-row"><span>AGI</span><div class="ship-stat-bar"><div class="ship-stat-fill" style="width:${agiPct}%"></div></div></div>
+          <div class="ship-stat-row"><span>HP</span><div class="ship-stat-bar"><div class="ship-stat-fill" style="width:${hpPct}%;background:#4cff88"></div></div></div>
+          <div class="ship-stat-row"><span>MSL</span><div class="ship-stat-bar"><div class="ship-stat-fill" style="width:${mslPct}%;background:#ffb842"></div></div></div>
+        </div>
+      </div>
     </div>
   `;
   return card;
 }
 
 function renderAllHangars() {
+  if (shipThumbDataUrls.size === 0) {
+    generateShipCardThumbnails();
+  }
   const locked = isShipLocked();
+  if (locked) hoveredShipId = null;
   if (menuHangarCount) {
     menuHangarCount.textContent = String(SHIP_IDS.length);
   }
@@ -658,6 +938,18 @@ function renderAllHangars() {
     for (const id of SHIP_IDS) {
       const card = createShipCardEl(id, locked);
       card.addEventListener('click', () => selectShip(id));
+      card.addEventListener('pointerenter', () => {
+        if (!isShipLocked() && hoveredShipId !== id) {
+          hoveredShipId = id;
+          syncHangarPreviewHud();
+        }
+      });
+      card.addEventListener('pointerleave', () => {
+        if (hoveredShipId === id) {
+          hoveredShipId = null;
+          syncHangarPreviewHud();
+        }
+      });
       container.appendChild(card);
     }
   }
@@ -669,6 +961,7 @@ function renderAllHangars() {
     menuLockedShipCard.innerHTML = '';
     menuLockedShipCard.appendChild(createShipCardEl(jet.shipId, true));
   }
+  syncHangarPreviewHud();
 }
 
 function selectShip(shipId) {
@@ -679,6 +972,8 @@ function selectShip(shipId) {
     sound.playEmpty();
     return false;
   }
+  hoveredShipId = null;
+  hangarShowcasePulse = 1.0;
   jet.setShip(shipId);
   jet.visual.scale.setScalar(0.74 / Math.sqrt(viewSettings.objDist));
   weapons.setShipStats(jet.stats);
@@ -2819,7 +3114,12 @@ function animate() {
   renderer.setRenderTarget(null);
   renderer.render(postScene, postCam);
 
-  // Pass 4: Cockpit 2D pixel-art overlay (only while actively flying in Cockpit view)
+  // Pass 4: Hangar 3D Preview Stage (interactive 3D turntable inside pre-flight menu)
+  if (gameState === 'menu' && menuOpen) {
+    updateHangarPreviewStage(dt, elapsed);
+  }
+
+  // Pass 5: Cockpit 2D pixel-art overlay (only while actively flying in Cockpit view)
   if (renderCockpitOverlay) {
     cockpit.render(dt, jet, weapons, remoteJets, world.getPickups(), world.getShips());
   }

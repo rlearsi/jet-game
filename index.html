@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Sunset Striker — Pixel-Art Fighter Jet</title>
-  <link rel="stylesheet" href="style.css?v=23" />
+  <link rel="stylesheet" href="style.css?v=24" />
 </head>
 <body>
   <canvas id="game-canvas"></canvas>
@@ -162,6 +162,19 @@
                 <span>HANGAR &mdash; ESCOLHA SUA NAVE (<span id="menu-hangar-count">7</span>)</span>
                 <span class="mp-badge connecting">PRÉ-VOO</span>
               </div>
+              <div id="menu-hangar-preview-stage" class="hangar-preview-stage">
+                <canvas id="menu-hangar-preview-canvas" class="hangar-preview-canvas" width="380" height="148"></canvas>
+                <div class="hangar-preview-hud">
+                  <div class="hangar-preview-head">
+                    <span id="menu-preview-ship-name" class="hangar-preview-name">F-22 STRIKER</span>
+                    <span id="menu-preview-ship-role" class="hangar-preview-role">BALANCED MULTIROLE</span>
+                  </div>
+                  <div class="hangar-preview-sub">
+                    <span id="menu-preview-ship-meta" class="hangar-preview-meta">100 HP &middot; 4 MSL &middot; AB 98</span>
+                    <span class="hangar-preview-hint">&#8635; ARRASTE P/ GIRAR</span>
+                  </div>
+                </div>
+              </div>
               <div id="menu-hangar-list" class="hangar-list"></div>
               <div id="menu-terrain-chip" class="menu-terrain-chip">TERRENO: Pôr do Sol Clássico &middot; Normal</div>
             </div>
@@ -211,6 +224,19 @@
             <div class="vp-header">
               <span>1. ESCOLHA SUA NAVE (ANTES DA PARTIDA)</span>
               <span id="mp-hangar-lock-note" class="mp-badge connecting">LIVRE</span>
+            </div>
+            <div id="mp-hangar-preview-stage" class="hangar-preview-stage">
+              <canvas id="mp-hangar-preview-canvas" class="hangar-preview-canvas" width="380" height="148"></canvas>
+              <div class="hangar-preview-hud">
+                <div class="hangar-preview-head">
+                  <span id="mp-preview-ship-name" class="hangar-preview-name">F-22 STRIKER</span>
+                  <span id="mp-preview-ship-role" class="hangar-preview-role">BALANCED MULTIROLE</span>
+                </div>
+                <div class="hangar-preview-sub">
+                  <span id="mp-preview-ship-meta" class="hangar-preview-meta">100 HP &middot; 4 MSL &middot; AB 98</span>
+                  <span class="hangar-preview-hint">&#8635; ARRASTE P/ GIRAR</span>
+                </div>
+              </div>
             </div>
             <div id="mp-hangar-list" class="hangar-list"></div>
           </div>
@@ -530,6 +556,6 @@
       }
     }
   </script>
-  <script type="module" src="js/main.js?v=23"></script>
+  <script type="module" src="js/main.js?v=24"></script>
 </body>
 </html>

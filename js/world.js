@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { SHIP_STYLES, createNavalFleetMeshes } from './ships/index.js?v=23';
+import { SHIP_STYLES, createNavalFleetMeshes } from './ships/index.js?v=24';
 
 export const WORLD_SIZE = 2800;
 export const WATER_LEVEL = 0.0;
