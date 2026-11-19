@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { getTerrainHeight, WATER_LEVEL } from './world.js?v=26';
-import { DitheredParticlePool } from './particles.js?v=26';
+import { getTerrainHeight, WATER_LEVEL } from './world.js?v=27';
+import { DitheredParticlePool } from './particles.js?v=27';
 
 const _tmpColor = new THREE.Color();
 const _tmpVel = new THREE.Vector3();

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { SHIP_STYLES, createNavalFleetMeshes } from './ships/index.js?v=26';
+import { SHIP_STYLES, createNavalFleetMeshes } from './ships/index.js?v=27';
 
 export const WORLD_SIZE = 2800;
 export const WATER_LEVEL = 0.0;
@@ -783,11 +783,11 @@ export function buildWorld(scene) {
         vec3 colSandLight    = vec3(0.92, 0.87, 0.62);
         vec3 colSandShade    = vec3(0.82, 0.76, 0.52);
 
-        // 2. Jungle Biome: uniform lush green fields with layered shades of green for depth
-        vec3 colJungleMeadow = vec3(0.48, 0.72, 0.34);
-        vec3 colJungleMid    = vec3(0.32, 0.60, 0.29);
-        vec3 colJungleDeep   = vec3(0.20, 0.46, 0.23);
-        vec3 colJungleRidge  = vec3(0.14, 0.36, 0.19);
+        // 2. Jungle Biome: crisp pixel-art green tones matching the Tree1..4 sprites
+        vec3 colJungleMeadow = vec3(0.35, 0.72, 0.34);
+        vec3 colJungleMid    = vec3(0.22, 0.56, 0.33);
+        vec3 colJungleDeep   = vec3(0.14, 0.42, 0.32);
+        vec3 colJungleRidge  = vec3(0.10, 0.28, 0.25);
 
         // 3. Desert Biome: strictly golden & warm yellow-amber tones for dune depth
         vec3 colDesertPale   = vec3(0.95, 0.86, 0.52);
@@ -845,30 +845,34 @@ export function buildWorld(scene) {
           colRockDark     = vec3(0.38, 0.44, 0.56);
         }
 
-        // Smooth shoreline sand base
-        vec3 sandCol = mix(colSandShade, colSandLight, smoothstep(0.32, 0.68, contourNoise * 0.7 + stipple * 0.3));
+        // Crisp pixel-art stepped shoreline sand (no smooth gradient)
+        float sandVal = contourNoise * 0.55 + rawStipple * 0.45;
+        vec3 sandCol = mix(colSandShade, colSandLight, step(0.48, sandVal));
 
-        // Build clean Jungle Biome color (smooth transitions across 4 harmonious green tones)
+        // Build crisp Jungle Biome color (hard pixel-art steps matching tree greens, no smooth gradient)
         float jElevation = clamp((h - 4.0) / 62.0, 0.0, 1.0);
-        float jDepth = clamp(contourNoise * 0.55 + detailContour * 0.30 + jElevation * 0.35 + (stipple - 0.5) * 0.12, 0.0, 1.0);
-        vec3 jungleCol = mix(colJungleMeadow, colJungleMid, smoothstep(0.22, 0.48, jDepth));
-        jungleCol = mix(jungleCol, colJungleDeep, smoothstep(0.48, 0.74, jDepth));
-        jungleCol = mix(jungleCol, colJungleRidge, smoothstep(0.74, 0.94, jDepth + slope * 0.35));
+        float jPix = hash(floor(p * 0.45));
+        float jDepth = clamp(contourNoise * 0.48 + detailContour * 0.24 + jElevation * 0.30 + (jPix - 0.5) * 0.22, 0.0, 1.0);
+        vec3 jungleCol = mix(colJungleMeadow, colJungleMid, step(0.32, jDepth));
+        jungleCol = mix(jungleCol, colJungleDeep, step(0.56, jDepth));
+        jungleCol = mix(jungleCol, colJungleRidge, step(0.78, jDepth + slope * 0.30));
 
-        // Build clean Desert Biome color (pure yellow & golden-amber depth bands, no red/green spots)
+        // Build crisp Desert Biome color (stepped golden & amber pixel bands, no gradient)
         float duneWave = sin(p.x * 0.022 + p.y * 0.016 + contourNoise * 4.5) * 0.5 + 0.5;
-        float dDepth = clamp(contourNoise * 0.50 + duneWave * 0.32 + slope * 0.45 + (stipple - 0.5) * 0.10, 0.0, 1.0);
-        vec3 desertCol = mix(colDesertPale, colDesertGold, smoothstep(0.20, 0.48, dDepth));
-        desertCol = mix(desertCol, colDesertAmber, smoothstep(0.48, 0.75, dDepth));
-        desertCol = mix(desertCol, colDesertShadow, smoothstep(0.75, 0.95, dDepth));
+        float dDepth = clamp(contourNoise * 0.45 + duneWave * 0.32 + slope * 0.40 + (rawStipple - 0.5) * 0.18, 0.0, 1.0);
+        vec3 desertCol = mix(colDesertPale, colDesertGold, step(0.30, dDepth));
+        desertCol = mix(desertCol, colDesertAmber, step(0.55, dDepth));
+        desertCol = mix(desertCol, colDesertShadow, step(0.78, dDepth));
 
-        // Build clean Canyon Biome color (smooth horizontal sandstone strata)
+        // Build crisp Canyon Biome color (stepped sandstone strata)
         float strata = sin(h * 0.22 + contourNoise * 2.4) * 0.5 + 0.5;
-        vec3 canyonCol = mix(colCanyonSand, colCanyonOchre, smoothstep(0.25, 0.60, strata));
-        canyonCol = mix(canyonCol, colCanyonDeep, smoothstep(0.62, 0.90, strata + slope * 0.3));
+        float cVal = clamp(strata + (rawStipple - 0.5) * 0.16, 0.0, 1.0);
+        vec3 canyonCol = mix(colCanyonSand, colCanyonOchre, step(0.38, cVal));
+        canyonCol = mix(canyonCol, colCanyonDeep, step(0.70, cVal + slope * 0.25));
 
-        // Build clean Volcanic Biome color
-        vec3 volcCol = mix(colBasalt, colAsh, smoothstep(0.35, 0.70, contourNoise * 0.7 + fineCluster * 0.3));
+        // Build crisp Volcanic Biome color
+        float vVal = clamp(contourNoise * 0.65 + rawStipple * 0.35, 0.0, 1.0);
+        vec3 volcCol = mix(colBasalt, colAsh, step(0.52, vVal));
         float dCaldera = length(p - vec2(-720.0, -280.0));
         float lavaPulse = 0.75 + 0.25 * sin(uTime * 2.2 + dCaldera * 0.15);
         if ((dCaldera < 62.0 || (volcanoMask > 0.6 && h > 115.0 && slope < 0.28)) && h > 85.0 && stipple > 0.52) {
@@ -876,7 +880,7 @@ export function buildWorld(scene) {
         }
 
         // Combine distinct biomes cleanly above the shoreline beach
-        float inlandMask = smoothstep(3.2, 8.5, h + (contourNoise - 0.5) * 2.5);
+        float inlandMask = step(4.8, h + (contourNoise - 0.5) * 2.5 + (rawStipple - 0.5) * 1.4);
         vec3 biomeSurface =
           jungleCol * jungleMask +
           desertCol * desertMask +
@@ -884,15 +888,15 @@ export function buildWorld(scene) {
           volcCol * volcanoMask;
         vec3 baseCol = mix(sandCol, biomeSurface, inlandMask);
 
-        // High mountain rock slopes & sub-peak cliffs
+        // High mountain rock slopes & sub-peak cliffs (stepped pixel transition)
         float rockMask = smoothstep(54.0, 82.0, h) + smoothstep(0.27, 0.45, slope) * smoothstep(18.0, 36.0, h);
         rockMask = clamp(rockMask, 0.0, 1.0) * (1.0 - canyonMask * 0.75) * (1.0 - volcanoMask * 0.75) * (1.0 - desertMask * 0.45);
         if (rockMask > 0.02) {
-          vec3 rock = mix(colRockDark, colRockLight, smoothstep(0.32, 0.68, contourNoise * 0.65 + fineCluster * 0.35));
-          baseCol = mix(baseCol, rock, smoothstep(0.15, 0.72, rockMask));
+          vec3 rock = mix(colRockDark, colRockLight, step(0.48, contourNoise * 0.6 + rawStipple * 0.4));
+          baseCol = mix(baseCol, rock, step(0.42, rockMask + (rawStipple - 0.5) * 0.22));
         }
 
-        // Snow caps on the highest mountain peaks (visible across all high peaks above ~72m!)
+        // Snow caps on the highest mountain peaks (stepped pixel edge)
         float snowLine = 74.0 + (contourNoise - 0.5) * 14.0 - slope * 12.0;
         float snowZoneMask = (1.0 - volcanoMask * 0.92) * (1.0 - canyonMask * 0.85);
         if (uTerrainTheme >= 2.5) {
@@ -901,8 +905,8 @@ export function buildWorld(scene) {
         } else if (uTerrainTheme >= 1.5) {
           snowLine = 115.0 + (contourNoise - 0.5) * 14.0 - slope * 14.0;
         }
-        float snowMask = smoothstep(snowLine, snowLine + 15.0, h) * snowZoneMask;
-        vec3 snowTone = mix(colSnowShade, colSnow, smoothstep(0.25, 0.75, N.y * 0.7 + contourNoise * 0.3));
+        float snowMask = step(snowLine, h + (rawStipple - 0.5) * 6.0) * step(0.5, snowZoneMask);
+        vec3 snowTone = mix(colSnowShade, colSnow, step(0.48, N.y * 0.65 + rawStipple * 0.35));
         baseCol = mix(baseCol, snowTone, snowMask);
 
         if (vScorch > 0.04) {
@@ -1299,18 +1303,18 @@ export function buildWorld(scene) {
 
   // 4 Land Rock Billboards (single frame 64x64)
   const rockDefs = [
-    { mat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Rocks/Rock1.png'), 1, 0), baseW: 9.5, baseH: 9.5, color: 0x668488 },
-    { mat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Rocks/Rock2.png'), 1, 0), baseW: 10.5, baseH: 10.5, color: 0x668488 },
-    { mat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Rocks/Rock3.png'), 1, 0), baseW: 10.0, baseH: 10.0, color: 0x5c7a7e },
-    { mat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Rocks/Rock4.png'), 1, 0), baseW: 11.5, baseH: 11.5, color: 0x5c7a7e },
+    { mat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Rocks/Rock1.png'), 1, 0), baseW: 4.8, baseH: 4.8, color: 0x668488 },
+    { mat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Rocks/Rock2.png'), 1, 0), baseW: 5.2, baseH: 5.2, color: 0x668488 },
+    { mat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Rocks/Rock3.png'), 1, 0), baseW: 5.0, baseH: 5.0, color: 0x5c7a7e },
+    { mat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Rocks/Rock4.png'), 1, 0), baseW: 5.8, baseH: 5.8, color: 0x5c7a7e },
   ];
 
   // 4 Animated Water Rock Billboards (16 frames each, 64x64 per frame with animated foam waves)
   const waterRockDefs = [
-    { mat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Rocks in the Water/Water Rocks_01.png'), 16, 10.0), baseW: 15.0, baseH: 15.0, color: 0x729ca2 },
-    { mat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Rocks in the Water/Water Rocks_02.png'), 16, 10.0), baseW: 16.5, baseH: 16.5, color: 0x729ca2 },
-    { mat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Rocks in the Water/Water Rocks_03.png'), 16, 10.0), baseW: 15.8, baseH: 15.8, color: 0x729ca2 },
-    { mat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Rocks in the Water/Water Rocks_04.png'), 16, 10.0), baseW: 18.0, baseH: 18.0, color: 0x729ca2 },
+    { mat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Rocks in the Water/Water Rocks_01.png'), 16, 10.0), baseW: 7.5, baseH: 7.5, color: 0x729ca2 },
+    { mat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Rocks in the Water/Water Rocks_02.png'), 16, 10.0), baseW: 8.2, baseH: 8.2, color: 0x729ca2 },
+    { mat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Rocks in the Water/Water Rocks_03.png'), 16, 10.0), baseW: 7.9, baseH: 7.9, color: 0x729ca2 },
+    { mat: createBillboardSpriteMaterial(loadPixelBillboardTexture('assets/Rocks in the Water/Water Rocks_04.png'), 16, 10.0), baseW: 9.0, baseH: 9.0, color: 0x729ca2 },
   ];
 
   // 8 Cloud Sprite Billboards (576x256)
