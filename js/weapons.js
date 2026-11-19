@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { getTerrainHeight, WATER_LEVEL } from './world.js?v=21';
-import { DitheredParticlePool } from './particles.js?v=21';
+import { getTerrainHeight, WATER_LEVEL } from './world.js?v=22';
+import { DitheredParticlePool } from './particles.js?v=22';
 
 const _tmpColor = new THREE.Color();
 const _tmpVel = new THREE.Vector3();
@@ -148,13 +148,11 @@ export class MissileSystem {
             droppedMedkit = true;
             this.netHooks.onSpawnDrop?.(drop);
           }
-        } else if (!spawnedMissileDrop && o.type !== 'tree') {
-          // 2. Destroyed ships & ground targets have a chance to drop a sea-skim / low-altitude missile crate!
-          const chance = o.type === 'ship' ? 0.62 : o.type === 'boat' ? 0.35 : 0.42;
-          const roll = Math.random();
-          if (roll < chance || (o.type === 'ship' && this.ammo === 0 && roll < 0.85)) {
-            const dropY = o.type === 'ship' || o.type === 'boat' ? WATER_LEVEL + 5.0 : o.y + 8.0;
-            const drop = this.world.spawnDroppedPickup('missile', o.x, dropY, o.z);
+        } else if (!spawnedMissileDrop && o.type === 'ship') {
+          // 2. ONLY destroyed naval ships have a rare chance to drop a sea-skim missile crate (never houses, boats or ground targets)!
+          const chance = this.ammo === 0 ? 0.35 : 0.22;
+          if (Math.random() < chance) {
+            const drop = this.world.spawnDroppedPickup('missile', o.x, WATER_LEVEL + 5.0, o.z);
             if (drop) {
               spawnedMissileDrop = true;
               this.netHooks.onSpawnDrop?.(drop);
@@ -226,7 +224,7 @@ export class MissileSystem {
     if (this.ammo <= 0) {
       this.cooldown = 0.25;
       this.sound.playEmpty();
-      this.killBannerText = 'SEM MÍSSEIS! DESTRUA NAVIOS/ALVOS P/ DROPAR';
+      this.killBannerText = 'SEM MÍSSEIS! DESTRUA NAVIOS P/ DROPAR';
       this.killBannerTimer = 1.5;
       return false;
     }
