@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sunset Striker — Pixel-Art Fighter Jet</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <canvas id="game-canvas"></canvas>
+
+  <!-- Pixel-art fighter cockpit overlay (visible in COCKPIT mode) -->
+  <canvas id="cockpit-canvas" width="480" height="270"></canvas>
+
+  <!-- Top slim control bar -->
+  <div id="hud-top-bar">
+    <div class="top-controls">
+      <span><b>MOUSE</b> STEER, CLIMB, DIVE</span>
+      <span class="sep">&middot;</span>
+      <span><b>CLICK</b> ROLL</span>
+      <span class="sep">&middot;</span>
+      <span><b>HOLD</b> AFTERBURNER</span>
+      <span class="sep">&middot;</span>
+      <span><b>RIGHT CLICK</b> CANNON</span>
+      <span class="sep">&middot;</span>
+      <span>
+        <b>F</b> MISSILES
+        <span id="ammo-pips" class="ammo-pips"></span>
+      </span>
+      <span class="sep">&middot;</span>
+      <span id="cockpit-toggle-btn" class="clickable"><b>E</b> COCKPIT</span>
+      <span class="sep">&middot;</span>
+      <span id="cam-switch-btn" class="clickable"><b>SPACE</b> <span id="cam-next-label">TOP VIEW</span></span>
+    </div>
+  </div>
+
+  <!-- Top-right buttons: VIEW (POV/FOV/Distance controls) + SOUND -->
+  <div id="hud-top-right">
+    <button id="view-btn" class="hud-btn" type="button">VIEW / FOV</button>
+    <button id="sound-btn" class="hud-btn" type="button">SOUND: OFF</button>
+  </div>
+
+  <!-- Collapsible POV / FOV / Object Distance panel -->
+  <div id="view-panel" class="view-panel hidden">
+    <div class="vp-header">
+      <span>CAMERA &amp; DISTANCE</span>
+      <button id="vp-reset" class="vp-reset-btn" type="button">RESET</button>
+    </div>
+    <label class="vp-row">
+      <span>FOV</span>
+      <input id="fov-slider" type="range" min="45" max="110" step="1" value="80" />
+      <span id="fov-val" class="vp-val">80&deg;</span>
+    </label>
+    <label class="vp-row">
+      <span>CAM DIST</span>
+      <input id="dist-slider" type="range" min="0.5" max="2.6" step="0.05" value="1.35" />
+      <span id="dist-val" class="vp-val">1.35x</span>
+    </label>
+    <label class="vp-row">
+      <span>OBJ DIST</span>
+      <input id="scale-slider" type="range" min="0.5" max="2.2" step="0.05" value="1.00" />
+      <span id="scale-val" class="vp-val">1.00x</span>
+    </label>
+    <div class="vp-tip">TIP: SCROLL WHEEL OR [ / ] ADJUSTS DISTANCE</div>
+  </div>
+
+  <!-- Subtle camera & biome telemetry badge (bottom-left, hidden in cockpit) -->
+  <div id="hud-bottom-left">
+    <span id="cam-badge">CHASE VIEW</span>
+    <span class="sep">&middot;</span>
+    <span id="telem-badge">SPD 580 &middot; ALT 340</span>
+    <span class="sep">&middot;</span>
+    <span id="dist-badge">FOV 80&deg; &middot; DIST 1.35x</span>
+  </div>
+
+  <!-- Brief intro banner -->
+  <div id="start-hint">
+    <div class="hint-title">SUNSET STRIKER</div>
+    <div class="hint-sub">RIGHT CLICK CANNON &middot; F MISSILES &middot; E COCKPIT &middot; SPACE CAMERA &middot; SCROLL DISTANCE</div>
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.164.1/build/three.module.js"
+      }
+    }
+  </script>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
