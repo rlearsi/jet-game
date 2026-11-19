@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Sunset Striker — Pixel-Art Fighter Jet</title>
-  <link rel="stylesheet" href="style.css?v=12" />
+  <link rel="stylesheet" href="style.css?v=13" />
 </head>
 <body>
   <canvas id="game-canvas"></canvas>
@@ -339,6 +339,10 @@
               <span>JOYSTICK / GAMEPAD</span>
               <span id="ctrl-gamepad-status" class="gamepad-status-badge disconnected">NENHUM DETECTADO</span>
             </div>
+            <div class="settings-row">
+              <span>INVERTER JOYSTICK (BAIXO SOBE / CIMA DESCE)</span>
+              <button id="ctrl-gamepad-invert-y-btn" class="vp-reset-btn settings-toggle-btn" type="button">NÃO</button>
+            </div>
             <label class="vp-row settings-vp-row">
               <span>ZONA MORTA (JOYSTICK)</span>
               <input id="ctrl-deadzone-slider" type="range" min="0.05" max="0.35" step="0.01" value="0.14" />
@@ -459,6 +463,6 @@
       }
     }
   </script>
-  <script type="module" src="js/main.js?v=12"></script>
+  <script type="module" src="js/main.js?v=13"></script>
 </body>
 </html>

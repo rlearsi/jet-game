@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { getTerrainHeight, WATER_LEVEL, SUN_DIR } from './world.js?v=12';
+import { getTerrainHeight, WATER_LEVEL, SUN_DIR } from './world.js?v=13';
 
 export const SHIP_IDS = ['striker', 'viper', 'phantom', 'hornet', 'starfire', 'sakura'];
 
@@ -1187,11 +1187,12 @@ export class FighterJet {
   update(dt, input, isCockpit) {
     const sens = input.sensitivity ?? 1.0;
     const ySign = input.invertY ? -1 : 1;
+    const joyYSign = input.gamepadInvertY ? -1 : 1;
     let steerX;
     let steerY;
     if (input.gamepadActive) {
       steerX = THREE.MathUtils.clamp((input.joyX || 0) * sens, -1, 1);
-      steerY = THREE.MathUtils.clamp((input.joyY || 0) * sens * ySign, -1, 1);
+      steerY = THREE.MathUtils.clamp((input.joyY || 0) * sens * joyYSign, -1, 1);
     } else {
       steerX = THREE.MathUtils.clamp((input.mouseX || 0) * sens, -1, 1);
       steerY = THREE.MathUtils.clamp((input.mouseY || 0) * sens * ySign, -1, 1);

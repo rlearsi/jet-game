@@ -6,13 +6,13 @@ import {
   TERRAIN_DEFORM_MODES,
   TERRAIN_CLOUD_MODES,
   DEFAULT_TERRAIN_OPTIONS,
-} from './world.js?v=12';
-import { FighterJet, RemoteJet, SHIP_CATALOG, SHIP_IDS } from './jet.js?v=12';
-import { MissileSystem } from './weapons.js?v=12';
-import { FighterCockpit } from './cockpit.js?v=12';
-import { JetSoundEngine } from './audio.js?v=12';
-import { MultiplayerManager } from './multiplayer.js?v=12';
-import { GamepadController, DEFAULT_GAMEPAD_DEADZONE } from './gamepad.js?v=12';
+} from './world.js?v=13';
+import { FighterJet, RemoteJet, SHIP_CATALOG, SHIP_IDS } from './jet.js?v=13';
+import { MissileSystem } from './weapons.js?v=13';
+import { FighterCockpit } from './cockpit.js?v=13';
+import { JetSoundEngine } from './audio.js?v=13';
+import { MultiplayerManager } from './multiplayer.js?v=13';
+import { GamepadController, DEFAULT_GAMEPAD_DEADZONE } from './gamepad.js?v=13';
 
 // 6 live-switchable rendering styles (exclusively configurable inside Settings -> Render, plus V in flight)
 const RENDER_PRESETS = {
@@ -125,6 +125,7 @@ const BINDING_META = [
 
 const DEFAULT_CONTROLS = {
   invertY: false,
+  gamepadInvertY: false,
   mouseSensitivity: 1.0,
   gamepadDeadzone: DEFAULT_GAMEPAD_DEADZONE,
   bindings: { ...DEFAULT_BINDINGS },
@@ -265,6 +266,7 @@ const audioSfxVal = document.getElementById('audio-sfx-val');
 const audioTestBtn = document.getElementById('audio-test-btn');
 
 const ctrlGamepadStatus = document.getElementById('ctrl-gamepad-status');
+const ctrlGamepadInvertYBtn = document.getElementById('ctrl-gamepad-invert-y-btn');
 const ctrlDeadzoneSlider = document.getElementById('ctrl-deadzone-slider');
 const ctrlDeadzoneVal = document.getElementById('ctrl-deadzone-val');
 const ctrlInvertYBtn = document.getElementById('ctrl-invert-y-btn');
@@ -348,6 +350,7 @@ const audioSettings = {
 const savedControls = readJsonStorage('sunsetStriker_controls');
 const controlSettings = {
   invertY: Boolean(savedControls?.invertY),
+  gamepadInvertY: Boolean(savedControls?.gamepadInvertY),
   mouseSensitivity: Number.isFinite(Number(savedControls?.mouseSensitivity))
     ? THREE.MathUtils.clamp(Number(savedControls.mouseSensitivity), 0.5, 1.8)
     : DEFAULT_CONTROLS.mouseSensitivity,
@@ -872,6 +875,10 @@ const gamepad = new GamepadController({
 function syncControlsUI() {
   ctrlInvertYBtn.textContent = controlSettings.invertY ? 'SIM' : 'NÃO';
   ctrlInvertYBtn.classList.toggle('active', controlSettings.invertY);
+  if (ctrlGamepadInvertYBtn) {
+    ctrlGamepadInvertYBtn.textContent = controlSettings.gamepadInvertY ? 'SIM' : 'NÃO';
+    ctrlGamepadInvertYBtn.classList.toggle('active', controlSettings.gamepadInvertY);
+  }
   ctrlSensSlider.value = controlSettings.mouseSensitivity.toFixed(2);
   ctrlSensVal.textContent = `${controlSettings.mouseSensitivity.toFixed(2)}x`;
   if (ctrlDeadzoneSlider) {
@@ -896,6 +903,7 @@ function syncControlsUI() {
 
   input.sensitivity = controlSettings.mouseSensitivity;
   input.invertY = controlSettings.invertY;
+  input.gamepadInvertY = controlSettings.gamepadInvertY;
   input.afterburnerKey = b.afterburner;
 
   renderBindingsList();
@@ -903,6 +911,13 @@ function syncControlsUI() {
 
 ctrlInvertYBtn.addEventListener('click', () => {
   controlSettings.invertY = !controlSettings.invertY;
+  saveControlSettings();
+  syncControlsUI();
+  sound.playSwitch();
+});
+
+ctrlGamepadInvertYBtn.addEventListener('click', () => {
+  controlSettings.gamepadInvertY = !controlSettings.gamepadInvertY;
   saveControlSettings();
   syncControlsUI();
   sound.playSwitch();
@@ -924,6 +939,7 @@ ctrlDeadzoneSlider.addEventListener('input', () => {
 ctrlResetBtn.addEventListener('click', () => {
   rebindingAction = null;
   controlSettings.invertY = DEFAULT_CONTROLS.invertY;
+  controlSettings.gamepadInvertY = DEFAULT_CONTROLS.gamepadInvertY;
   controlSettings.mouseSensitivity = DEFAULT_CONTROLS.mouseSensitivity;
   controlSettings.gamepadDeadzone = DEFAULT_CONTROLS.gamepadDeadzone;
   controlSettings.bindings = { ...DEFAULT_BINDINGS };
@@ -1753,6 +1769,7 @@ const input = {
   keys: {},
   sensitivity: controlSettings.mouseSensitivity,
   invertY: controlSettings.invertY,
+  gamepadInvertY: controlSettings.gamepadInvertY,
   afterburnerKey: controlSettings.bindings.afterburner,
 };
 
@@ -2214,6 +2231,7 @@ const NEUTRAL_INPUT = {
   keys: {},
   sensitivity: 1.0,
   invertY: false,
+  gamepadInvertY: false,
   afterburnerKey: 'ShiftLeft',
 };
 
