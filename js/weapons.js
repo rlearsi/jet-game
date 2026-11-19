@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { getTerrainHeight, WATER_LEVEL } from './world.js?v=9';
+import { getTerrainHeight, WATER_LEVEL } from './world.js?v=10';
 
 function createDitherExplosionMat(hex) {
   return new THREE.ShaderMaterial({
@@ -123,6 +123,8 @@ export class MissileSystem {
 
     let majorHit = false;
     let bestLabel = '';
+    let droppedMedkit = false;
+    let spawnedMissileDrop = false;
 
     for (const o of killed) {
       const cy = o.type === 'balloon' ? o.y + 6 : o.y + Math.min(4, (o.h || 6) * 0.4);
@@ -158,7 +160,7 @@ export class MissileSystem {
         this.world.addWaterRipple(o.x, o.z, time);
       }
 
-      // Add persistent rising smoke & fire plume on destroyed structures/ships/balloons
+      // Add persistent rising smoke & fire plume on destroyed structures/ships
       if (o.type !== 'balloon') {
         this.burners.push({
           pos: new THREE.Vector3(o.x, Math.max(WATER_LEVEL + 0.8, o.y + 1.0), o.z),
@@ -167,15 +169,46 @@ export class MissileSystem {
           big: isMajor,
         });
       }
+
+      if (!silentNet) {
+        this.netHooks.onTargetKilled?.(o);
+
+        // 1. Rare sky balloons drop a falling PINK-CROSS full-heal medkit crate!
+        if (o.type === 'balloon') {
+          const drop = this.world.spawnDroppedPickup('health', o.x, o.y + 6, o.z);
+          if (drop) {
+            droppedMedkit = true;
+            this.netHooks.onSpawnDrop?.(drop);
+          }
+        } else if (!spawnedMissileDrop && o.type !== 'tree') {
+          // 2. Destroyed ships & ground targets have a chance to drop a sea-skim / low-altitude missile crate!
+          const chance = o.type === 'ship' ? 0.62 : o.type === 'boat' ? 0.35 : 0.42;
+          const roll = Math.random();
+          if (roll < chance || (o.type === 'ship' && this.ammo === 0 && roll < 0.85)) {
+            const dropY = o.type === 'ship' || o.type === 'boat' ? WATER_LEVEL + 5.0 : o.y + 8.0;
+            const drop = this.world.spawnDroppedPickup('missile', o.x, dropY, o.z);
+            if (drop) {
+              spawnedMissileDrop = true;
+              this.netHooks.onSpawnDrop?.(drop);
+            }
+          }
+        }
+      }
     }
 
     this.destroyed += killed.length;
     this.hitMarkerTimer = 0.28;
-    this.killBannerText =
-      killed.length > 1
-        ? `${bestLabel} +${killed.length - 1} DESTROYED!`
-        : `${bestLabel} DESTROYED!`;
-    this.killBannerTimer = 1.6;
+    if (droppedMedkit) {
+      this.killBannerText = 'BALÃO ABATIDO! CAIXA MÉDICA ROSA CAIU!';
+    } else if (spawnedMissileDrop) {
+      this.killBannerText = `${bestLabel} DESTRUÍDO! CAIXA DE MÍSSEIS NO MAR!`;
+    } else {
+      this.killBannerText =
+        killed.length > 1
+          ? `${bestLabel} +${killed.length - 1} DESTROYED!`
+          : `${bestLabel} DESTROYED!`;
+    }
+    this.killBannerTimer = 1.8;
 
     this.shake = Math.max(this.shake, majorHit ? 0.55 : 0.22);
     this.sound.playImpact(false);
@@ -225,8 +258,8 @@ export class MissileSystem {
     if (this.ammo <= 0) {
       this.cooldown = 0.25;
       this.sound.playEmpty();
-      this.killBannerText = 'OUT OF MISSILES! FIND AMMO CRATE';
-      this.killBannerTimer = 1.4;
+      this.killBannerText = 'SEM MÍSSEIS! DESTRUA NAVIOS/ALVOS P/ DROPAR';
+      this.killBannerTimer = 1.5;
       return false;
     }
 
@@ -331,8 +364,8 @@ export class MissileSystem {
 
   spawnPickupBurst(pos, isHealth) {
     const p = new THREE.Vector3(pos.x, pos.y, pos.z);
-    const colA = isHealth ? 0x38f27c : 0xffb842;
-    const colB = isHealth ? 0xb4ffd0 : 0xfff08a;
+    const colA = isHealth ? 0xff4fa3 : 0xffb842;
+    const colB = isHealth ? 0xffcbe6 : 0xfff08a;
     for (let i = 0; i < 16; i++) {
       const vel = new THREE.Vector3(
         (Math.random() - 0.5) * 24,

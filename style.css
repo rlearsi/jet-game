@@ -695,12 +695,14 @@ html, body {
   font-weight: 700;
 }
 
-/* Hangar: 5 Ships Selector Panel */
+/* Hangar: 6 Ships Selector Panel */
 .hangar-panel {
   position: fixed;
   top: 32px;
   right: 8px;
   width: 268px;
+  max-height: calc(100vh - 54px);
+  overflow-y: auto;
   z-index: 16;
   background: rgba(16, 18, 28, 0.95);
   border: 1px solid rgba(255, 224, 190, 0.28);
@@ -745,6 +747,17 @@ html, body {
   font-weight: 900;
   color: #fff2d6;
   font-size: 10.5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.ship-swatch {
+  width: 9px;
+  height: 9px;
+  display: inline-block;
+  border: 1px solid;
+  flex-shrink: 0;
 }
 
 .ship-card-role {
@@ -833,11 +846,77 @@ html, body {
 }
 
 .pickup-tag.health {
-  color: #7bffab;
-  border-color: rgba(76, 255, 136, 0.65);
+  color: #ff94cc;
+  border-color: rgba(255, 92, 168, 0.85);
 }
 
 .pickup-tag.missile {
   color: #ffd470;
   border-color: rgba(255, 186, 66, 0.65);
+}
+
+/* Mission Objective Tracker */
+.objective-hud {
+  position: fixed;
+  top: 34px;
+  left: 10px;
+  z-index: 10;
+  background: rgba(16, 18, 28, 0.86);
+  border: 1px solid rgba(255, 224, 190, 0.24);
+  padding: 5px 9px;
+  font-size: 9.5px;
+  letter-spacing: 0.07em;
+  color: #f4ece4;
+  min-width: 176px;
+  pointer-events: none;
+}
+
+.objective-hud.complete {
+  border-color: rgba(108, 255, 162, 0.72);
+  background: rgba(18, 38, 28, 0.88);
+}
+
+.obj-title {
+  font-weight: 700;
+  color: #ffe29e;
+  margin-bottom: 4px;
+}
+
+.objective-hud.complete .obj-title {
+  color: #88ffa8;
+}
+
+.obj-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.obj-count {
+  font-weight: 900;
+  color: #fff4d0;
+  white-space: nowrap;
+}
+
+.objective-hud.complete .obj-count {
+  color: #88ffa8;
+}
+
+.obj-bar {
+  flex: 1;
+  height: 6px;
+  background: rgba(12, 14, 22, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  overflow: hidden;
+}
+
+.obj-bar-fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #f28c38, #ffd866);
+  transition: width 0.18s ease-out;
+}
+
+.objective-hud.complete .obj-bar-fill {
+  background: linear-gradient(90deg, #38e078, #88ffa8);
 }

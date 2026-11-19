@@ -63,16 +63,25 @@
 
   <!-- Top-right buttons: HANGAR + MULTIPLAYER + VIEW / RENDER + SOUND -->
   <div id="hud-top-right">
-    <button id="hangar-btn" class="hud-btn" type="button">HANGAR (5)</button>
+    <button id="hangar-btn" class="hud-btn" type="button">HANGAR (6)</button>
     <button id="mp-btn" class="hud-btn" type="button">MULTIPLAYER</button>
     <button id="view-btn" class="hud-btn" type="button">VIEW / RENDER</button>
     <button id="sound-btn" class="hud-btn" type="button">SOUND: OFF</button>
   </div>
 
-  <!-- Collapsible Hangar: 5 Fighter Jet Varieties -->
+  <!-- Mission Objective Tracker (Destroy 20 Ships; resets to 0 on death) -->
+  <div id="objective-hud" class="objective-hud">
+    <div id="obj-title" class="obj-title">OBJETIVO: DESTRUIR NAVIOS</div>
+    <div class="obj-row">
+      <span id="obj-count" class="obj-count">0 / 20</span>
+      <span class="obj-bar"><span id="obj-bar-fill" class="obj-bar-fill" style="width:0%"></span></span>
+    </div>
+  </div>
+
+  <!-- Collapsible Hangar: 6 Fighter Jet Varieties -->
   <div id="hangar-panel" class="hangar-panel hidden">
     <div class="vp-header">
-      <span>HANGAR (5 JETS)</span>
+      <span>HANGAR (6 JETS)</span>
       <span class="mp-badge connecting">SELECT</span>
     </div>
     <div id="hangar-list" class="hangar-list"></div>
@@ -205,6 +214,6 @@
       }
     }
   </script>
-  <script type="module" src="js/main.js?v=9"></script>
+  <script type="module" src="js/main.js?v=10"></script>
 </body>
 </html>

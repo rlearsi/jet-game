@@ -929,7 +929,7 @@ export function buildWorld(scene) {
     }, true);
   }
 
-  // 4f. Large Naval Ships cruising the central bays (highly visible destructible targets!)
+  // 4f. Large Naval Ships cruising the central bays (24 ships for 20-ship objective!)
   const ships = [];
   const shipHullMat = new THREE.MeshLambertMaterial({ color: 0x4b556b, flatShading: true });
   const shipDeckMat = new THREE.MeshLambertMaterial({ color: 0xb84735, flatShading: true });
@@ -944,6 +944,20 @@ export function buildWorld(scene) {
     [25, 175, 1.8],
     [220, 195, -2.1],
     [-280, -20, 0.5],
+    [-95, -455, -3.14],
+    [85, -455, -1.97],
+    [130, -365, 0.37],
+    [40, -320, 1.54],
+    [-455, -275, 2.71],
+    [85, -230, -1.23],
+    [-500, -140, 1.11],
+    [-185, -95, 2.28],
+    [355, -50, 0.68],
+    [-455, 40, 3.02],
+    [-365, 85, -2.09],
+    [310, 85, -0.92],
+    [130, 175, 2.59],
+    [85, 265, -0.18],
   ];
   for (const [sx, sz, ang] of shipPositions) {
     if (getTerrainHeight(sx, sz) > -3.5) continue;
@@ -962,37 +976,38 @@ export function buildWorld(scene) {
     scene.add(sg);
 
     const shipObj = {
-      type: 'ship', label: 'NAVAL SHIP', x: sx, y: WATER_LEVEL, z: sz, r: 12.5, h: 12.0, color: 0xd9563c,
+      type: 'ship', label: 'NAVAL SHIP', x: sx, y: WATER_LEVEL, z: sz,
+      originX: sx, originZ: sz, originAng: ang,
+      r: 12.5, h: 12.0, color: 0xd9563c,
       group: sg, angle: ang, speed: 4.5 + rand() * 3.0, phase: rand() * Math.PI * 2,
-      alive: true,
-      kill() { sg.visible = false; },
+      alive: true, respawnTimer: 0,
+      kill() { sg.visible = false; this.respawnTimer = 38.0; },
     };
     ships.push(shipObj);
     lockableTargets.push(shipObj);
   }
 
-  // 4g. Floating Sky Target Balloons over the bay & islands (fun air-to-air targets right ahead of spawn!)
+  // 4g. Rare Sky Balloons carrying Pink-Cross Full-Heal Medkits (only 3 rare balloons in the sky!)
   const balloons = [];
-  const balRedMat = new THREE.MeshLambertMaterial({ color: 0xe64834, flatShading: true });
-  const balCreamMat = new THREE.MeshLambertMaterial({ color: 0xfff0d4, flatShading: true });
+  const balRoseMat = new THREE.MeshLambertMaterial({ color: 0xe84b86, flatShading: true });
+  const balCreamMat = new THREE.MeshLambertMaterial({ color: 0xfff2dc, flatShading: true });
   const balBasketMat = new THREE.MeshLambertMaterial({ color: 0x7a4b36, flatShading: true });
-  const balCoords = [
-    [-68, 74, 85],
-    [-28, 82, 42],
-    [-112, 68, 25],
-    [22, 90, -15],
-    [-55, 85, -80],
-    [85, 76, 65],
-    [-165, 78, 125],
+  const balloonSpawnPool = [
+    [-68, 78, 85],
     [135, 95, -95],
-    [-205, 82, -55],
-    [55, 88, 155],
-    [-10, 102, -195],
+    [-205, 84, -55],
     [215, 98, 20],
+    [-165, 82, 125],
+    [85, 80, 65],
+    [-55, 88, -80],
+    [55, 90, 155],
+    [-10, 102, -195],
+    [-112, 74, 25],
   ];
-  for (const [bx, by, bz] of balCoords) {
+  for (let bi = 0; bi < 3; bi++) {
+    const [bx, by, bz] = balloonSpawnPool[bi];
     const bg = new THREE.Group();
-    const env1 = new THREE.Mesh(new THREE.IcosahedronGeometry(6.8, 1), balRedMat);
+    const env1 = new THREE.Mesh(new THREE.IcosahedronGeometry(6.8, 1), balRoseMat);
     env1.scale.set(1.0, 1.18, 1.0);
     const band = new THREE.Mesh(new THREE.CylinderGeometry(6.9, 6.9, 3.2, 8), balCreamMat);
     const basket = new THREE.Mesh(new THREE.BoxGeometry(2.8, 2.4, 2.8), balBasketMat);
@@ -1002,10 +1017,11 @@ export function buildWorld(scene) {
     scene.add(bg);
 
     const balObj = {
-      type: 'balloon', label: 'TARGET BALLOON', x: bx, y: by - 6, z: bz, r: 10.5, h: 16.0, color: 0xff5a3c,
-      group: bg, baseY: by, phase: rand() * Math.PI * 2,
-      alive: true,
-      kill() { bg.visible = false; },
+      type: 'balloon', label: 'MEDKIT BALLOON', x: bx, y: by - 6, z: bz, r: 10.5, h: 16.0, color: 0xff62a8,
+      group: bg, baseY: by, phase: rand() * Math.PI * 2, spotIdx: bi,
+      driftX: (rand() - 0.5) * 3.2, driftZ: (rand() - 0.5) * 3.2,
+      alive: true, respawnTimer: 0,
+      kill() { bg.visible = false; this.respawnTimer = 70.0 + Math.random() * 40.0; },
     };
     balloons.push(balObj);
     lockableTargets.push(balObj);
@@ -1375,18 +1391,22 @@ export function buildWorld(scene) {
   }
 
   // =========================================================================
-  // 6. WORLD PICKUPS: HEALTH REPAIR POINTS (8) & MISSILE AMMO CRATES (10)
+  // 6. DYNAMIC DROPPED PICKUPS: PINK-CROSS MEDKITS (BALLOONS) & SEA-SKIM MISSILE CRATES
   // =========================================================================
   const pickups = [];
-  const healthMat = new THREE.MeshBasicMaterial({ color: 0x38f27c });
-  const healthBoxMat = new THREE.MeshLambertMaterial({ color: 0xf6fff8, flatShading: true });
-  const healthRingMat = new THREE.MeshBasicMaterial({ color: 0x62ff9c, side: THREE.DoubleSide });
+  let dropCounter = 0;
+
+  const healthMat = new THREE.MeshBasicMaterial({ color: 0xff4fa3 });
+  const healthBoxMat = new THREE.MeshLambertMaterial({ color: 0xfff6fa, flatShading: true });
+  const healthRingMat = new THREE.MeshBasicMaterial({ color: 0xff78be, side: THREE.DoubleSide });
   const healthBeamMat = new THREE.MeshBasicMaterial({
-    color: 0x38f27c,
+    color: 0xff4fa3,
     transparent: true,
     opacity: 0.22,
     depthWrite: false,
   });
+  const chuteMat = new THREE.MeshLambertMaterial({ color: 0xffe4f0, flatShading: true, side: THREE.DoubleSide });
+  const chuteGeo = new THREE.SphereGeometry(4.2, 8, 5, 0, Math.PI * 2, 0, Math.PI * 0.5);
 
   const crateBodyMat = new THREE.MeshLambertMaterial({ color: 0xf2932e, flatShading: true });
   const crateTrimMat = new THREE.MeshLambertMaterial({ color: 0x34384a, flatShading: true });
@@ -1395,55 +1415,63 @@ export function buildWorld(scene) {
   const crateBeamMat = new THREE.MeshBasicMaterial({
     color: 0xffa638,
     transparent: true,
-    opacity: 0.22,
+    opacity: 0.24,
     depthWrite: false,
   });
 
-  const beamGeo = new THREE.CylinderGeometry(1.1, 1.8, 130, 6);
-  const ringGeo = new THREE.RingGeometry(5.6, 6.8, 16);
+  const healthBeamGeo = new THREE.CylinderGeometry(0.9, 1.5, 85, 6);
+  const crateBeamGeo = new THREE.CylinderGeometry(0.9, 1.5, 42, 6);
+  const ringGeo = new THREE.RingGeometry(5.8, 7.2, 16);
   ringGeo.rotateX(-Math.PI / 2);
 
-  const healthCoords = [
-    [-75, 110],   // central bay
-    [-215, 225],  // island airstrip
-    [196, -112],  // eastern village bay
-    [-252, -168], // autumn headland
-    [45, 330],    // southern island
-    [-580, 480],  // terracotta canyon mesa
-    [-720, -280], // volcanic caldera
-    [540, -180],  // eastern alpine foothills
-  ];
+  function spawnDroppedPickup(type, x, y, z, customId = null) {
+    if (customId && pickups.some((item) => item.id === customId)) {
+      return null;
+    }
+    const id = customId || `drop_${type}_${++dropCounter}_${Math.floor(Math.random() * 9999)}`;
+    const groundH = getTerrainHeight(x, z);
+    const overWater = groundH < WATER_LEVEL - 0.5;
 
-  const missileCoords = [
-    [-40, 20],    // central bay ahead of spawn
-    [-160, 145],  // bay approach to airstrip
-    [120, -45],   // eastern strait
-    [-145, -245], // north-west headland
-    [250, -155],  // emerald peninsula
-    [10, -150],   // northern bay
-    [-310, 60],   // western bay
-    [180, 210],   // southeast bay
-    [-380, 320],  // southwest strait
-    [410, 80],    // alpine shore
-  ];
+    let startY = y;
+    let targetY = y;
+    let fallSpeed = 0;
+    let falling = false;
+    let isSeaSkim = false;
 
-  function addWorldPickup(id, type, x, z) {
-    const baseH = Math.max(WATER_LEVEL, getBaseTerrainHeight(x, z));
-    const y = baseH + (type === 'health' ? 28 : 30);
+    if (type === 'health') {
+      targetY = Math.max(WATER_LEVEL + 10, groundH + 12);
+      startY = Math.max(targetY, y);
+      falling = startY > targetY + 0.5;
+      fallSpeed = 9.5;
+    } else {
+      isSeaSkim = overWater;
+      targetY = overWater ? WATER_LEVEL + 3.2 : groundH + 4.5;
+      startY = Math.max(targetY, y);
+      falling = startY > targetY + 0.4;
+      fallSpeed = 24.0;
+    }
 
     const g = new THREE.Group();
     const core = new THREE.Group();
+    let chute = null;
 
     if (type === 'health') {
-      const box = new THREE.Mesh(new THREE.BoxGeometry(5.2, 5.2, 5.2), healthBoxMat);
-      const crossH = new THREE.Mesh(new THREE.BoxGeometry(6.0, 1.8, 5.6), healthMat);
-      const crossV = new THREE.Mesh(new THREE.BoxGeometry(1.8, 6.0, 5.6), healthMat);
-      const crossZ = new THREE.Mesh(new THREE.BoxGeometry(5.6, 1.8, 6.0), healthMat);
-      const crossZV = new THREE.Mesh(new THREE.BoxGeometry(5.6, 6.0, 1.8), healthMat);
-      core.add(box, crossH, crossV, crossZ, crossZV);
+      const box = new THREE.Mesh(new THREE.BoxGeometry(5.4, 5.4, 5.4), healthBoxMat);
+      const crossH = new THREE.Mesh(new THREE.BoxGeometry(6.2, 1.8, 5.8), healthMat);
+      const crossV = new THREE.Mesh(new THREE.BoxGeometry(1.8, 6.2, 5.8), healthMat);
+      const crossZ = new THREE.Mesh(new THREE.BoxGeometry(5.8, 1.8, 6.2), healthMat);
+      const crossZV = new THREE.Mesh(new THREE.BoxGeometry(5.8, 6.2, 1.8), healthMat);
+      const crossTopX = new THREE.Mesh(new THREE.BoxGeometry(4.2, 5.9, 1.6), healthMat);
+      const crossTopZ = new THREE.Mesh(new THREE.BoxGeometry(1.6, 5.9, 4.2), healthMat);
+      core.add(box, crossH, crossV, crossZ, crossZV, crossTopX, crossTopZ);
+
+      chute = new THREE.Mesh(chuteGeo, chuteMat);
+      chute.position.y = 6.2;
+      chute.visible = falling;
+      g.add(chute);
     } else {
-      const crate = new THREE.Mesh(new THREE.BoxGeometry(6.6, 4.4, 5.0), crateBodyMat);
-      const band = new THREE.Mesh(new THREE.BoxGeometry(6.9, 1.2, 5.3), crateTrimMat);
+      const crate = new THREE.Mesh(new THREE.BoxGeometry(6.8, 4.4, 5.0), crateBodyMat);
+      const band = new THREE.Mesh(new THREE.BoxGeometry(7.1, 1.2, 5.3), crateTrimMat);
       core.add(crate, band);
       for (const ox of [-1.8, 0, 1.8]) {
         const warhead = new THREE.Mesh(new THREE.ConeGeometry(0.65, 2.2, 5), crateTipMat);
@@ -1453,48 +1481,63 @@ export function buildWorld(scene) {
     }
 
     const ring = new THREE.Mesh(ringGeo, type === 'health' ? healthRingMat : crateRingMat);
-    const beam = new THREE.Mesh(beamGeo, type === 'health' ? healthBeamMat : crateBeamMat);
-    beam.position.y = 45;
+    const beam = new THREE.Mesh(
+      type === 'health' ? healthBeamGeo : crateBeamGeo,
+      type === 'health' ? healthBeamMat : crateBeamMat
+    );
+    beam.position.y = type === 'health' ? 35 : 18;
 
     g.add(core, ring, beam);
-    g.position.set(x, y, z);
+    g.position.set(x, startY, z);
     scene.add(g);
 
-    pickups.push({
+    const record = {
       id,
       type,
       x,
-      y,
+      y: startY,
       z,
-      baseY: y,
+      baseY: targetY,
+      targetY,
+      falling,
+      fallSpeed,
+      isSeaSkim,
+      chute,
+      life: 95.0,
       active: true,
-      respawnTimer: 0,
-      respawnDuration: type === 'health' ? 20 : 18,
       group: g,
       core,
       ring,
       phase: rand() * Math.PI * 2,
-    });
+    };
+    pickups.push(record);
+    return record;
   }
-
-  healthCoords.forEach(([x, z], idx) => addWorldPickup(`hp_${idx}`, 'health', x, z));
-  missileCoords.forEach(([x, z], idx) => addWorldPickup(`msl_${idx}`, 'missile', x, z));
 
   function getPickups() {
     return pickups;
   }
 
   function collectPickup(jetPos, canCollectFn) {
-    for (const p of pickups) {
+    for (let i = pickups.length - 1; i >= 0; i--) {
+      const p = pickups[i];
       if (!p.active) continue;
       if (canCollectFn && !canCollectFn(p)) continue;
+
       const dx = jetPos.x - p.x;
       const dy = jetPos.y - p.y;
       const dz = jetPos.z - p.z;
-      if (dx * dx + dy * dy + dz * dz <= 24 * 24) {
+      let hit = false;
+      if (p.type === 'missile') {
+        // Sea-skimming / low pass collection requirement!
+        hit = dx * dx + dz * dz <= 22 * 22 && jetPos.y <= p.y + 12.5 && jetPos.y >= p.y - 8.0;
+      } else {
+        hit = dx * dx + dy * dy + dz * dz <= 24 * 24;
+      }
+      if (hit) {
         p.active = false;
-        p.respawnTimer = p.respawnDuration;
-        p.group.visible = false;
+        scene.remove(p.group);
+        pickups.splice(i, 1);
         return p;
       }
     }
@@ -1502,12 +1545,84 @@ export function buildWorld(scene) {
   }
 
   function consumePickupById(id) {
-    const p = pickups.find((item) => item.id === id);
-    if (!p || !p.active) return null;
+    const idx = pickups.findIndex((item) => item.id === id);
+    if (idx < 0) return null;
+    const p = pickups[idx];
     p.active = false;
-    p.respawnTimer = p.respawnDuration;
-    p.group.visible = false;
+    scene.remove(p.group);
+    pickups.splice(idx, 1);
     return p;
+  }
+
+  function respawnSunkShips() {
+    for (const sh of ships) {
+      if (!sh.alive) {
+        sh.alive = true;
+        sh.respawnTimer = 0;
+        sh.x = sh.originX;
+        sh.z = sh.originZ;
+        sh.angle = sh.originAng;
+        sh.group.position.set(sh.x, WATER_LEVEL, sh.z);
+        sh.group.rotation.y = sh.angle;
+        sh.group.visible = true;
+      }
+    }
+  }
+
+  function checkObstacleCollision(pos, jetRadius = 2.6) {
+    const th = getTerrainHeight(pos.x, pos.z);
+    if (th > WATER_LEVEL - 0.5 && pos.y <= th + 2.2) {
+      return { hit: true, type: 'mountain', reason: th > 38 ? 'MONTANHA' : 'TERRENO' };
+    }
+    if (pos.y <= WATER_LEVEL + 1.4) {
+      return { hit: true, type: 'ocean', reason: 'OCEANO' };
+    }
+
+    const cx = Math.floor(pos.x / GRID);
+    const cz = Math.floor(pos.z / GRID);
+    for (let ix = cx - 1; ix <= cx + 1; ix++) {
+      for (let iz = cz - 1; iz <= cz + 1; iz++) {
+        const list = grid.get(ix + ',' + iz);
+        if (!list) continue;
+        for (const o of list) {
+          if (!o.alive) continue;
+          const dx = o.x - pos.x;
+          const dz = o.z - pos.z;
+          const rad = (o.r || 3) * 0.85 + jetRadius;
+          if (dx * dx + dz * dz > rad * rad) continue;
+          if (pos.y >= o.y - 1.5 && pos.y <= o.y + (o.h || 6) + 1.2) {
+            return {
+              hit: true,
+              type: o.type,
+              reason: o.type === 'tree' ? 'ÁRVORE' : o.label || o.type.toUpperCase(),
+              obj: o,
+            };
+          }
+        }
+      }
+    }
+
+    for (const sh of ships) {
+      if (!sh.alive) continue;
+      const dx = sh.x - pos.x;
+      const dz = sh.z - pos.z;
+      const rad = sh.r * 0.78 + jetRadius;
+      if (dx * dx + dz * dz <= rad * rad && pos.y <= sh.h + 1.0) {
+        return { hit: true, type: 'ship', reason: 'NAVIO', obj: sh };
+      }
+    }
+
+    for (const bl of balloons) {
+      if (!bl.alive) continue;
+      const dx = bl.x - pos.x;
+      const dy = bl.y + 6 - pos.y;
+      const dz = bl.z - pos.z;
+      const rad = bl.r * 0.78 + jetRadius;
+      if (dx * dx + dy * dy + dz * dz <= rad * rad) {
+        return { hit: true, type: 'balloon', reason: 'BALÃO', obj: bl };
+      }
+    }
+    return null;
   }
 
   return {
@@ -1516,8 +1631,12 @@ export function buildWorld(scene) {
     resetTerrain,
     findLockTarget,
     getPickups,
+    spawnDroppedPickup,
     collectPickup,
     consumePickupById,
+    checkObstacleCollision,
+    respawnSunkShips,
+    getShips: () => ships,
     setTerrainGrain(v) {
       terrainMat.uniforms.uTerrainGrain.value = THREE.MathUtils.clamp(v, 0, 1);
     },
@@ -1579,9 +1698,22 @@ export function buildWorld(scene) {
       boatHulls.instanceMatrix.needsUpdate = true;
       boatSails.instanceMatrix.needsUpdate = true;
 
-      // Animate naval ships cruising the bay
+      // Animate & slowly respawn naval ships cruising the bay
       for (const sh of ships) {
-        if (!sh.alive) continue;
+        if (!sh.alive) {
+          sh.respawnTimer -= dt;
+          if (sh.respawnTimer <= 0) {
+            sh.alive = true;
+            sh.respawnTimer = 0;
+            sh.x = sh.originX;
+            sh.z = sh.originZ;
+            sh.angle = sh.originAng;
+            sh.group.position.set(sh.x, WATER_LEVEL, sh.z);
+            sh.group.rotation.y = sh.angle;
+            sh.group.visible = true;
+          }
+          continue;
+        }
         const nx = sh.x + Math.sin(sh.angle) * sh.speed * dt;
         const nz = sh.z + Math.cos(sh.angle) * sh.speed * dt;
         if (getTerrainHeight(nx, nz) < -4.0 && Math.abs(nx) < 950 && Math.abs(nz) < 950) {
@@ -1594,12 +1726,31 @@ export function buildWorld(scene) {
         sh.group.rotation.y = sh.angle;
       }
 
-      // Gently bob floating target balloons in the sunset breeze
+      // Rare floating target balloons: gentle drift + rare respawn in another spot
       for (const bl of balloons) {
-        if (!bl.alive) continue;
+        if (!bl.alive) {
+          bl.respawnTimer -= dt;
+          if (bl.respawnTimer <= 0) {
+            const nextIdx = (bl.spotIdx + 3 + Math.floor(Math.random() * 5)) % balloonSpawnPool.length;
+            const [bx, by, bz] = balloonSpawnPool[nextIdx];
+            bl.spotIdx = nextIdx;
+            bl.x = bx;
+            bl.baseY = by;
+            bl.y = by - 6;
+            bl.z = bz;
+            bl.group.position.set(bx, by, bz);
+            bl.group.visible = true;
+            bl.alive = true;
+          }
+          continue;
+        }
+        bl.x += bl.driftX * dt;
+        bl.z += bl.driftZ * dt;
+        if (Math.abs(bl.x) > 520) bl.driftX *= -1;
+        if (Math.abs(bl.z) > 520) bl.driftZ *= -1;
         const by = bl.baseY + Math.sin(time * 1.1 + bl.phase) * 3.0;
         bl.y = by - 6;
-        bl.group.position.y = by;
+        bl.group.position.set(bl.x, by, bl.z);
         bl.group.rotation.y += 0.25 * dt;
       }
 
@@ -1609,21 +1760,30 @@ export function buildWorld(scene) {
         lb.lamp.scale.setScalar(pulse);
       }
 
-      // Animate & respawn world pickups (health & missile crates)
-      for (const p of pickups) {
-        if (!p.active) {
-          p.respawnTimer -= dt;
-          if (p.respawnTimer <= 0) {
-            p.active = true;
-            p.respawnTimer = 0;
-            p.group.visible = true;
-          }
+      // Animate & descend dropped pickups (pink-cross medkits & sea-skim missile crates)
+      for (let i = pickups.length - 1; i >= 0; i--) {
+        const p = pickups[i];
+        p.life -= dt;
+        if (!p.active || p.life <= 0) {
+          scene.remove(p.group);
+          pickups.splice(i, 1);
           continue;
         }
-        const bob = Math.sin(time * 2.2 + p.phase) * 2.4;
-        p.y = p.baseY + bob;
-        p.group.position.y = p.y;
-        p.core.rotation.y += 1.3 * dt;
+        if (p.falling) {
+          p.y -= p.fallSpeed * dt;
+          if (p.y <= p.targetY) {
+            p.y = p.targetY;
+            p.baseY = p.targetY;
+            p.falling = false;
+            if (p.chute) p.chute.visible = false;
+          }
+          p.group.position.y = p.y;
+        } else {
+          const bobAmp = p.type === 'missile' ? 0.65 : 1.6;
+          p.y = p.baseY + Math.sin(time * 2.2 + p.phase) * bobAmp;
+          p.group.position.y = p.y;
+        }
+        p.core.rotation.y += 1.4 * dt;
         p.ring.rotation.z -= 1.8 * dt;
       }
     },

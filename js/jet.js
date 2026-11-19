@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { getTerrainHeight, WATER_LEVEL, SUN_DIR } from './world.js?v=9';
+import { getTerrainHeight, WATER_LEVEL, SUN_DIR } from './world.js?v=10';
 
-export const SHIP_IDS = ['striker', 'viper', 'phantom', 'hornet', 'starfire'];
+export const SHIP_IDS = ['striker', 'viper', 'phantom', 'hornet', 'starfire', 'sakura'];
 
 export const SHIP_CATALOG = {
   striker: {
@@ -127,6 +127,31 @@ export const SHIP_CATALOG = {
       canopyTop: '#ffe266',
       canopyHi: '#fff9cc',
       canopyBot: '#eb9e28',
+    },
+  },
+  sakura: {
+    id: 'sakura',
+    name: 'F-15 SAKURA',
+    role: 'ROSE ACE INTERCEPTOR',
+    cruiseSpeed: 70,
+    abSpeed: 108,
+    turnRate: 1.52,
+    abTurnRate: 1.24,
+    bankMax: 1.26,
+    maxHp: 110,
+    maxMissiles: 6,
+    cannonCd: 0.060,
+    cannonDmg: 17,
+    palette: {
+      base: '#ffb8dc',
+      shade: '#f295c4',
+      camo1: '#e0589c',
+      camo2: '#b33476',
+      wingPatch: '#ffd8ec',
+      accent: '#ff2e88',
+      canopyTop: '#fff0a8',
+      canopyHi: '#ffffff',
+      canopyBot: '#f082b8',
     },
   },
 };
@@ -672,6 +697,17 @@ function buildJetVisualRig(shipId = 'striker', accentOverride = null) {
       { z: 1.50, w: 0.66, chineW: 0.82, top: 0.26, midY: 0.02, bot: -0.18 },
       { z: 2.45, w: 0.48, chineW: 0.58, top: 0.16, midY: 0.0, bot: -0.12 },
     ];
+  } else if (shipId === 'sakura') {
+    stations = [
+      { z: -4.10, w: 0.03, chineW: 0.03, top: 0.02, midY: 0.0, bot: -0.02 },
+      { z: -3.30, w: 0.23, chineW: 0.30, top: 0.16, midY: 0.01, bot: -0.12 },
+      { z: -2.25, w: 0.46, chineW: 0.60, top: 0.28, midY: 0.02, bot: -0.17 },
+      { z: -1.15, w: 0.70, chineW: 1.04, top: 0.34, midY: 0.04, bot: -0.21 },
+      { z: 0.20, w: 0.86, chineW: 1.16, top: 0.34, midY: 0.04, bot: -0.21 },
+      { z: 1.35, w: 0.84, chineW: 1.06, top: 0.29, midY: 0.02, bot: -0.19 },
+      { z: 2.30, w: 0.74, chineW: 0.88, top: 0.21, midY: 0.0, bot: -0.15 },
+      { z: 2.55, w: 0.60, chineW: 0.68, top: 0.14, midY: 0.0, bot: -0.11 },
+    ];
   }
 
   // 1. Continuous sculpted fuselage
@@ -773,6 +809,30 @@ function buildJetVisualRig(shipId = 'striker', accentOverride = null) {
       fin.position.set(side * 0.66, 0.20, 1.72);
       hullGroup.add(fin);
     }
+  } else if (shipId === 'sakura') {
+    // Sleek rose-pink interceptor with swept wings, twin tails & compact wingtip winglets
+    wingtipPoint = [4.15, 0.05, 0.90];
+    canopyPos = [0, 0.24, -1.68];
+    nozzleX = 0.42;
+    nozzleZ = 2.60;
+    for (const side of [-1, 1]) {
+      hullGroup.add(new THREE.Mesh(
+        buildAirfoilSurface(side, [0.84, -1.18], [0.84, 1.16], [4.15, 0.34], [4.15, 0.92], 0.23, 0.07, 0.03),
+        bodyMat
+      ));
+      hullGroup.add(new THREE.Mesh(
+        buildAirfoilSurface(side, [0.72, 1.38], [0.72, 2.30], [2.32, 1.94], [2.32, 2.46], 0.14, 0.06, 0.01),
+        bodyMat
+      ));
+      const fin = new THREE.Mesh(buildVerticalFin(side), finMat);
+      fin.position.set(side * 0.68, 0.20, 1.66);
+      hullGroup.add(fin);
+
+      const winglet = new THREE.Mesh(buildVerticalFin(side), finMat);
+      winglet.scale.set(0.7, 0.42, 0.48);
+      winglet.position.set(side * 4.05, 0.03, 0.64);
+      hullGroup.add(winglet);
+    }
   } else {
     // Default 'striker' (F-22 Striker)
     for (const side of [-1, 1]) {
@@ -868,6 +928,7 @@ export class FighterJet {
     this.puffs = [];
     this.puffGeo = new THREE.IcosahedronGeometry(1.0, 1);
     this.puffTimer = 0;
+    this.damageTrailTimer = 0;
 
     // Start over the central bay facing islands, ships, lighthouses & sky balloons
     this.position = new THREE.Vector3(-85, 86, 195);
@@ -890,6 +951,7 @@ export class FighterJet {
     this.hp = this.maxHp;
     this.alive = true;
     this.respawnTimer = 0;
+    this.spawnProtection = 2.0;
     this.damageCooldown = 0;
     this.scrapeCooldown = 0;
 
@@ -949,10 +1011,12 @@ export class FighterJet {
     this.bank = 0;
     this.rollAnim = 0;
     this.rollExtra = 0;
-    this.speed = 64;
+    this.speed = this.stats.cruiseSpeed;
     this.hp = this.maxHp;
     this.alive = true;
     this.respawnTimer = 0;
+    this.spawnProtection = 2.0;
+    this.damageTrailTimer = 0;
     this.damageCooldown = 0;
     const fwd = this.getForwardDirection();
     this.velocity.copy(fwd).multiplyScalar(this.speed);
@@ -1025,10 +1089,52 @@ export class FighterJet {
     }
   }
 
+  spawnDamageFirePuffs(dmgRatio) {
+    if (this.puffs.length >= 180) return;
+    const count = dmgRatio > 0.72 ? 3 : dmgRatio > 0.42 ? 2 : 1;
+    const backDir = this.getForwardDirection().multiplyScalar(-9.5);
+    for (let i = 0; i < count; i++) {
+      if (this.puffs.length >= 180) break;
+      const ox = (Math.random() - 0.5) * (1.2 + dmgRatio * 1.4);
+      const oy = (Math.random() - 0.3) * 0.45;
+      const oz = 1.2 + Math.random() * 1.8;
+      const origin = this.getWorldPoint(ox, oy, oz);
+      const mat = createDitherPuffMaterial();
+      const mesh = new THREE.Mesh(this.puffGeo, mat);
+      mesh.position.copy(origin);
+      const initSize = (0.42 + dmgRatio * 0.65) * (0.8 + Math.random() * 0.45);
+      mesh.scale.setScalar(initSize);
+      this.scene.add(mesh);
+
+      this.puffs.push({
+        mesh,
+        mat,
+        isDamageFire: true,
+        dmg: dmgRatio,
+        vel: backDir.clone().add(
+          new THREE.Vector3(
+            (Math.random() - 0.5) * 4.5,
+            3.0 + Math.random() * 5.0,
+            (Math.random() - 0.5) * 4.5
+          )
+        ),
+        age: 0,
+        maxAge: 0.65 + dmgRatio * 0.65,
+        initSize,
+        ab: false,
+      });
+    }
+  }
+
   updatePuffs(dt) {
     const colYellow = new THREE.Color(0xffef7a);
     const colOrange = new THREE.Color(0xf28836);
     const colSmoke = new THREE.Color(0xb6b0c8);
+    const colFireHot = new THREE.Color(0xfff066);
+    const colFireWarm = new THREE.Color(0xff962e);
+    const colFireRed = new THREE.Color(0xf2461c);
+    const colSootDark = new THREE.Color(0x2d2834);
+    const colSootMid = new THREE.Color(0x4a4456);
 
     for (let i = this.puffs.length - 1; i >= 0; i--) {
       const p = this.puffs[i];
@@ -1043,6 +1149,24 @@ export class FighterJet {
       const t = p.age / p.maxAge;
       p.mesh.position.addScaledVector(p.vel, dt);
       p.vel.multiplyScalar(0.95);
+
+      if (p.isDamageFire) {
+        const scale = p.initSize * (1.0 + t * (2.6 + p.dmg * 2.2));
+        p.mesh.scale.setScalar(scale);
+
+        if (t < 0.24) {
+          p.mat.uniforms.uColor.value.copy(p.dmg > 0.5 ? colFireHot : colFireWarm);
+          p.mat.uniforms.uAlpha.value = 1.0;
+        } else if (t < 0.52) {
+          p.mat.uniforms.uColor.value.copy(colFireRed);
+          p.mat.uniforms.uAlpha.value = 1.0 - (t - 0.24) * 0.45;
+        } else {
+          const sootT = (t - 0.52) / 0.48;
+          p.mat.uniforms.uColor.value.copy(colSootDark).lerp(colSootMid, sootT);
+          p.mat.uniforms.uAlpha.value = Math.max(0, 1.0 - sootT) * (0.65 + p.dmg * 0.3);
+        }
+        continue;
+      }
 
       const scale = p.initSize * (1.0 + t * (p.ab ? 3.6 : 2.4));
       p.mesh.scale.setScalar(scale);
@@ -1103,17 +1227,13 @@ export class FighterJet {
       this.position.z = THREE.MathUtils.clamp(this.position.z, -1300, 1300);
     }
 
+    if (this.spawnProtection > 0) this.spawnProtection = Math.max(0, this.spawnProtection - dt);
     if (this.scrapeCooldown > 0) this.scrapeCooldown = Math.max(0, this.scrapeCooldown - dt);
     const groundY = Math.max(WATER_LEVEL, getTerrainHeight(this.position.x, this.position.z));
     this.radarAlt = Math.max(0, this.position.y - groundY);
     this.lowAltWarning = this.radarAlt < 16;
 
-    if (this.position.y < groundY + 6.5) {
-      if (this.pitch < -0.22 && this.scrapeCooldown <= 0 && this.alive) {
-        this.hp = Math.max(1, this.hp - 12);
-        this.scrapeCooldown = 1.5;
-        this.damageCooldown = 6.0;
-      }
+    if (this.spawnProtection > 0 && this.position.y < groundY + 6.5) {
       this.position.y = groundY + 6.5;
       if (this.pitch < 0.06) this.pitch = THREE.MathUtils.lerp(this.pitch, 0.18, 0.25);
     }
@@ -1174,6 +1294,17 @@ export class FighterJet {
         this.spawnExhaustPuffs();
       }
     }
+    if (this.alive) {
+      const dmgRatio = 1.0 - Math.max(0, Math.min(1, this.hp / Math.max(1, this.maxHp)));
+      if (dmgRatio > 0.12) {
+        this.damageTrailTimer += dt;
+        const dmgInterval = THREE.MathUtils.lerp(0.14, 0.018, Math.pow(dmgRatio, 0.85));
+        if (this.damageTrailTimer >= dmgInterval) {
+          this.damageTrailTimer = 0;
+          this.spawnDamageFirePuffs(dmgRatio);
+        }
+      }
+    }
     this.updatePuffs(dt);
   }
 }
@@ -1219,6 +1350,7 @@ export class RemoteJet {
     this.puffs = [];
     this.puffGeo = new THREE.IcosahedronGeometry(1.0, 1);
     this.puffTimer = 0;
+    this.damageTrailTimer = 0;
 
     this.position = new THREE.Vector3(-85, 96, 225);
     this.targetPos = this.position.clone();
@@ -1354,10 +1486,53 @@ export class RemoteJet {
     }
   }
 
+  spawnDamageFirePuffs(dmgRatio) {
+    if (this.puffs.length >= 160) return;
+    const fwd = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(this.pitch, this.yaw, 0, 'YXZ'));
+    const count = dmgRatio > 0.72 ? 3 : dmgRatio > 0.42 ? 2 : 1;
+    const backDir = fwd.multiplyScalar(-9.5);
+    for (let i = 0; i < count; i++) {
+      if (this.puffs.length >= 160) break;
+      const ox = (Math.random() - 0.5) * (1.2 + dmgRatio * 1.4);
+      const oy = (Math.random() - 0.3) * 0.45;
+      const oz = 1.2 + Math.random() * 1.8;
+      const origin = this.getWorldPoint(ox, oy, oz);
+      const mat = createDitherPuffMaterial();
+      const mesh = new THREE.Mesh(this.puffGeo, mat);
+      mesh.position.copy(origin);
+      const initSize = (0.40 + dmgRatio * 0.62) * (0.8 + Math.random() * 0.45);
+      mesh.scale.setScalar(initSize);
+      this.scene.add(mesh);
+
+      this.puffs.push({
+        mesh,
+        mat,
+        isDamageFire: true,
+        dmg: dmgRatio,
+        vel: backDir.clone().add(
+          new THREE.Vector3(
+            (Math.random() - 0.5) * 4.5,
+            3.0 + Math.random() * 5.0,
+            (Math.random() - 0.5) * 4.5
+          )
+        ),
+        age: 0,
+        maxAge: 0.62 + dmgRatio * 0.60,
+        initSize,
+        ab: false,
+      });
+    }
+  }
+
   updatePuffs(dt) {
     const colYellow = new THREE.Color(0xffef7a);
     const colOrange = new THREE.Color(0xf28836);
     const colSmoke = new THREE.Color(0xb6b0c8);
+    const colFireHot = new THREE.Color(0xfff066);
+    const colFireWarm = new THREE.Color(0xff962e);
+    const colFireRed = new THREE.Color(0xf2461c);
+    const colSootDark = new THREE.Color(0x2d2834);
+    const colSootMid = new THREE.Color(0x4a4456);
 
     for (let i = this.puffs.length - 1; i >= 0; i--) {
       const p = this.puffs[i];
@@ -1371,6 +1546,23 @@ export class RemoteJet {
       const t = p.age / p.maxAge;
       p.mesh.position.addScaledVector(p.vel, dt);
       p.vel.multiplyScalar(0.95);
+
+      if (p.isDamageFire) {
+        p.mesh.scale.setScalar(p.initSize * (1.0 + t * (2.6 + p.dmg * 2.2)));
+        if (t < 0.24) {
+          p.mat.uniforms.uColor.value.copy(p.dmg > 0.5 ? colFireHot : colFireWarm);
+          p.mat.uniforms.uAlpha.value = 1.0;
+        } else if (t < 0.52) {
+          p.mat.uniforms.uColor.value.copy(colFireRed);
+          p.mat.uniforms.uAlpha.value = 1.0 - (t - 0.24) * 0.45;
+        } else {
+          const sootT = (t - 0.52) / 0.48;
+          p.mat.uniforms.uColor.value.copy(colSootDark).lerp(colSootMid, sootT);
+          p.mat.uniforms.uAlpha.value = Math.max(0, 1.0 - sootT) * (0.65 + p.dmg * 0.3);
+        }
+        continue;
+      }
+
       p.mesh.scale.setScalar(p.initSize * (1.0 + t * (p.ab ? 3.5 : 2.2)));
 
       if (t < 0.25) {
@@ -1446,6 +1638,15 @@ export class RemoteJet {
         if (this.puffTimer >= interval) {
           this.puffTimer = 0;
           this.spawnExhaustPuffs();
+        }
+        const dmgRatio = 1.0 - Math.max(0, Math.min(1, this.hp / Math.max(1, this.maxHp)));
+        if (dmgRatio > 0.12) {
+          this.damageTrailTimer += dt;
+          const dmgInterval = THREE.MathUtils.lerp(0.15, 0.022, Math.pow(dmgRatio, 0.85));
+          if (this.damageTrailTimer >= dmgInterval) {
+            this.damageTrailTimer = 0;
+            this.spawnDamageFirePuffs(dmgRatio);
+          }
         }
       }
     }

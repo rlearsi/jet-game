@@ -1,10 +1,10 @@
 import * as THREE from 'three';
-import { buildWorld, SUN_DIR } from './world.js?v=9';
-import { FighterJet, RemoteJet, SHIP_CATALOG, SHIP_IDS } from './jet.js?v=9';
-import { MissileSystem } from './weapons.js?v=9';
-import { FighterCockpit } from './cockpit.js?v=9';
-import { JetSoundEngine } from './audio.js?v=9';
-import { MultiplayerManager } from './multiplayer.js?v=9';
+import { buildWorld, SUN_DIR } from './world.js?v=10';
+import { FighterJet, RemoteJet, SHIP_CATALOG, SHIP_IDS } from './jet.js?v=10';
+import { MissileSystem } from './weapons.js?v=10';
+import { FighterCockpit } from './cockpit.js?v=10';
+import { JetSoundEngine } from './audio.js?v=10';
+import { MultiplayerManager } from './multiplayer.js?v=10';
 
 // 6 live-switchable rendering styles (V key or VIEW / RENDER panel)
 const RENDER_PRESETS = {
@@ -110,6 +110,10 @@ const remoteLabelsEl = document.getElementById('remote-labels');
 const pickupMarkersEl = document.getElementById('pickup-markers');
 const missileVignette = document.getElementById('missile-vignette');
 const missileAlertEl = document.getElementById('missile-alert');
+const objectiveHudEl = document.getElementById('objective-hud');
+const objTitleEl = document.getElementById('obj-title');
+const objCountEl = document.getElementById('obj-count');
+const objBarFillEl = document.getElementById('obj-bar-fill');
 
 // Hangar UI refs
 const hangarBtn = document.getElementById('hangar-btn');
@@ -361,7 +365,7 @@ function renderHangarCards() {
 
     card.innerHTML = `
       <div class="ship-card-head">
-        <span class="ship-card-name">${spec.name}</span>
+        <span class="ship-card-name"><span class="ship-swatch" style="background:${spec.palette.base};border-color:${spec.palette.accent}"></span>${spec.name}</span>
         <span class="ship-card-role">${spec.role}</span>
       </div>
       <div class="ship-stats">
@@ -721,6 +725,8 @@ const mp = new MultiplayerManager({
       if (rj && ev.sh) rj.setShip(ev.sh);
     } else if (ev.t === 'pk') {
       if (ev.id) world.consumePickupById(ev.id);
+    } else if (ev.t === 'drop') {
+      world.spawnDroppedPickup(ev.kind, ev.x, ev.y, ev.z, ev.id);
     } else if (ev.t === 'def') {
       weapons.applyRemoteDeform(ev.x, ev.z, ev.r, ev.d, ev.dx, ev.dz);
     } else if (ev.t === 'dmg') {
@@ -736,13 +742,7 @@ const mp = new MultiplayerManager({
         weapons.shake = Math.max(weapons.shake, 0.55);
         sound.playImpact(false);
         if (jet.hp <= 0) {
-          jet.alive = false;
-          jet.respawnTimer = 2.5;
-          jet.setVisible(false);
-          weapons.spawnJetExplosion(jet.position, clock.elapsedTime);
-          weapons.killBannerText = 'SHOT DOWN! RESPAWNING...';
-          weapons.killBannerTimer = 2.4;
-          mp.sendEvent({ t: 'down', id: mp.localId, killer: ev.from });
+          killLocalJet('ABATIDO', ev.from);
         }
       }
     } else if (ev.t === 'down') {
@@ -756,8 +756,71 @@ const mp = new MultiplayerManager({
   },
 });
 
+const OBJECTIVE_SHIP_GOAL = 20;
+const objective = {
+  shipsDestroyed: 0,
+  goal: OBJECTIVE_SHIP_GOAL,
+  completed: false,
+};
+
+function updateObjectiveHUD() {
+  const cur = Math.min(objective.goal, objective.shipsDestroyed);
+  const pct = Math.max(0, Math.min(100, (objective.shipsDestroyed / objective.goal) * 100));
+  objCountEl.textContent = `${cur} / ${objective.goal}`;
+  objBarFillEl.style.width = `${pct}%`;
+  objectiveHudEl.classList.toggle('complete', objective.completed);
+  objTitleEl.textContent = objective.completed
+    ? 'OBJETIVO COMPLETO!'
+    : 'OBJETIVO: DESTRUIR NAVIOS';
+}
+
+function resetObjective() {
+  objective.shipsDestroyed = 0;
+  objective.completed = false;
+  updateObjectiveHUD();
+}
+
+function killLocalJet(reason, killerId = null) {
+  if (!jet.alive) return;
+  jet.hp = 0;
+  jet.alive = false;
+  jet.respawnTimer = 2.5;
+  jet.setVisible(false);
+  weapons.spawnJetExplosion(jet.position, clock.elapsedTime);
+  resetObjective();
+  weapons.killBannerText = killerId
+    ? 'ABATIDO! OBJETIVO ZERADO (0/20)'
+    : `EXPLODIU (${reason})! OBJETIVO ZERADO (0/20)`;
+  weapons.killBannerTimer = 2.6;
+  mp.sendEvent({ t: 'down', id: mp.localId, killer: killerId, reason });
+}
+
+updateObjectiveHUD();
+
 weapons.setNetHooks({
   getRemoteJets: () => remoteJets,
+  onTargetKilled(o) {
+    if (o.type === 'ship') {
+      objective.shipsDestroyed++;
+      if (!objective.completed && objective.shipsDestroyed >= objective.goal) {
+        objective.completed = true;
+        sound.playPickup('health');
+        weapons.killBannerText = 'OBJETIVO COMPLETO! 20/20 NAVIOS DESTRUÍDOS!';
+        weapons.killBannerTimer = 3.2;
+      }
+      updateObjectiveHUD();
+    }
+  },
+  onSpawnDrop(drop) {
+    mp.sendEvent({
+      t: 'drop',
+      id: drop.id,
+      kind: drop.type,
+      x: drop.x,
+      y: drop.y,
+      z: drop.z,
+    });
+  },
   onCannon({ origin, dir, speed }) {
     mp.sendEvent({
       t: 'gun',
@@ -1095,28 +1158,53 @@ function animate() {
 
   if (jet.alive) {
     jet.update(dt, input, isCockpit);
-    if (input.cannonFiring) {
-      weapons.tryFireCannon(jet);
+
+    // Fatal obstacle collision check (mountains, terrain, ocean, trees, structures, ships, balloons, or other jets)
+    if (jet.spawnProtection <= 0) {
+      for (const rj of remoteJets.values()) {
+        if (!rj.alive) continue;
+        if (jet.position.distanceTo(rj.position) < 7.5) {
+          mp.sendEvent({ t: 'hit', target: rj.id, dmg: 200, w: 'collision' });
+          killLocalJet(`COLISÃO ${rj.name}`, rj.id);
+          break;
+        }
+      }
+      if (jet.alive) {
+        const col = world.checkObstacleCollision(jet.position, 2.6);
+        if (col && col.hit) {
+          if (col.type === 'mountain') {
+            world.deformTerrain(jet.position.x, jet.position.z, 22, 12, 0, 0);
+            mp.sendEvent({ t: 'def', x: jet.position.x, z: jet.position.z, r: 22, d: 12, dx: 0, dz: 0 });
+          }
+          killLocalJet(col.reason);
+        }
+      }
     }
 
-    // Collect world pickups (Health repair points & Missile ammo crates)
-    const picked = world.collectPickup(jet.position, (p) => {
-      if (p.type === 'health') return jet.hp < jet.maxHp;
-      if (p.type === 'missile') return weapons.ammo < weapons.maxAmmo;
-      return false;
-    });
-    if (picked) {
-      if (picked.type === 'health') {
-        jet.hp = Math.min(jet.maxHp, jet.hp + 50);
-        weapons.killBannerText = '+50 HP REPAIRED!';
-      } else {
-        const added = weapons.refillMissiles(4);
-        weapons.killBannerText = `+${added} MISSILES LOADED!`;
+    if (jet.alive) {
+      if (input.cannonFiring) {
+        weapons.tryFireCannon(jet);
       }
-      weapons.killBannerTimer = 1.6;
-      sound.playPickup(picked.type);
-      weapons.spawnPickupBurst(picked, picked.type === 'health');
-      mp.sendEvent({ t: 'pk', id: picked.id });
+
+      // Collect dynamic dropped pickups (Pink-cross full heal from balloons; Sea-skim full missiles from ships/enemies)
+      const picked = world.collectPickup(jet.position, (p) => {
+        if (p.type === 'health') return jet.hp < jet.maxHp;
+        if (p.type === 'missile') return weapons.ammo < weapons.maxAmmo;
+        return false;
+      });
+      if (picked) {
+        if (picked.type === 'health') {
+          jet.hp = jet.maxHp;
+          weapons.killBannerText = 'VIDA 100% RECUPERADA! (CRUZ ROSA)';
+        } else {
+          weapons.resetAmmo();
+          weapons.killBannerText = 'TODOS OS MÍSSEIS RECARREGADOS!';
+        }
+        weapons.killBannerTimer = 1.8;
+        sound.playPickup(picked.type);
+        weapons.spawnPickupBurst(picked, picked.type === 'health');
+        mp.sendEvent({ t: 'pk', id: picked.id });
+      }
     }
   } else {
     jet.updatePuffs(dt);
@@ -1124,6 +1212,7 @@ function animate() {
     if (jet.respawnTimer <= 0) {
       jet.respawn(Math.floor(Math.random() * 8));
       weapons.resetAmmo();
+      if (!mp.isActive()) world.respawnSunkShips();
       jet.setVisible(!isCockpit);
     }
   }
@@ -1192,35 +1281,34 @@ function animate() {
     }
   }
 
-  // Project waypoint markers for closest needed pickups (health when damaged, missile crate when low)
+  // Project waypoint markers for closest dropped pickups (pink-cross medkits & sea-skim missile crates)
   pickupMarkersEl.innerHTML = '';
   if (modeId !== 'TOP') {
     const allPickups = world.getPickups();
-    let bestHealth = null;
-    let bestHealthD = Infinity;
-    let bestMsl = null;
-    let bestMslD = Infinity;
+    const healthDrops = [];
+    const mslDrops = [];
     for (const pk of allPickups) {
       if (!pk.active) continue;
       const d = Math.hypot(pk.x - jet.position.x, pk.y - jet.position.y, pk.z - jet.position.z);
-      if (pk.type === 'health' && jet.hp < jet.maxHp && d < bestHealthD) {
-        bestHealthD = d;
-        bestHealth = pk;
-      } else if (pk.type === 'missile' && weapons.ammo < weapons.maxAmmo && d < bestMslD) {
-        bestMslD = d;
-        bestMsl = pk;
-      }
+      if (d > 1100) continue;
+      if (pk.type === 'health') healthDrops.push({ pk, d });
+      else if (pk.type === 'missile') mslDrops.push({ pk, d });
     }
-    for (const [pk, d] of [[bestHealth, bestHealthD], [bestMsl, bestMslD]]) {
-      if (!pk) continue;
+    healthDrops.sort((a, b) => a.d - b.d);
+    mslDrops.sort((a, b) => a.d - b.d);
+
+    for (const { pk, d } of [...healthDrops.slice(0, 2), ...mslDrops.slice(0, 2)]) {
       const sp = projectToScreen(new THREE.Vector3(pk.x, pk.y + 8, pk.z));
       if (!sp || sp.x < 16 || sp.x > window.innerWidth - 16 || sp.y < 24 || sp.y > window.innerHeight - 24) continue;
       const tag = document.createElement('div');
       tag.className = `pickup-tag ${pk.type}`;
       tag.style.left = `${sp.x}px`;
       tag.style.top = `${sp.y}px`;
-      tag.style.opacity = pk.type === 'missile' && weapons.ammo > 1 ? '0.62' : '0.95';
-      tag.textContent = pk.type === 'health' ? `+HP ${Math.round(d)}M` : `MSL CRATE ${Math.round(d)}M`;
+      const needed = pk.type === 'health' ? jet.hp < jet.maxHp : weapons.ammo < weapons.maxAmmo;
+      tag.style.opacity = needed ? '0.96' : '0.52';
+      tag.textContent = pk.type === 'health'
+        ? `+ VIDA 100% ${Math.round(d)}M`
+        : (pk.isSeaSkim ? `MSL MAR ${Math.round(d)}M` : `MSL ${Math.round(d)}M`);
       pickupMarkersEl.appendChild(tag);
     }
   }
@@ -1270,6 +1358,7 @@ function animate() {
     world,
     mp,
     remoteJets,
+    objective,
     setCameraMode,
     selectRenderPreset,
     renderSettings,
@@ -1302,7 +1391,7 @@ function animate() {
 
   // Pass 4: Cockpit 2D pixel-art overlay
   if (isCockpit) {
-    cockpit.render(dt, jet, weapons, remoteJets, world.getPickups());
+    cockpit.render(dt, jet, weapons, remoteJets, world.getPickups(), world.getShips());
   }
 }
 

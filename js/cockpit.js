@@ -1,4 +1,4 @@
-import { getTerrainHeight } from './world.js?v=9';
+import { getTerrainHeight } from './world.js?v=10';
 
 export class FighterCockpit {
   constructor(canvas) {
@@ -49,7 +49,7 @@ export class FighterCockpit {
     this.canvas.classList.toggle('active', visible);
   }
 
-  updateRadar(jet, remoteJets = null, pickups = null, weapons = null) {
+  updateRadar(jet, remoteJets = null, pickups = null, weapons = null, ships = null) {
     const rc = this.radarCtx;
     const size = 56;
     const half = size / 2;
@@ -116,7 +116,24 @@ export class FighterCockpit {
     rc.lineTo(half + Math.cos(coneAngle) * r, half + Math.sin(coneAngle) * r);
     rc.stroke();
 
-    // World supply pickups on radar (green '+' for health, amber square for missile crates)
+    // Naval ships on radar (subtle orange dots for 20-ship objective)
+    if (ships) {
+      rc.fillStyle = '#ff9652';
+      for (const sh of ships) {
+        if (!sh.alive) continue;
+        const dwx = sh.x - jet.position.x;
+        const dwz = sh.z - jet.position.z;
+        const localRight = dwx * cosY - dwz * sinY;
+        const localFwd = -dwx * sinY - dwz * cosY;
+        const px = localRight / rangeScale;
+        const py = -localFwd / rangeScale;
+        if (px * px + py * py <= (r - 2) * (r - 2)) {
+          rc.fillRect(Math.round(half + px) - 1, Math.round(half + py) - 1, 2, 2);
+        }
+      }
+    }
+
+    // World dropped pickups on radar (pink '+' for full-heal medkit, amber square for missile crates)
     if (pickups) {
       for (const pk of pickups) {
         if (!pk.active) continue;
@@ -130,7 +147,7 @@ export class FighterCockpit {
           const bx = Math.round(half + px);
           const by = Math.round(half + py);
           if (pk.type === 'health') {
-            rc.fillStyle = '#4cff88';
+            rc.fillStyle = '#ff5ca8';
             rc.fillRect(bx - 1, by, 3, 1);
             rc.fillRect(bx, by - 1, 1, 3);
           } else {
@@ -240,7 +257,7 @@ export class FighterCockpit {
     }
   }
 
-  render(dt, jet, weapons, remoteJets = null, pickups = null) {
+  render(dt, jet, weapons, remoteJets = null, pickups = null, ships = null) {
     const ctx = this.ctx;
     const w = this.w;
     const h = this.h;
@@ -253,7 +270,7 @@ export class FighterCockpit {
     this.radarTimer += dt;
     if (this.radarTimer >= 0.08) {
       this.radarTimer = 0;
-      this.updateRadar(jet, remoteJets, pickups, weapons);
+      this.updateRadar(jet, remoteJets, pickups, weapons, ships);
     }
 
     // Subtle cockpit inertia sway on high-G turns & afterburner vibration
