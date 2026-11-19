@@ -21,6 +21,7 @@ function neutralState() {
     camDistDelta: 0,
     cannonHeld: false,
     boostHeld: false,
+    lookBackHeld: false,
     pressed: {
       missile: false,
       camera: false,
@@ -172,6 +173,7 @@ export class GamepadController {
       cannonHeld = Number(axes[5]) > 0.22;
     }
     const boostHeld = isBtnDown(buttons[6], 0.22);
+    const lookBackHeld = isBtnDown(buttons[11], 0.5); // R3 (Right Stick Click)
 
     // Rising-edge button detections
     const pressed = {};
@@ -192,6 +194,7 @@ export class GamepadController {
       Math.abs(rightStickY) > 0 ||
       cannonHeld ||
       boostHeld ||
+      lookBackHeld ||
       dpadDown ||
       anyButtonDown;
 
@@ -204,6 +207,7 @@ export class GamepadController {
       camDistDelta,
       cannonHeld,
       boostHeld,
+      lookBackHeld,
       pressed,
     };
   }

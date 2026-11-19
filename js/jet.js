@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { getTerrainHeight, WATER_LEVEL, SUN_DIR } from './world.js?v=13';
+import { getTerrainHeight, WATER_LEVEL, SUN_DIR } from './world.js?v=15';
 
 export const SHIP_IDS = ['striker', 'viper', 'phantom', 'hornet', 'starfire', 'sakura'];
 

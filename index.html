@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Sunset Striker — Pixel-Art Fighter Jet</title>
-  <link rel="stylesheet" href="style.css?v=13" />
+  <link rel="stylesheet" href="style.css?v=15" />
 </head>
 <body>
   <canvas id="game-canvas"></canvas>
@@ -263,6 +263,7 @@
             <div class="guide-card-title">CÂMERA &amp; ATALHOS</div>
             <div class="guide-row"><kbd id="guide-key-cockpit">E</kbd><span>Alternar visão Cockpit 2D com radar</span></div>
             <div class="guide-row"><kbd><span id="guide-key-cam">SPACE</span> / C</kbd><span>Ciclar câmeras (Chase &rarr; Cockpit &rarr; Top)</span></div>
+            <div class="guide-row"><kbd>SEGURAR <span id="guide-key-lookback">B</span> / R3</kbd><span>Olhar para trás (soltar volta ao normal)</span></div>
             <div class="guide-row"><kbd>SCROLL / [ ]</kbd><span>Ajustar distância da câmera</span></div>
             <div class="guide-row"><kbd id="guide-key-mute">M</kbd><span>Ligar / desligar som rapidamente</span></div>
             <div class="guide-row"><kbd id="guide-key-restore">R</kbd><span>Restaurar montanhas (apenas Solo)</span></div>
@@ -285,6 +286,7 @@
             <div class="guide-row"><kbd>BOTÃO A</kbd><span>Lançar míssil teleguiado (FOX 2)</span></div>
             <div class="guide-row"><kbd>BOTÃO X</kbd><span>Abrir / alternar Cockpit 2D</span></div>
             <div class="guide-row"><kbd>BOTÃO B</kbd><span>Ciclar câmeras (Chase &rarr; Cockpit &rarr; Top)</span></div>
+            <div class="guide-row"><kbd>R3 (SEGURAR)</kbd><span>Inverter câmera e olhar para trás da nave (soltar volta ao normal)</span></div>
             <div class="guide-row"><kbd>SELECT</kbd><span>Alterar estilo de renderização <i>(apenas modo Solo)</i></span></div>
             <div class="guide-row"><kbd>LT / LB / RB / Y / START / DIR. Y</kbd><span><b>LT</b> Afterburner &middot; <b>LB / RB / Y</b> Barrel Roll &middot; <b>START</b> Menu / Pausa &middot; <b>DIR. Y</b> Distância câmera</span></div>
           </div>
@@ -463,6 +465,6 @@
       }
     }
   </script>
-  <script type="module" src="js/main.js?v=13"></script>
+  <script type="module" src="js/main.js?v=15"></script>
 </body>
 </html>

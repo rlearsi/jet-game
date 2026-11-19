@@ -6,13 +6,13 @@ import {
   TERRAIN_DEFORM_MODES,
   TERRAIN_CLOUD_MODES,
   DEFAULT_TERRAIN_OPTIONS,
-} from './world.js?v=13';
-import { FighterJet, RemoteJet, SHIP_CATALOG, SHIP_IDS } from './jet.js?v=13';
-import { MissileSystem } from './weapons.js?v=13';
-import { FighterCockpit } from './cockpit.js?v=13';
-import { JetSoundEngine } from './audio.js?v=13';
-import { MultiplayerManager } from './multiplayer.js?v=13';
-import { GamepadController, DEFAULT_GAMEPAD_DEADZONE } from './gamepad.js?v=13';
+} from './world.js?v=15';
+import { FighterJet, RemoteJet, SHIP_CATALOG, SHIP_IDS } from './jet.js?v=15';
+import { MissileSystem } from './weapons.js?v=15';
+import { FighterCockpit } from './cockpit.js?v=15';
+import { JetSoundEngine } from './audio.js?v=15';
+import { MultiplayerManager } from './multiplayer.js?v=15';
+import { GamepadController, DEFAULT_GAMEPAD_DEADZONE } from './gamepad.js?v=15';
 
 // 6 live-switchable rendering styles (exclusively configurable inside Settings -> Render, plus V in flight)
 const RENDER_PRESETS = {
@@ -107,6 +107,7 @@ const DEFAULT_BINDINGS = {
   missile: 'KeyF',
   cockpit: 'KeyE',
   camera: 'Space',
+  lookBack: 'KeyB',
   afterburner: 'ShiftLeft',
   mute: 'KeyM',
   restoreTerrain: 'KeyR',
@@ -117,6 +118,7 @@ const BINDING_META = [
   { id: 'missile', label: 'MÍSSIL (FOX 2)' },
   { id: 'cockpit', label: 'COCKPIT 2D' },
   { id: 'camera', label: 'CICLAR CÂMERA' },
+  { id: 'lookBack', label: 'OLHAR PARA TRÁS (SEGURAR)' },
   { id: 'afterburner', label: 'AFTERBURNER' },
   { id: 'mute', label: 'SOM ON/OFF' },
   { id: 'restoreTerrain', label: 'RESTAURAR MONTANHAS' },
@@ -242,6 +244,7 @@ const guideKeyAfterburner = document.getElementById('guide-key-afterburner');
 const guideKeyMissile = document.getElementById('guide-key-missile');
 const guideKeyCockpit = document.getElementById('guide-key-cockpit');
 const guideKeyCam = document.getElementById('guide-key-cam');
+const guideKeyLookBack = document.getElementById('guide-key-lookback');
 const guideKeyMute = document.getElementById('guide-key-mute');
 const guideKeyRestore = document.getElementById('guide-key-restore');
 const guideKeyStyle = document.getElementById('guide-key-style');
@@ -864,6 +867,7 @@ const gamepad = new GamepadController({
       input.joyY = 0;
       input.joyBoost = false;
       input.joyCannon = false;
+      input.joyLookBack = false;
     }
     if (gameState === 'playing') {
       weapons.killBannerText = connected ? 'JOYSTICK CONECTADO' : 'JOYSTICK DESCONECTADO';
@@ -897,6 +901,7 @@ function syncControlsUI() {
   if (guideKeyMissile) guideKeyMissile.textContent = formatKeyLabel(b.missile);
   if (guideKeyCockpit) guideKeyCockpit.textContent = formatKeyLabel(b.cockpit);
   if (guideKeyCam) guideKeyCam.textContent = formatKeyLabel(b.camera);
+  if (guideKeyLookBack) guideKeyLookBack.textContent = formatKeyLabel(b.lookBack);
   if (guideKeyMute) guideKeyMute.textContent = formatKeyLabel(b.mute);
   if (guideKeyRestore) guideKeyRestore.textContent = formatKeyLabel(b.restoreTerrain);
   if (guideKeyStyle) guideKeyStyle.textContent = formatKeyLabel(b.cycleStyle);
@@ -1484,6 +1489,7 @@ function clearInputs() {
   input.cannonFiring = false;
   input.joyBoost = false;
   input.joyCannon = false;
+  input.joyLookBack = false;
   input.joyX = 0;
   input.joyY = 0;
   input.keys = {};
@@ -1766,6 +1772,7 @@ const input = {
   joyY: 0,
   joyBoost: false,
   joyCannon: false,
+  joyLookBack: false,
   keys: {},
   sensitivity: controlSettings.mouseSensitivity,
   invertY: controlSettings.invertY,
@@ -1993,15 +2000,35 @@ function updateShowcaseFlight(dt) {
   camera.lookAt(desiredLook);
 }
 
+let wasLookingBack = false;
+
+function isLookingBackActive() {
+  if (menuOpen || gameState !== 'playing') return false;
+  const kbKey = controlSettings.bindings.lookBack || 'KeyB';
+  return Boolean(input.joyLookBack || input.keys[kbKey]);
+}
+
 function updateCamera(dt) {
   const mode = CAMERA_MODES[camModeIdx].id;
   const fwd = jet.getForwardDirection();
+  const lookingBack = isLookingBackActive();
+  const flipped = lookingBack !== wasLookingBack;
+  wasLookingBack = lookingBack;
+
+  if (flipped) {
+    const isCockpit = mode === 'COCKPIT';
+    const showCockpit = isCockpit && !lookingBack && gameState === 'playing' && !menuOpen;
+    cockpit.setVisible(showCockpit);
+    jet.setVisible((!showCockpit) && jet.alive);
+    hudBottomLeft.classList.toggle('hidden', showCockpit || gameState !== 'playing' || menuOpen);
+    camBadge.textContent = lookingBack ? 'REAR VIEW (R3)' : CAMERA_MODES[camModeIdx].label;
+  }
 
   const objFovOffset = (viewSettings.objDist - 1.0) * 14.0;
   let targetFov = viewSettings.fov + objFovOffset + (jet.afterburner ? 8.5 : 0);
-  if (mode === 'COCKPIT') {
+  if (!lookingBack && mode === 'COCKPIT') {
     targetFov = THREE.MathUtils.clamp(viewSettings.fov - 4 + objFovOffset, 50, 108);
-  } else if (mode === 'TOP') {
+  } else if (!lookingBack && mode === 'TOP') {
     targetFov = THREE.MathUtils.clamp(viewSettings.fov - 16 + objFovOffset * 0.8, 42, 98);
   } else {
     targetFov = THREE.MathUtils.clamp(targetFov, 45, 118);
@@ -2013,28 +2040,30 @@ function updateCamera(dt) {
 
   const totalDistScale = viewSettings.camDist * viewSettings.objDist;
 
-  if (mode === 'CHASE') {
+  if (lookingBack || mode === 'CHASE') {
     const baseDist = jet.afterburner ? 24.5 : 20.5;
     const dist = baseDist * totalDistScale;
-    const heightOff = 7.4 * totalDistScale;
+    const heightOff = (lookingBack ? 6.6 : 7.4) * totalDistScale;
+    const dirSign = lookingBack ? 1 : -1;
 
     const desiredPos = jet.position
       .clone()
-      .addScaledVector(fwd, -dist)
+      .addScaledVector(fwd, dirSign * dist)
       .add(new THREE.Vector3(0, heightOff, 0));
     const desiredLook = jet.position
       .clone()
-      .addScaledVector(fwd, 34 * viewSettings.objDist)
+      .addScaledVector(fwd, -dirSign * 34 * viewSettings.objDist)
       .add(new THREE.Vector3(0, -1.6 * viewSettings.objDist, 0));
 
-    if (dt > 0) {
+    const targetRoll = (lookingBack ? -1 : 1) * jet.bank * 0.34;
+    if (dt > 0 && !flipped) {
       camPosSmooth.lerp(desiredPos, 1 - Math.exp(-8.5 * dt));
       camLookSmooth.lerp(desiredLook, 1 - Math.exp(-10.5 * dt));
-      camRollSmooth = THREE.MathUtils.lerp(camRollSmooth, jet.bank * 0.34, 1 - Math.exp(-5.0 * dt));
+      camRollSmooth = THREE.MathUtils.lerp(camRollSmooth, targetRoll, 1 - Math.exp(-5.0 * dt));
     } else {
       camPosSmooth.copy(desiredPos);
       camLookSmooth.copy(desiredLook);
-      camRollSmooth = jet.bank * 0.34;
+      camRollSmooth = targetRoll;
     }
 
     camera.position.copy(camPosSmooth);
@@ -2063,7 +2092,7 @@ function updateCamera(dt) {
       .add(new THREE.Vector3(0, 82 * totalDistScale, 0));
     const desiredLook = jet.position.clone().addScaledVector(horizFwd, 20 * viewSettings.objDist);
 
-    if (dt > 0) {
+    if (dt > 0 && !flipped) {
       camPosSmooth.lerp(desiredPos, 1 - Math.exp(-6.0 * dt));
       camLookSmooth.lerp(desiredLook, 1 - Math.exp(-9.0 * dt));
     } else {
@@ -2187,7 +2216,7 @@ function updatePlayingHUD(elapsed) {
     killBanner.classList.add('hidden');
   }
 
-  if (modeId === 'CHASE') {
+  if (modeId === 'CHASE' && !isLookingBackActive()) {
     const aimPt = jet.position.clone().addScaledVector(jet.getForwardDirection(), 180);
     const sp = projectToScreen(aimPt);
     if (sp) {
@@ -2256,6 +2285,7 @@ function handleGamepadFrame(dt) {
     input.joyY = 0;
     input.joyBoost = false;
     input.joyCannon = false;
+    input.joyLookBack = false;
     return;
   }
 
@@ -2265,6 +2295,7 @@ function handleGamepadFrame(dt) {
     input.joyY = 0;
     input.joyBoost = false;
     input.joyCannon = false;
+    input.joyLookBack = false;
     return;
   }
 
@@ -2276,6 +2307,7 @@ function handleGamepadFrame(dt) {
   input.joyY = gp.steerY;
   input.joyBoost = gp.boostHeld;
   input.joyCannon = gp.cannonHeld;
+  input.joyLookBack = gp.lookBackHeld;
 
   if (Math.abs(gp.camDistDelta) > 0.0001) {
     viewSettings.camDist = THREE.MathUtils.clamp(viewSettings.camDist + gp.camDistDelta, 0.5, 2.6);
@@ -2328,7 +2360,7 @@ function animate() {
     world.update(elapsed, camera.position, 0);
   } else {
     const activeInput = menuOpen ? NEUTRAL_INPUT : input;
-    const showCockpitLive = isCockpit && !menuOpen;
+    const showCockpitLive = isCockpit && !menuOpen && !isLookingBackActive();
     sound.setPaused(menuOpen);
 
     if (jet.alive) {
@@ -2437,7 +2469,7 @@ function animate() {
   renderer.render(scene, camera);
 
   // Pass 2: Jet hull silhouette mask (Layer 1)
-  const renderCockpitOverlay = gameState === 'playing' && !menuOpen && isCockpit;
+  const renderCockpitOverlay = gameState === 'playing' && !menuOpen && isCockpit && !isLookingBackActive();
   const hasVisibleJets = (!renderCockpitOverlay && jet.alive) || remoteJets.size > 0;
   postMat.uniforms.uOutlineEnabled.value = hasVisibleJets ? 1.0 : 0.0;
   if (hasVisibleJets) {
