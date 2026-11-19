@@ -66,6 +66,7 @@ export class MissileSystem {
     this.muzzleTimer = 0;
 
     this.shake = 0;
+    this.destroyed = 0;
 
     this.missiles = [];
     this.bullets = [];
@@ -80,6 +81,29 @@ export class MissileSystem {
 
     this.sphereGeo = new THREE.IcosahedronGeometry(1.0, 1);
     this.smokeMatWhite = new THREE.MeshBasicMaterial({ color: 0xf7f4f0 });
+  }
+
+  // Destroy world objects near pos and spawn debris/fire effects. Returns number destroyed.
+  destroyAt(pos, radius) {
+    const killed = this.world.damage(pos, radius);
+    let big = false;
+    for (const o of killed) {
+      const p = new THREE.Vector3(o.x, o.y + 2, o.z);
+      const major = o.type === 'house' || o.type === 'lighthouse' || o.type === 'tower';
+      if (major) big = true;
+      const n = major ? 14 : 6;
+      for (let i = 0; i < n; i++) {
+        const vel = new THREE.Vector3((Math.random() - 0.5) * 20, 6 + Math.random() * 20, (Math.random() - 0.5) * 20);
+        const r = Math.random();
+        const col = r < 0.3 ? 0xfff08a : r < 0.6 ? 0xf27d30 : r < 0.8 ? o.color : 0x6b6475;
+        this.spawnParticle(p, vel, (major ? 1.6 : 0.9) + Math.random() * 1.2, 0.6 + Math.random() * 0.5, col, 2.4, true);
+      }
+    }
+    if (killed.length) {
+      this.destroyed += killed.length;
+      if (big) { this.shake = Math.max(this.shake, 0.4); this.sound.playImpact(false); }
+    }
+    return killed.length;
   }
 
   tryFireCannon(jet) {
@@ -247,7 +271,20 @@ export class MissileSystem {
       const b = this.bullets[i];
       b.life -= dt;
       b.vel.y -= 12.0 * dt;
+      const bPrev = b.pos.clone();
       b.pos.addScaledVector(b.vel, dt);
+      // Sweep along the travelled segment so fast rounds never tunnel through objects
+      let bulletHit = false;
+      for (let k = 1; k <= 4; k++) {
+        const sp = bPrev.clone().lerp(b.pos, k / 4);
+        if (this.destroyAt(sp, 3.5) > 0) { bulletHit = true; b.pos.copy(sp); break; }
+      }
+      if (bulletHit) {
+        this.spawnCannonImpact(b.pos, false, time);
+        this.scene.remove(b.mesh);
+        this.bullets.splice(i, 1);
+        continue;
+      }
       b.mesh.position.copy(b.pos);
       b.mesh.lookAt(b.pos.clone().add(b.vel));
 
@@ -277,7 +314,21 @@ export class MissileSystem {
       const m = this.missiles[i];
       m.life -= dt;
       m.vel.y -= 6.5 * dt;
+      const mPrev = m.pos.clone();
       m.pos.addScaledVector(m.vel, dt);
+      let directHit = false;
+      for (let k = 1; k <= 6; k++) {
+        const sp = mPrev.clone().lerp(m.pos, k / 6);
+        const near = this.world.damage(sp, 0).length; // direct contact test
+        if (near > 0) { directHit = true; m.pos.copy(sp); break; }
+      }
+      if (directHit) {
+        this.spawnImpact(m.pos, false, time);
+        this.destroyAt(m.pos, 26);
+        this.scene.remove(m.mesh);
+        this.missiles.splice(i, 1);
+        continue;
+      }
       m.mesh.position.copy(m.pos);
       m.mesh.lookAt(m.pos.clone().add(m.vel));
 
@@ -316,7 +367,10 @@ export class MissileSystem {
       }
 
       if (hit || m.life <= 0) {
-        if (hit) this.spawnImpact(m.pos, isWater, time);
+        if (hit) {
+          this.spawnImpact(m.pos, isWater, time);
+          if (!isWater) this.destroyAt(m.pos, 26);
+        }
         this.scene.remove(m.mesh);
         this.missiles.splice(i, 1);
       }

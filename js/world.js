@@ -633,6 +633,18 @@ export function buildWorld(scene) {
   // =========================================================================
   const dummy = new THREE.Object3D();
 
+  // ---- Destructible object registry (spatial hash grid) ----
+  const ZERO_M = new THREE.Matrix4().makeScale(0, 0, 0);
+  const GRID = 48;
+  const grid = new Map();
+  const dirtyMeshes = new Set();
+  function registerDestructible(obj) {
+    obj.alive = true;
+    const key = Math.floor(obj.x / GRID) + ',' + Math.floor(obj.z / GRID);
+    if (!grid.has(key)) grid.set(key, []);
+    grid.get(key).push(obj);
+  }
+
   // 4a. Instanced Biome Trees (1400 stylized trees: autumn crimson/gold/orange + emerald pines + desert scrub)
   const treeCount = 1400;
   const treeGeo = new THREE.ConeGeometry(2.8, 7.6, 5);
@@ -675,6 +687,13 @@ export function buildWorld(scene) {
       hex = autumnCols[Math.floor(rand() * autumnCols.length)];
     }
     trees.setColorAt(placedTrees, new THREE.Color(hex));
+    {
+      const ti = placedTrees;
+      registerDestructible({
+        type: 'tree', x: tx, y: ty, z: tz, r: 3.2 * s, h: 9 * s, color: hex,
+        kill() { trees.setMatrixAt(ti, ZERO_M); dirtyMeshes.add(trees); },
+      });
+    }
     placedTrees++;
   }
   trees.count = placedTrees;
@@ -723,6 +742,17 @@ export function buildWorld(scene) {
       dummy.updateMatrix();
       houseRoofs.setMatrixAt(placedHouses, dummy.matrix);
       houseRoofs.setColorAt(placedHouses, new THREE.Color(roofPalette[Math.floor(rand() * roofPalette.length)]));
+      {
+        const hi = placedHouses;
+        registerDestructible({
+          type: 'house', x: hx, y: hy, z: hz, r: 4.0 * s, h: 6.5 * s, color: 0xf2e4cc,
+          kill() {
+            houseWalls.setMatrixAt(hi, ZERO_M);
+            houseRoofs.setMatrixAt(hi, ZERO_M);
+            dirtyMeshes.add(houseWalls); dirtyMeshes.add(houseRoofs);
+          },
+        });
+      }
       placedHouses++;
     }
   }
@@ -762,7 +792,11 @@ export function buildWorld(scene) {
     g.add(base, stripe, lamp, cap);
     g.position.set(lx, ly - 0.5, lz);
     scene.add(g);
-    lighthouseBeacons.push({ lamp, phase: rand() * Math.PI * 2 });
+    lighthouseBeacons.push({ lamp, phase: rand() * Math.PI * 2, group: g });
+    registerDestructible({
+      type: 'lighthouse', x: lx, y: ly, z: lz, r: 3.4, h: 16, color: 0xf7f2e8,
+      kill() { g.visible = false; },
+    });
   }
 
   // 4d. Coastal Island Airstrip at (-215, 225) for epic low flybys!
@@ -793,6 +827,10 @@ export function buildWorld(scene) {
   const towerCab = new THREE.Mesh(new THREE.BoxGeometry(7.8, 3.2, 7.8), lhLampMat);
   towerCab.position.set(-196, stripY + 14.5, 215);
   scene.add(tower, towerCab);
+  registerDestructible({
+    type: 'tower', x: -196, y: stripY, z: 215, r: 5.5, h: 17, color: 0xf7f2e8,
+    kill() { tower.visible = false; towerCab.visible = false; },
+  });
 
   // 4e. Sailboats drifting across the turquoise bays (great sense of scale!)
   const boatCount = 46;
@@ -818,6 +856,7 @@ export function buildWorld(scene) {
       angle: rand() * Math.PI * 2,
       speed: 1.4 + rand() * 1.8,
       phase: rand() * Math.PI * 2,
+      alive: true,
     });
   }
   boatHulls.count = boats.length;
@@ -942,7 +981,45 @@ export function buildWorld(scene) {
     });
   }
 
+  function damage(pos, blast) {
+    const killed = [];
+    const range = Math.ceil((blast + 12) / GRID);
+    const cx = Math.floor(pos.x / GRID);
+    const cz = Math.floor(pos.z / GRID);
+    for (let ix = cx - range; ix <= cx + range; ix++) {
+      for (let iz = cz - range; iz <= cz + range; iz++) {
+        const list = grid.get(ix + ',' + iz);
+        if (!list) continue;
+        for (const o of list) {
+          if (!o.alive) continue;
+          const dx = o.x - pos.x;
+          const dz = o.z - pos.z;
+          const reach = o.r + blast;
+          if (dx * dx + dz * dz > reach * reach) continue;
+          if (pos.y < o.y - 3 - blast * 0.5 || pos.y > o.y + o.h + 3 + blast * 0.5) continue;
+          o.alive = false;
+          o.kill();
+          killed.push(o);
+        }
+      }
+    }
+    for (const b of boats) {
+      if (!b.alive) continue;
+      const dx = b.x - pos.x;
+      const dz = b.z - pos.z;
+      const reach = 3.5 + blast;
+      if (dx * dx + dz * dz < reach * reach && pos.y < 8 + blast * 0.5) {
+        b.alive = false;
+        killed.push({ type: 'boat', x: b.x, y: WATER_LEVEL + 1, z: b.z, color: 0xfdf8ef });
+      }
+    }
+    for (const m of dirtyMeshes) m.instanceMatrix.needsUpdate = true;
+    dirtyMeshes.clear();
+    return killed;
+  }
+
   return {
+    damage,
     addWaterRipple(x, z, time) {
       rippleUniforms[nextRippleIdx].set(x, z, time, 1.0);
       nextRippleIdx = (nextRippleIdx + 1) % MAX_RIPPLES;
@@ -974,6 +1051,11 @@ export function buildWorld(scene) {
       // Gently animate sailboats on the water
       for (let i = 0; i < boats.length; i++) {
         const b = boats[i];
+        if (!b.alive) {
+          boatHulls.setMatrixAt(i, ZERO_M);
+          boatSails.setMatrixAt(i, ZERO_M);
+          continue;
+        }
         const nx = b.x + Math.sin(b.angle) * b.speed * dt;
         const nz = b.z + Math.cos(b.angle) * b.speed * dt;
         if (getTerrainHeight(nx, nz) < -4.0 && Math.abs(nx) < 1150 && Math.abs(nz) < 1150) {
