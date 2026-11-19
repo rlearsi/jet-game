@@ -12,6 +12,21 @@
   <!-- Pixel-art fighter cockpit overlay (visible in COCKPIT mode) -->
   <canvas id="cockpit-canvas" width="480" height="270"></canvas>
 
+  <!-- World-projected 3D boresight aim reticle & hitmarker (CHASE view) -->
+  <div id="aim-reticle">
+    <div class="aim-ring"></div>
+    <div class="aim-dot"></div>
+    <div id="hit-marker" class="hit-marker"></div>
+  </div>
+
+  <!-- Target Lock-On diamond/box for destructible ships, balloons, lighthouses, buildings -->
+  <div id="lock-box" class="lock-box hidden">
+    <div class="lock-label" id="lock-label">LOCK</div>
+  </div>
+
+  <!-- Brief destruction feedback toast -->
+  <div id="kill-banner" class="kill-banner hidden"></div>
+
   <!-- Top slim control bar -->
   <div id="hud-top-bar">
     <div class="top-controls">
@@ -64,13 +79,15 @@
     <div class="vp-tip">TIP: SCROLL WHEEL OR [ / ] ADJUSTS DISTANCE</div>
   </div>
 
-  <!-- Subtle camera & biome telemetry badge (bottom-left, hidden in cockpit) -->
+  <!-- Subtle camera & destruction telemetry badge (bottom-left) -->
   <div id="hud-bottom-left">
     <span id="cam-badge">CHASE VIEW</span>
     <span class="sep">&middot;</span>
     <span id="telem-badge">SPD 580 &middot; ALT 340</span>
     <span class="sep">&middot;</span>
     <span id="dist-badge">FOV 80&deg; &middot; DIST 1.35x</span>
+    <span class="sep">&middot;</span>
+    <span id="destroyed-badge" class="destroyed-badge">DESTROYED: 0</span>
   </div>
 
   <!-- Brief intro banner -->
@@ -86,6 +103,6 @@
       }
     }
   </script>
-  <script type="module" src="js/main.js"></script>
+  <script type="module" src="js/main.js?v=5"></script>
 </body>
 </html>

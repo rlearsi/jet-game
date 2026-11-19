@@ -1,69 +1,118 @@
 import * as THREE from 'three';
-import { getTerrainHeight, WATER_LEVEL, SUN_DIR } from './world.js';
+import { getTerrainHeight, WATER_LEVEL, SUN_DIR } from './world.js?v=5';
 
 /**
- * Generates crisp pixel-art splinter camouflage & panel-line texture
- * matching the bright light-silver / lavender-slate / orange-accent fighter in the reference screenshots.
+ * Custom top-down pixel-art texture mapped directly onto the sculpted 3D fighter planform.
+ * Matches the bright silver-white wings, jagged lavender-slate dorsal camo, orange-red
+ * intake/wingtip accents, and dark nose tip seen in the reference screenshots.
+ * UV convention: u = x / 8.4 + 0.5 (left=-4.2..right=+4.2), v = (z + 4.1) / 7.0 (nose=-4.1..tail=+2.9)
  */
-function createJetCamoTexture() {
+function createPlanformTexture() {
+  const S = 128;
   const c = document.createElement('canvas');
-  c.width = 64;
-  c.height = 64;
+  c.width = S;
+  c.height = S;
   const ctx = c.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
 
-  // Bright silver-white base
-  ctx.fillStyle = '#e6ebf7';
-  ctx.fillRect(0, 0, 64, 64);
+  const toU = (x) => Math.round((x / 8.4 + 0.5) * S);
+  const toV = (z) => Math.round(((z + 4.1) / 7.0) * S);
 
-  // Subtle light-blue-gray panel variation
-  ctx.fillStyle = '#d4dced';
-  ctx.fillRect(0, 0, 64, 18);
-  ctx.fillRect(20, 34, 24, 30);
+  // 1. Bright icy silver-white base across entire aircraft
+  ctx.fillStyle = '#e5eaf6';
+  ctx.fillRect(0, 0, S, S);
 
-  // Geometric pixel-art splinter camo patches (lavender-slate midtone)
-  ctx.fillStyle = '#9aa3be';
+  // 2. Soft cool-silver shading toward wing trailing edges & tailplanes
+  ctx.fillStyle = '#cfd7ea';
+  ctx.fillRect(0, toV(0.65), S, S - toV(0.65));
+
+  // 3. Signature jagged dorsal camouflage pattern (matches screenshots 2, 5, 6, 7!)
+  ctx.fillStyle = '#8b93ae';
   ctx.beginPath();
-  ctx.moveTo(8, 10);
-  ctx.lineTo(30, 4);
-  ctx.lineTo(24, 28);
-  ctx.lineTo(4, 24);
+  ctx.moveTo(toU(0.0), toV(-2.2));
+  ctx.lineTo(toU(0.75), toV(-1.1));
+  ctx.lineTo(toU(1.55), toV(-0.35));
+  ctx.lineTo(toU(0.95), toV(0.15));
+  ctx.lineTo(toU(1.85), toV(0.75));
+  ctx.lineTo(toU(1.05), toV(1.15));
+  ctx.lineTo(toU(1.35), toV(2.1));
+  ctx.lineTo(toU(0.0), toV(2.45));
+  ctx.lineTo(toU(-1.35), toV(2.1));
+  ctx.lineTo(toU(-1.05), toV(1.15));
+  ctx.lineTo(toU(-1.85), toV(0.75));
+  ctx.lineTo(toU(-0.95), toV(0.15));
+  ctx.lineTo(toU(-1.55), toV(-0.35));
+  ctx.lineTo(toU(-0.75), toV(-1.1));
   ctx.closePath();
   ctx.fill();
 
+  // Deeper slate-lavender inner spine & twin-engine valley
+  ctx.fillStyle = '#6c7490';
   ctx.beginPath();
-  ctx.moveTo(38, 22);
-  ctx.lineTo(62, 16);
-  ctx.lineTo(58, 44);
-  ctx.lineTo(34, 38);
+  ctx.moveTo(toU(0.0), toV(-1.0));
+  ctx.lineTo(toU(0.62), toV(-0.2));
+  ctx.lineTo(toU(0.45), toV(0.55));
+  ctx.lineTo(toU(0.95), toV(1.25));
+  ctx.lineTo(toU(0.78), toV(2.35));
+  ctx.lineTo(toU(-0.78), toV(2.35));
+  ctx.lineTo(toU(-0.95), toV(1.25));
+  ctx.lineTo(toU(-0.45), toV(0.55));
+  ctx.lineTo(toU(-0.62), toV(-0.2));
   ctx.closePath();
   ctx.fill();
 
-  // Deeper slate camo accent
-  ctx.fillStyle = '#737c98';
+  // Crisp light-silver dorsal highlight ridge down the center spine
+  ctx.fillStyle = '#dde3f2';
+  ctx.fillRect(toU(-0.24), toV(-0.7), toU(0.24) - toU(-0.24), toV(0.65) - toV(-0.7));
+
+  // Subtle wing splinter patches on outer wings
+  ctx.fillStyle = '#aeb6ce';
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(toU(side * 1.9), toV(0.15));
+    ctx.lineTo(toU(side * 3.1), toV(0.55));
+    ctx.lineTo(toU(side * 2.7), toV(0.92));
+    ctx.lineTo(toU(side * 1.65), toV(0.62));
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // Subtle pixel panel lines along wing roots & flaps
+  ctx.strokeStyle = '#5d6580';
+  ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(14, 42);
-  ctx.lineTo(36, 38);
-  ctx.lineTo(28, 58);
-  ctx.lineTo(10, 54);
-  ctx.closePath();
-  ctx.fill();
+  for (const side of [-1, 1]) {
+    ctx.moveTo(toU(side * 1.1), toV(-0.75));
+    ctx.lineTo(toU(side * 1.15), toV(1.05));
+    ctx.moveTo(toU(side * 1.45), toV(0.88));
+    ctx.lineTo(toU(side * 3.55), toV(0.92));
+  }
+  ctx.stroke();
 
-  // Crisp subtle pixel-art panel seam lines
-  ctx.fillStyle = '#5c647e';
-  ctx.fillRect(0, 18, 64, 1);
-  ctx.fillRect(0, 46, 64, 1);
-  ctx.fillRect(31, 0, 1, 64);
+  // Signature red-orange squadron flashes on wing roots & wingtip rails (visible in photos!)
+  ctx.fillStyle = '#e55238';
+  for (const side of [-1, 1]) {
+    const x1 = toU(side * 0.92);
+    const x2 = toU(side * 1.28);
+    ctx.fillRect(Math.min(x1, x2), toV(0.15), Math.abs(x2 - x1), Math.max(2, toV(0.68) - toV(0.15)));
 
-  // Small red-orange intake/wing squadron accent stripe
-  ctx.fillStyle = '#eb5836';
-  ctx.fillRect(46, 6, 12, 4);
-  ctx.fillRect(6, 52, 8, 3);
+    const wx1 = toU(side * 3.65);
+    const wx2 = toU(side * 4.05);
+    ctx.fillRect(Math.min(wx1, wx2), toV(0.62), Math.abs(wx2 - wx1), Math.max(2, toV(0.96) - toV(0.62)));
+  }
+
+  // Dark pointed radome tip at the nose
+  ctx.fillStyle = '#2d3146';
+  ctx.fillRect(toU(-0.55), 0, toU(0.55) - toU(-0.55), toV(-3.32));
+
+  // Dark metallic rear engine cowling band
+  ctx.fillStyle = '#383d54';
+  ctx.fillRect(toU(-0.95), toV(2.22), toU(0.95) - toU(-0.95), S - toV(2.22));
 
   const tex = new THREE.CanvasTexture(c);
   tex.magFilter = THREE.NearestFilter;
   tex.minFilter = THREE.NearestFilter;
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
+  tex.flipY = false; // v=0 at top (nose z=-4.1), v=1 at bottom (tail z=+2.9)
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
@@ -73,19 +122,44 @@ function createCanopyTexture() {
   c.width = 16;
   c.height = 32;
   const ctx = c.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
 
-  // Rich bright golden canopy with crisp specular glint & dark frame border
-  ctx.fillStyle = '#f8d64c';
+  ctx.fillStyle = '#f8d84e';
   ctx.fillRect(0, 0, 16, 32);
-  ctx.fillStyle = '#fff5b3';
-  ctx.fillRect(4, 4, 8, 12);
-  ctx.fillStyle = '#e5a42e';
-  ctx.fillRect(0, 22, 16, 10);
-  // Thin canopy bow lines
-  ctx.fillStyle = '#242738';
+  ctx.fillStyle = '#fff7c4';
+  ctx.fillRect(4, 5, 8, 13);
+  ctx.fillStyle = '#e3a12a';
+  ctx.fillRect(0, 23, 16, 9);
+  ctx.fillStyle = '#222638';
   ctx.fillRect(0, 0, 16, 2);
-  ctx.fillRect(0, 18, 16, 1);
-  ctx.fillRect(0, 30, 16, 2);
+  ctx.fillRect(0, 29, 16, 3);
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function createFinTexture() {
+  const c = document.createElement('canvas');
+  c.width = 16;
+  c.height = 16;
+  const ctx = c.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+
+  // Light silver tail fin with slate lower patch, crisp red-orange top tip & dark ink border
+  ctx.fillStyle = '#dce3f2';
+  ctx.fillRect(0, 0, 16, 16);
+  ctx.fillStyle = '#7e86a2';
+  ctx.fillRect(0, 9, 16, 7);
+  ctx.fillStyle = '#e65238';
+  ctx.fillRect(1, 1, 14, 3);
+  // Crisp thin dark border around fin edges so twin tails pop against bright fuselage
+  ctx.fillStyle = '#222538';
+  ctx.fillRect(0, 0, 1, 16);
+  ctx.fillRect(15, 0, 1, 16);
+  ctx.fillRect(0, 0, 16, 1);
 
   const tex = new THREE.CanvasTexture(c);
   tex.magFilter = THREE.NearestFilter;
@@ -95,8 +169,8 @@ function createCanopyTexture() {
 }
 
 /**
- * Bright cel-shaded material that keeps the jet crisp, luminous, and clearly textured
- * from every viewing angle (matching the reference screenshots).
+ * Bright, crisp sunset cel-shaded material that preserves the luminous silver-white
+ * pixel-art look of the jet without muddy dark shading.
  */
 function createBrightJetMaterial(tex, tintHex = 0xffffff) {
   return new THREE.ShaderMaterial({
@@ -125,18 +199,174 @@ function createBrightJetMaterial(tex, tintHex = 0xffffff) {
         vec3 texCol = texture2D(uMap, vUv).rgb * uTint;
         vec3 N = normalize(vNormal);
         float ndl = dot(N, normalize(uSunDir));
-        float topBoost = clamp(N.y * 0.35 + 0.65, 0.55, 1.05);
+        float upLit = clamp(N.y * 0.25 + 0.82, 0.72, 1.06);
 
-        // Crisp 2-band bright sunset cel lighting (never dark or muddy!)
-        float band = step(-0.08, ndl);
-        vec3 shadeCol = vec3(0.82, 0.81, 0.92);
-        vec3 litCol   = vec3(1.08, 1.05, 1.00);
-        vec3 col = texCol * mix(shadeCol, litCol, band) * topBoost;
+        // Clean 2-step cel light (high ambient so wings stay bright icy-silver!)
+        float band = step(-0.14, ndl);
+        vec3 shadeCol = vec3(0.84, 0.83, 0.94);
+        vec3 litCol   = vec3(1.07, 1.04, 1.00);
+        vec3 col = texCol * mix(shadeCol, litCol, band) * upLit;
 
         gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
       }
     `,
   });
+}
+
+/**
+ * Builds a single continuous sculpted blended-wing-body fuselage (no stacked boxes!).
+ * Cross-sections are lofted smoothly from the needle nose to twin engine nacelles.
+ */
+function buildSculptedFuselage() {
+  // Each station: { z, w (half-width), top, midY, bot, chineW }
+  const stations = [
+    { z: -3.95, w: 0.03, chineW: 0.03, top: 0.02, midY: 0.0, bot: -0.02 },
+    { z: -3.25, w: 0.24, chineW: 0.30, top: 0.16, midY: 0.01, bot: -0.12 },
+    { z: -2.30, w: 0.48, chineW: 0.62, top: 0.28, midY: 0.02, bot: -0.18 },
+    { z: -1.25, w: 0.72, chineW: 1.06, top: 0.34, midY: 0.04, bot: -0.22 }, // LERX shoulders
+    { z: 0.15, w: 0.88, chineW: 1.18, top: 0.34, midY: 0.04, bot: -0.22 },
+    { z: 1.30, w: 0.86, chineW: 1.08, top: 0.30, midY: 0.02, bot: -0.20 },
+    { z: 2.25, w: 0.76, chineW: 0.90, top: 0.22, midY: 0.0, bot: -0.16 },
+    { z: 2.52, w: 0.60, chineW: 0.68, top: 0.14, midY: 0.0, bot: -0.12 },
+  ];
+
+  // 8-point octagonal airfoil cross-section per station (CW from top-center looking from +Z)
+  const rings = stations.map((s) => [
+    [0, s.top, s.z],
+    [s.w * 0.68, s.top * 0.82, s.z],
+    [s.chineW, s.midY, s.z],
+    [s.w * 0.72, s.bot * 0.85, s.z],
+    [0, s.bot, s.z],
+    [-s.w * 0.72, s.bot * 0.85, s.z],
+    [-s.chineW, s.midY, s.z],
+    [-s.w * 0.68, s.top * 0.82, s.z],
+  ]);
+
+  const positions = [];
+  const uvs = [];
+
+  const pushTri = (a, b, c) => {
+    for (const v of [a, b, c]) {
+      positions.push(v[0], v[1], v[2]);
+      uvs.push(v[0] / 8.4 + 0.5, (v[2] + 4.1) / 7.0);
+    }
+  };
+
+  for (let r = 0; r < rings.length - 1; r++) {
+    const ringA = rings[r];
+    const ringB = rings[r + 1];
+    const n = ringA.length;
+    for (let i = 0; i < n; i++) {
+      const ni = (i + 1) % n;
+      const a0 = ringA[i];
+      const a1 = ringA[ni];
+      const b0 = ringB[i];
+      const b1 = ringB[ni];
+      pushTri(a0, b0, b1);
+      pushTri(a0, b1, a1);
+    }
+  }
+
+  // Close rear bulkhead
+  const backRing = rings[rings.length - 1];
+  const backCenter = [0, 0, stations[stations.length - 1].z];
+  for (let i = 0; i < backRing.length; i++) {
+    const ni = (i + 1) % backRing.length;
+    pushTri(backCenter, backRing[ni], backRing[i]);
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.computeVertexNormals();
+  return geo;
+}
+
+/**
+ * Builds a sleek tapered airfoil surface (used for swept main wings & horizontal tailplanes)
+ * with sharp leading/trailing edges and exact top-down planform UV mapping.
+ */
+function buildAirfoilSurface(side, rootLE, rootTE, tipLE, tipTE, rootThick, tipThick, yOff = 0.02) {
+  const s = side; // -1 left, +1 right
+  const rMidZ = (rootLE[1] + rootTE[1]) * 0.5;
+  const tMidZ = (tipLE[1] + tipTE[1]) * 0.5;
+
+  // Root & tip diamond-airfoil 4 vertices (LE, TopMid, TE, BotMid)
+  const rLE = [s * rootLE[0], yOff, rootLE[1]];
+  const rTop = [s * rootLE[0], yOff + rootThick * 0.65, rMidZ];
+  const rTE = [s * rootTE[0], yOff, rootTE[1]];
+  const rBot = [s * rootLE[0], yOff - rootThick * 0.45, rMidZ];
+
+  const tLE = [s * tipLE[0], yOff, tipLE[1]];
+  const tTop = [s * tipLE[0], yOff + tipThick * 0.6, tMidZ];
+  const tTE = [s * tipTE[0], yOff, tipTE[1]];
+  const tBot = [s * tipLE[0], yOff - tipThick * 0.4, tMidZ];
+
+  const positions = [];
+  const uvs = [];
+
+  const pushTri = (a, b, c) => {
+    const verts = s > 0 ? [a, b, c] : [a, c, b];
+    for (const v of verts) {
+      positions.push(v[0], v[1], v[2]);
+      uvs.push(v[0] / 8.4 + 0.5, (v[2] + 4.1) / 7.0);
+    }
+  };
+
+  // Top front & top rear panels (CCW looking from +Y -> outward +Y normals!)
+  pushTri(rLE, rTop, tTop);
+  pushTri(rLE, tTop, tLE);
+  pushTri(rTop, rTE, tTE);
+  pushTri(rTop, tTE, tTop);
+
+  // Bottom front & bottom rear panels (outward -Y normals!)
+  pushTri(rLE, tBot, rBot);
+  pushTri(rLE, tLE, tBot);
+  pushTri(rBot, tTE, rTE);
+  pushTri(rBot, tBot, tTE);
+
+  // Wingtip cap (outward +/-X normals!)
+  pushTri(tLE, tTop, tTE);
+  pushTri(tLE, tTE, tBot);
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.computeVertexNormals();
+  return geo;
+}
+
+/**
+ * Builds a sleek canted trapezoidal vertical tail fin (twin stabilizers).
+ */
+function buildVerticalFin(side) {
+  const s = side;
+  const shape = new THREE.Shape();
+  shape.moveTo(-0.62, 0.0);
+  shape.lineTo(0.45, 0.0);
+  shape.lineTo(0.62, 1.02);
+  shape.lineTo(0.08, 1.02);
+  shape.closePath();
+
+  const geo = new THREE.ExtrudeGeometry(shape, { depth: 0.08, bevelEnabled: false });
+  geo.translate(0, 0, -0.04);
+  geo.rotateY(Math.PI / 2); // now lies in YZ plane (length along Z, height along Y)
+
+  // Map UVs [0..1] neatly across fin height so red tip sits on top
+  const pos = geo.attributes.position;
+  const uv = new Float32Array(pos.count * 2);
+  for (let i = 0; i < pos.count; i++) {
+    const z = pos.getZ(i);
+    const y = pos.getY(i);
+    uv[i * 2] = (z + 0.65) / 1.3;
+    uv[i * 2 + 1] = 1.0 - y / 1.02;
+  }
+  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  geo.computeVertexNormals();
+
+  // Cant outward slightly like F-22 / Su-27 twin tails
+  geo.rotateZ(-s * 0.28);
+  return geo;
 }
 
 function createDitherPuffMaterial() {
@@ -186,7 +416,7 @@ function createDitherPuffMaterial() {
 }
 
 class RibbonTrail {
-  constructor(scene, maxPoints = 78, width = 0.16, color = 0xffffff) {
+  constructor(scene, maxPoints = 82, width = 0.14, color = 0xffffff) {
     this.maxPoints = maxPoints;
     this.width = width;
     this.points = [];
@@ -233,7 +463,7 @@ class RibbonTrail {
 
     for (let i = 0; i < this.maxPoints; i++) {
       const pt = this.points[Math.min(i, count - 1)];
-      const taper = 1.0 - (i / this.maxPoints) * 0.6;
+      const taper = 1.0 - (i / this.maxPoints) * 0.58;
       const hw = this.width * 0.5 * taper;
 
       const idx = i * 6;
@@ -257,28 +487,25 @@ export class FighterJet {
     this.scene = scene;
     this.group = new THREE.Group();
     this.visual = new THREE.Group();
-    this.hullGroup = new THREE.Group(); // meshes included in the crisp 1px screen-space ink outline mask
+    this.hullGroup = new THREE.Group(); // meshes included in the crisp 1px silhouette outline pass
     this.visual.add(this.hullGroup);
     this.group.add(this.visual);
     scene.add(this.group);
 
     this.buildMesh();
-    // Sleek authentic size matching the screenshots
-    this.visual.scale.setScalar(0.76);
+    this.visual.scale.setScalar(0.74);
 
-    // Wingtip contrails
-    this.leftTrail = new RibbonTrail(scene, 82, 0.16, 0xffffff);
-    this.rightTrail = new RibbonTrail(scene, 82, 0.16, 0xffffff);
+    this.leftTrail = new RibbonTrail(scene, 84, 0.14, 0xffffff);
+    this.rightTrail = new RibbonTrail(scene, 84, 0.14, 0xffffff);
     this.trailTimer = 0;
 
-    // Dithered spherical exhaust puffs
     this.puffs = [];
     this.puffGeo = new THREE.IcosahedronGeometry(1.0, 1);
     this.puffTimer = 0;
 
-    // Start higher & wider over the archipelago bay for an expansive panoramic vista
-    this.position = new THREE.Vector3(-90, 96, 210);
-    this.yaw = 0.25;
+    // Start over the central bay facing islands, ships, lighthouses & sky balloons
+    this.position = new THREE.Vector3(-85, 86, 195);
+    this.yaw = 0.18;
     this.pitch = -0.05;
     this.bank = 0;
     this.rollAnim = 0;
@@ -289,7 +516,7 @@ export class FighterJet {
     this.afterburner = false;
     this.gForce = 1.0;
     this.vsi = 0;
-    this.radarAlt = 96;
+    this.radarAlt = 86;
     this.lowAltWarning = false;
 
     this.velocity = new THREE.Vector3(0, 0, -this.speed);
@@ -300,162 +527,91 @@ export class FighterJet {
   }
 
   buildMesh() {
-    const camoTex = createJetCamoTexture();
+    const planTex = createPlanformTexture();
     const canopyTex = createCanopyTexture();
+    const finTex = createFinTexture();
 
-    const brightCamo = createBrightJetMaterial(camoTex, 0xffffff);
-    const wingCamo = createBrightJetMaterial(camoTex, 0xf6f8ff);
-    const tailCamo = createBrightJetMaterial(camoTex, 0xe4e8f5);
+    const bodyMat = createBrightJetMaterial(planTex, 0xffffff);
+    const finMat = createBrightJetMaterial(finTex, 0xffffff);
     const canopyMat = new THREE.MeshBasicMaterial({ map: canopyTex });
-    const nozzleMat = new THREE.MeshBasicMaterial({ color: 0x383c52 });
-    const accentMat = new THREE.MeshBasicMaterial({ color: 0xee5b38 });
-    const edgeLineMat = new THREE.LineBasicMaterial({ color: 0x1d2033 });
+    const nozzleMat = new THREE.MeshBasicMaterial({ color: 0x2c3044 });
 
-    const addPart = (geo, mat, pos, rot = [0, 0, 0], addEdgeLines = true) => {
-      const m = new THREE.Mesh(geo, mat);
-      m.position.set(pos[0], pos[1], pos[2]);
-      m.rotation.set(rot[0], rot[1], rot[2]);
-      this.hullGroup.add(m);
+    // 1. Continuous sculpted blended-wing-body fuselage
+    const fuselage = new THREE.Mesh(buildSculptedFuselage(), bodyMat);
+    this.hullGroup.add(fuselage);
 
-      // Crisp dark ink border lines along wing edges, fins & panel silhouettes
-      if (addEdgeLines) {
-        const edges = new THREE.EdgesGeometry(geo, 28);
-        const line = new THREE.LineSegments(edges, edgeLineMat);
-        line.position.copy(m.position);
-        line.rotation.copy(m.rotation);
-        this.visual.add(line);
-      }
-      return m;
-    };
+    // 2. Sculpted swept main delta-arrow wings (matches exact planform in screenshots!)
+    for (const side of [-1, 1]) {
+      const wingGeo = buildAirfoilSurface(
+        side,
+        [0.85, -1.25], // root leading edge
+        [0.85, 1.08],  // root trailing edge
+        [3.95, 0.56],  // swept wingtip leading edge
+        [3.95, 0.98],  // wingtip trailing edge
+        0.24,
+        0.07,
+        0.03
+      );
+      this.hullGroup.add(new THREE.Mesh(wingGeo, bodyMat));
 
-    // Normalize UVs on ExtrudeGeometry so camo texture maps cleanly across wings
-    const normalizePlanarUV = (geo, scale = 0.22) => {
-      const pos = geo.attributes.position;
-      const uv = new Float32Array(pos.count * 2);
-      for (let i = 0; i < pos.count; i++) {
-        uv[i * 2] = pos.getX(i) * scale + 0.5;
-        uv[i * 2 + 1] = pos.getZ(i) * scale + 0.5;
-      }
-      geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-    };
+      // Sleek rear horizontal tailplanes with clear notch behind main wings
+      const tailGeo = buildAirfoilSurface(
+        side,
+        [0.72, 1.38],
+        [0.72, 2.28],
+        [2.22, 1.98],
+        [2.22, 2.46],
+        0.14,
+        0.06,
+        0.01
+      );
+      this.hullGroup.add(new THREE.Mesh(tailGeo, bodyMat));
 
-    // Main central fuselage
-    addPart(new THREE.BoxGeometry(1.06, 0.46, 4.15), brightCamo, [0, 0.0, 0.15]);
+      // Twin canted vertical tail fins with red-orange tips
+      const fin = new THREE.Mesh(buildVerticalFin(side), finMat);
+      fin.position.set(side * 0.64, 0.20, 1.66);
+      this.hullGroup.add(fin);
 
-    // Tapered sleek nose
-    const noseGeo = new THREE.ConeGeometry(0.52, 2.35, 4);
-    noseGeo.rotateX(-Math.PI / 2);
-    noseGeo.rotateZ(Math.PI / 4);
-    addPart(noseGeo, brightCamo, [0, -0.02, -3.05]);
+      // Twin tapered engine exhaust nozzles
+      const nozGeo = new THREE.CylinderGeometry(0.22, 0.28, 0.58, 7);
+      nozGeo.rotateX(Math.PI / 2);
+      const noz = new THREE.Mesh(nozGeo, nozzleMat);
+      noz.position.set(side * 0.40, 0.0, 2.60);
+      this.hullGroup.add(noz);
+    }
 
-    // Dark pointed radome tip
-    const tipGeo = new THREE.ConeGeometry(0.18, 0.65, 4);
-    tipGeo.rotateX(-Math.PI / 2);
-    tipGeo.rotateZ(Math.PI / 4);
-    addPart(tipGeo, nozzleMat, [0, -0.02, -4.18], [0, 0, 0], false);
+    // 3. Sculpted teardrop golden-yellow bubble canopy
+    const canopyGeo = new THREE.SphereGeometry(1.0, 10, 8, 0, Math.PI * 2, 0, Math.PI * 0.62);
+    const canopy = new THREE.Mesh(canopyGeo, canopyMat);
+    canopy.scale.set(0.32, 0.30, 1.05);
+    canopy.position.set(0, 0.24, -1.62);
+    this.hullGroup.add(canopy);
 
-    // Bright golden-yellow cockpit canopy
-    const canopyGeo = new THREE.BoxGeometry(0.54, 0.38, 1.55);
-    addPart(canopyGeo, canopyMat, [0, 0.34, -1.35], [0.07, 0, 0]);
-
-    // Sleek LERX / engine nacelles
-    addPart(new THREE.BoxGeometry(0.42, 0.40, 2.35), tailCamo, [-0.66, -0.04, 0.35]);
-    addPart(new THREE.BoxGeometry(0.42, 0.40, 2.35), tailCamo, [0.66, -0.04, 0.35]);
-
-    // Bright orange squadron accent panels
-    addPart(new THREE.BoxGeometry(0.24, 0.06, 0.68), accentMat, [-0.64, 0.19, 0.55], [0, 0, 0], false);
-    addPart(new THREE.BoxGeometry(0.24, 0.06, 0.68), accentMat, [0.64, 0.19, 0.55], [0, 0, 0], false);
-
-    // Swept main wings (exact agile fighter planform from screenshots 2, 5, 6, 7!)
-    const wingRShape = new THREE.Shape();
-    wingRShape.moveTo(0.45, -1.25);
-    wingRShape.lineTo(1.25, -0.55);
-    wingRShape.lineTo(4.05, 0.88);
-    wingRShape.lineTo(4.05, 1.38);
-    wingRShape.lineTo(0.48, 1.05);
-    wingRShape.closePath();
-
-    const wingRGeo = new THREE.ExtrudeGeometry(wingRShape, { depth: 0.11, bevelEnabled: false });
-    wingRGeo.rotateX(Math.PI / 2);
-    normalizePlanarUV(wingRGeo);
-    addPart(wingRGeo, wingCamo, [0, 0.04, 0.0]);
-
-    const wingLShape = new THREE.Shape();
-    wingLShape.moveTo(-0.45, -1.25);
-    wingLShape.lineTo(-1.25, -0.55);
-    wingLShape.lineTo(-4.05, 0.88);
-    wingLShape.lineTo(-4.05, 1.38);
-    wingLShape.lineTo(-0.48, 1.05);
-    wingLShape.closePath();
-
-    const wingLGeo = new THREE.ExtrudeGeometry(wingLShape, { depth: 0.11, bevelEnabled: false });
-    wingLGeo.rotateX(Math.PI / 2);
-    normalizePlanarUV(wingLGeo);
-    addPart(wingLGeo, wingCamo, [0, 0.04, 0.0]);
-
-    // Wingtip missile rails
-    addPart(new THREE.BoxGeometry(0.11, 0.10, 0.95), nozzleMat, [-4.06, 0.0, 1.15]);
-    addPart(new THREE.BoxGeometry(0.11, 0.10, 0.95), nozzleMat, [4.06, 0.0, 1.15]);
-
-    // Rear horizontal stabilizers
-    const elevRShape = new THREE.Shape();
-    elevRShape.moveTo(0.58, 1.55);
-    elevRShape.lineTo(2.15, 2.32);
-    elevRShape.lineTo(2.15, 2.68);
-    elevRShape.lineTo(0.58, 2.42);
-    elevRShape.closePath();
-    const elevRGeo = new THREE.ExtrudeGeometry(elevRShape, { depth: 0.08, bevelEnabled: false });
-    elevRGeo.rotateX(Math.PI / 2);
-    normalizePlanarUV(elevRGeo);
-    addPart(elevRGeo, tailCamo, [0, 0.02, 0.0]);
-
-    const elevLShape = new THREE.Shape();
-    elevLShape.moveTo(-0.58, 1.55);
-    elevLShape.lineTo(-2.15, 2.32);
-    elevLShape.lineTo(-2.15, 2.68);
-    elevLShape.lineTo(-0.58, 2.42);
-    elevLShape.closePath();
-    const elevLGeo = new THREE.ExtrudeGeometry(elevLShape, { depth: 0.08, bevelEnabled: false });
-    elevLGeo.rotateX(Math.PI / 2);
-    normalizePlanarUV(elevLGeo);
-    addPart(elevLGeo, tailCamo, [0, 0.02, 0.0]);
-
-    // Twin canted vertical tail fins
-    const finGeo = new THREE.BoxGeometry(0.10, 1.05, 1.0);
-    addPart(finGeo, tailCamo, [-0.62, 0.56, 1.85], [-0.26, 0, 0.22]);
-    addPart(finGeo, tailCamo, [0.62, 0.56, 1.85], [-0.26, 0, -0.22]);
-
-    // Twin engine exhaust nozzles
-    const nozGeo = new THREE.CylinderGeometry(0.24, 0.30, 0.65, 6);
-    nozGeo.rotateX(Math.PI / 2);
-    addPart(nozGeo, nozzleMat, [-0.38, -0.02, 2.35]);
-    addPart(nozGeo, nozzleMat, [0.38, -0.02, 2.35]);
-
-    // Twin animated afterburner flame cones (excluded from ink outline mask so they glow brightly!)
-    const flameOuterMat = new THREE.MeshBasicMaterial({ color: 0xff8329 });
-    const flameInnerMat = new THREE.MeshBasicMaterial({ color: 0xfff599 });
-    const outerConeGeo = new THREE.ConeGeometry(0.24, 2.1, 6);
+    // 4. Twin animated afterburner flames (excluded from outline mask so they glow!)
+    const flameOuterMat = new THREE.MeshBasicMaterial({ color: 0xff8026 });
+    const flameInnerMat = new THREE.MeshBasicMaterial({ color: 0xfff6a0 });
+    const outerConeGeo = new THREE.ConeGeometry(0.23, 2.25, 6);
     outerConeGeo.rotateX(Math.PI / 2);
-    outerConeGeo.translate(0, 0, 1.05);
+    outerConeGeo.translate(0, 0, 1.12);
 
-    const innerConeGeo = new THREE.ConeGeometry(0.14, 1.35, 6);
+    const innerConeGeo = new THREE.ConeGeometry(0.13, 1.45, 6);
     innerConeGeo.rotateX(Math.PI / 2);
-    innerConeGeo.translate(0, 0, 0.68);
+    innerConeGeo.translate(0, 0, 0.72);
 
     this.flameL = new THREE.Group();
-    this.flameL.position.set(-0.38, -0.02, 2.62);
+    this.flameL.position.set(-0.40, 0.0, 2.82);
     this.flameL.add(new THREE.Mesh(outerConeGeo, flameOuterMat), new THREE.Mesh(innerConeGeo, flameInnerMat));
     this.visual.add(this.flameL);
 
     this.flameR = new THREE.Group();
-    this.flameR.position.set(0.38, -0.02, 2.62);
+    this.flameR.position.set(0.40, 0.0, 2.82);
     this.flameR.add(new THREE.Mesh(outerConeGeo, flameOuterMat), new THREE.Mesh(innerConeGeo, flameInnerMat));
     this.visual.add(this.flameR);
 
-    // Cannon muzzle flash (near starboard wing root)
-    const muzzleMat = new THREE.MeshBasicMaterial({ color: 0xfff39e });
-    this.muzzleFlash = new THREE.Mesh(new THREE.OctahedronGeometry(0.36, 0), muzzleMat);
-    this.muzzleFlash.position.set(0.66, -0.04, -1.6);
+    // 5. Cannon muzzle flash at starboard wing-root gun port
+    const muzzleMat = new THREE.MeshBasicMaterial({ color: 0xfff49e });
+    this.muzzleFlash = new THREE.Mesh(new THREE.OctahedronGeometry(0.38, 0), muzzleMat);
+    this.muzzleFlash.position.set(0.75, 0.0, -1.55);
     this.muzzleFlash.visible = false;
     this.visual.add(this.muzzleFlash);
   }
@@ -493,12 +649,12 @@ export class FighterJet {
   }
 
   spawnExhaustPuffs() {
-    for (const sx of [-0.38, 0.38]) {
-      const origin = this.getWorldPoint(sx, -0.02, 3.2);
+    for (const sx of [-0.40, 0.40]) {
+      const origin = this.getWorldPoint(sx, 0.0, 3.45);
       const mat = createDitherPuffMaterial();
       const mesh = new THREE.Mesh(this.puffGeo, mat);
       mesh.position.copy(origin);
-      const initSize = this.afterburner ? 0.50 : 0.32;
+      const initSize = this.afterburner ? 0.52 : 0.34;
       mesh.scale.setScalar(initSize);
       this.scene.add(mesh);
 
@@ -508,13 +664,13 @@ export class FighterJet {
         mat,
         vel: backDir.add(
           new THREE.Vector3(
-            (Math.random() - 0.5) * 3.2,
-            (Math.random() - 0.5) * 3.2,
-            (Math.random() - 0.5) * 3.2
+            (Math.random() - 0.5) * 3.0,
+            (Math.random() - 0.5) * 3.0,
+            (Math.random() - 0.5) * 3.0
           )
         ),
         age: 0,
-        maxAge: this.afterburner ? 0.74 : 0.48,
+        maxAge: this.afterburner ? 0.76 : 0.48,
         initSize,
         ab: this.afterburner,
       });
@@ -540,7 +696,7 @@ export class FighterJet {
       p.mesh.position.addScaledVector(p.vel, dt);
       p.vel.multiplyScalar(0.95);
 
-      const scale = p.initSize * (1.0 + t * (p.ab ? 3.5 : 2.3));
+      const scale = p.initSize * (1.0 + t * (p.ab ? 3.6 : 2.4));
       p.mesh.scale.setScalar(scale);
 
       if (t < 0.25) {
@@ -590,7 +746,6 @@ export class FighterJet {
     this.velocity.copy(fwd).multiplyScalar(this.speed);
     this.position.addScaledVector(this.velocity, dt);
 
-    // Spacious boundary for the expanded 2800x2800 world
     const limit = 1220;
     if (Math.abs(this.position.x) > limit || Math.abs(this.position.z) > limit) {
       const toCenter = Math.atan2(-this.position.x, -this.position.z);
@@ -635,29 +790,29 @@ export class FighterJet {
 
     this.group.updateMatrixWorld(true);
 
-    // Animate afterburner flames
-    const flicker = 0.85 + Math.random() * 0.32;
-    const fLen = (this.afterburner ? 1.55 : 0.62) * flicker;
-    const fRad = this.afterburner ? 1.15 : 0.72;
+    // Animate twin afterburner cones
+    const flicker = 0.85 + Math.random() * 0.34;
+    const fLen = (this.afterburner ? 1.65 : 0.72) * flicker;
+    const fRad = this.afterburner ? 1.18 : 0.78;
     this.flameL.scale.set(fRad, fRad, fLen);
     this.flameR.scale.set(fRad, fRad, fLen);
 
-    // Update crisp white wingtip contrails
+    // Update crisp white wingtip contrails right from sculpted wingtips
     this.trailTimer += dt;
     if (this.trailTimer >= 0.018) {
       this.trailTimer = 0;
       const rightVec = new THREE.Vector3(1, 0, 0).applyQuaternion(
         new THREE.Quaternion().setFromEuler(new THREE.Euler(this.pitch, this.yaw, this.bank + extraRoll, 'YXZ'))
       );
-      const tipL = this.getWorldPoint(-4.05, 0.04, 1.32);
-      const tipR = this.getWorldPoint(4.05, 0.04, 1.32);
+      const tipL = this.getWorldPoint(-3.95, 0.03, 0.96);
+      const tipR = this.getWorldPoint(3.95, 0.03, 0.96);
       this.leftTrail.push(tipL, rightVec);
       this.rightTrail.push(tipR, rightVec);
     }
 
     if (!isCockpit) {
       this.puffTimer += dt;
-      const interval = this.afterburner ? 0.048 : 0.088;
+      const interval = this.afterburner ? 0.046 : 0.085;
       if (this.puffTimer >= interval) {
         this.puffTimer = 0;
         this.spawnExhaustPuffs();

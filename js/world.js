@@ -633,20 +633,22 @@ export function buildWorld(scene) {
   // =========================================================================
   const dummy = new THREE.Object3D();
 
-  // ---- Destructible object registry (spatial hash grid) ----
+  // ---- Destructible object registry (spatial hash grid + priority target list) ----
   const ZERO_M = new THREE.Matrix4().makeScale(0, 0, 0);
   const GRID = 48;
   const grid = new Map();
   const dirtyMeshes = new Set();
-  function registerDestructible(obj) {
+  const lockableTargets = []; // ships, balloons, lighthouses, towers, hangars, fuel tanks, houses
+  function registerDestructible(obj, lockable = false) {
     obj.alive = true;
     const key = Math.floor(obj.x / GRID) + ',' + Math.floor(obj.z / GRID);
     if (!grid.has(key)) grid.set(key, []);
     grid.get(key).push(obj);
+    if (lockable) lockableTargets.push(obj);
   }
 
-  // 4a. Instanced Biome Trees (1400 stylized trees: autumn crimson/gold/orange + emerald pines + desert scrub)
-  const treeCount = 1400;
+  // 4a. Instanced Biome Trees (1800 stylized trees: autumn crimson/gold/orange + emerald pines + desert scrub)
+  const treeCount = 1800;
   const treeGeo = new THREE.ConeGeometry(2.8, 7.6, 5);
   const treeMat = new THREE.MeshLambertMaterial({ flatShading: true });
   const trees = new THREE.InstancedMesh(treeGeo, treeMat, treeCount);
@@ -709,13 +711,14 @@ export function buildWorld(scene) {
   const houseRoofMat = new THREE.MeshLambertMaterial({ flatShading: true });
 
   const villageCenters = [
-    { x: -135, z: 245 },
-    { x: 185, z: -105 },
-    { x: -230, z: -85 },
-    { x: 95, z: 265 },
-    { x: -35, z: -230 },
+    { x: 196, z: -112 },
+    { x: 252, z: -84 },
+    { x: -252, z: -168 },
+    { x: -140, z: -252 },
+    { x: -168, z: 224 },
+    { x: -252, z: 140 },
   ];
-  const maxHouses = 110;
+  const maxHouses = 140;
   const houseWalls = new THREE.InstancedMesh(houseWallsGeo, houseWallMat, maxHouses);
   const houseRoofs = new THREE.InstancedMesh(houseRoofGeo, houseRoofMat, maxHouses);
   const roofPalette = [0xc94d34, 0xb83e2e, 0xd46a3b, 0x4b5c78];
@@ -745,13 +748,13 @@ export function buildWorld(scene) {
       {
         const hi = placedHouses;
         registerDestructible({
-          type: 'house', x: hx, y: hy, z: hz, r: 4.0 * s, h: 6.5 * s, color: 0xf2e4cc,
+          type: 'house', label: 'HOUSE', x: hx, y: hy, z: hz, r: 5.2 * s, h: 7.5 * s, color: 0xf2e4cc,
           kill() {
             houseWalls.setMatrixAt(hi, ZERO_M);
             houseRoofs.setMatrixAt(hi, ZERO_M);
             dirtyMeshes.add(houseWalls); dirtyMeshes.add(houseRoofs);
           },
-        });
+        }, true);
       }
       placedHouses++;
     }
@@ -766,12 +769,14 @@ export function buildWorld(scene) {
   // 4c. Coastal Lighthouses with glowing sunset beacons on scenic headlands!
   const lighthouseBeacons = [];
   const lhCoords = [
-    [-72, 52],
-    [118, -38],
-    [145, 140],
-    [-160, -45],
-    [255, 25],
-    [-295, 130],
+    [168, -140],
+    [224, -84],
+    [-196, 140],
+    [-168, -224],
+    [-280, -84],
+    [-112, 280],
+    [196, -224],
+    [-84, -308],
   ];
   const lhWhiteMat = new THREE.MeshLambertMaterial({ color: 0xf7f2e8, flatShading: true });
   const lhRedMat = new THREE.MeshLambertMaterial({ color: 0xd94534, flatShading: true });
@@ -794,9 +799,9 @@ export function buildWorld(scene) {
     scene.add(g);
     lighthouseBeacons.push({ lamp, phase: rand() * Math.PI * 2, group: g });
     registerDestructible({
-      type: 'lighthouse', x: lx, y: ly, z: lz, r: 3.4, h: 16, color: 0xf7f2e8,
+      type: 'lighthouse', label: 'LIGHTHOUSE', x: lx, y: ly, z: lz, r: 5.0, h: 18, color: 0xf7f2e8,
       kill() { g.visible = false; },
-    });
+    }, true);
   }
 
   // 4d. Coastal Island Airstrip at (-215, 225) for epic low flybys!
@@ -828,9 +833,120 @@ export function buildWorld(scene) {
   towerCab.position.set(-196, stripY + 14.5, 215);
   scene.add(tower, towerCab);
   registerDestructible({
-    type: 'tower', x: -196, y: stripY, z: 215, r: 5.5, h: 17, color: 0xf7f2e8,
+    type: 'tower', label: 'CONTROL TOWER', x: -196, y: stripY, z: 215, r: 7.5, h: 19, color: 0xf7f2e8,
     kill() { tower.visible = false; towerCab.visible = false; },
-  });
+  }, true);
+
+  // Destructible hangars & red fuel tanks beside the airstrip
+  const hangarMat = new THREE.MeshLambertMaterial({ color: 0x7e889c, flatShading: true });
+  const tankMat = new THREE.MeshLambertMaterial({ color: 0xdf4b36, flatShading: true });
+  for (const hz of [185, 248]) {
+    const hg = new THREE.Group();
+    const hBody = new THREE.Mesh(new THREE.BoxGeometry(15, 7.5, 20), hangarMat);
+    hBody.position.y = 3.75;
+    const hRoof = new THREE.Mesh(new THREE.CylinderGeometry(7.6, 7.6, 20, 6, 1, false, 0, Math.PI), lhWhiteMat);
+    hRoof.rotation.z = Math.PI / 2;
+    hRoof.rotation.y = Math.PI / 2;
+    hRoof.position.y = 7.5;
+    hg.add(hBody, hRoof);
+    hg.position.set(-237, stripY, hz);
+    scene.add(hg);
+    registerDestructible({
+      type: 'hangar', label: 'HANGAR', x: -237, y: stripY, z: hz, r: 11.0, h: 14, color: 0xc4cad6,
+      kill() { hg.visible = false; },
+    }, true);
+  }
+  for (const [tx, tz] of [[-194, 192], [-194, 240], [-184, 202]]) {
+    const tk = new THREE.Mesh(new THREE.CylinderGeometry(3.8, 3.8, 7.2, 8), tankMat);
+    tk.position.set(tx, stripY + 3.6, tz);
+    scene.add(tk);
+    registerDestructible({
+      type: 'tank', label: 'FUEL TANK', x: tx, y: stripY, z: tz, r: 5.5, h: 9.0, color: 0xff6e38,
+      kill() { tk.visible = false; },
+    }, true);
+  }
+
+  // 4f. Large Naval Ships cruising the central bays (highly visible destructible targets!)
+  const ships = [];
+  const shipHullMat = new THREE.MeshLambertMaterial({ color: 0x4b556b, flatShading: true });
+  const shipDeckMat = new THREE.MeshLambertMaterial({ color: 0xb84735, flatShading: true });
+  const shipPositions = [
+    [-40, 85, 0.3],
+    [35, 30, -0.8],
+    [-110, -15, 1.1],
+    [70, -90, 2.2],
+    [-15, -120, -1.6],
+    [160, 75, 0.7],
+    [-190, 65, -0.4],
+    [25, 175, 1.8],
+    [220, 195, -2.1],
+    [-280, -20, 0.5],
+  ];
+  for (const [sx, sz, ang] of shipPositions) {
+    if (getTerrainHeight(sx, sz) > -3.5) continue;
+    const sg = new THREE.Group();
+    const hull = new THREE.Mesh(new THREE.BoxGeometry(6.5, 3.8, 24.0), shipHullMat);
+    hull.position.y = 1.6;
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(5.6, 0.8, 21.5), shipDeckMat);
+    deck.position.y = 3.6;
+    const bridge = new THREE.Mesh(new THREE.BoxGeometry(4.8, 5.2, 6.2), lhWhiteMat);
+    bridge.position.set(0, 6.2, 3.5);
+    const funnel = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.3, 4.4, 6), lhRedMat);
+    funnel.position.set(0, 6.8, -3.5);
+    sg.add(hull, deck, bridge, funnel);
+    sg.position.set(sx, WATER_LEVEL, sz);
+    sg.rotation.y = ang;
+    scene.add(sg);
+
+    const shipObj = {
+      type: 'ship', label: 'NAVAL SHIP', x: sx, y: WATER_LEVEL, z: sz, r: 12.5, h: 12.0, color: 0xd9563c,
+      group: sg, angle: ang, speed: 4.5 + rand() * 3.0, phase: rand() * Math.PI * 2,
+      alive: true,
+      kill() { sg.visible = false; },
+    };
+    ships.push(shipObj);
+    lockableTargets.push(shipObj);
+  }
+
+  // 4g. Floating Sky Target Balloons over the bay & islands (fun air-to-air targets right ahead of spawn!)
+  const balloons = [];
+  const balRedMat = new THREE.MeshLambertMaterial({ color: 0xe64834, flatShading: true });
+  const balCreamMat = new THREE.MeshLambertMaterial({ color: 0xfff0d4, flatShading: true });
+  const balBasketMat = new THREE.MeshLambertMaterial({ color: 0x7a4b36, flatShading: true });
+  const balCoords = [
+    [-68, 74, 85],
+    [-28, 82, 42],
+    [-112, 68, 25],
+    [22, 90, -15],
+    [-55, 85, -80],
+    [85, 76, 65],
+    [-165, 78, 125],
+    [135, 95, -95],
+    [-205, 82, -55],
+    [55, 88, 155],
+    [-10, 102, -195],
+    [215, 98, 20],
+  ];
+  for (const [bx, by, bz] of balCoords) {
+    const bg = new THREE.Group();
+    const env1 = new THREE.Mesh(new THREE.IcosahedronGeometry(6.8, 1), balRedMat);
+    env1.scale.set(1.0, 1.18, 1.0);
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(6.9, 6.9, 3.2, 8), balCreamMat);
+    const basket = new THREE.Mesh(new THREE.BoxGeometry(2.8, 2.4, 2.8), balBasketMat);
+    basket.position.y = -10.5;
+    bg.add(env1, band, basket);
+    bg.position.set(bx, by, bz);
+    scene.add(bg);
+
+    const balObj = {
+      type: 'balloon', label: 'TARGET BALLOON', x: bx, y: by - 6, z: bz, r: 10.5, h: 16.0, color: 0xff5a3c,
+      group: bg, baseY: by, phase: rand() * Math.PI * 2,
+      alive: true,
+      kill() { bg.visible = false; },
+    };
+    balloons.push(balObj);
+    lockableTargets.push(balObj);
+  }
 
   // 4e. Sailboats drifting across the turquoise bays (great sense of scale!)
   const boatCount = 46;
@@ -1007,10 +1123,33 @@ export function buildWorld(scene) {
       if (!b.alive) continue;
       const dx = b.x - pos.x;
       const dz = b.z - pos.z;
-      const reach = 3.5 + blast;
-      if (dx * dx + dz * dz < reach * reach && pos.y < 8 + blast * 0.5) {
+      const reach = 5.5 + blast;
+      if (dx * dx + dz * dz < reach * reach && pos.y < 10 + blast * 0.6) {
         b.alive = false;
-        killed.push({ type: 'boat', x: b.x, y: WATER_LEVEL + 1, z: b.z, color: 0xfdf8ef });
+        killed.push({ type: 'boat', label: 'SAILBOAT', x: b.x, y: WATER_LEVEL + 1, z: b.z, color: 0xfdf8ef });
+      }
+    }
+    for (const sh of ships) {
+      if (!sh.alive) continue;
+      const dx = sh.x - pos.x;
+      const dz = sh.z - pos.z;
+      const reach = sh.r + blast;
+      if (dx * dx + dz * dz < reach * reach && pos.y < sh.h + 5 + blast * 0.6) {
+        sh.alive = false;
+        sh.kill();
+        killed.push(sh);
+      }
+    }
+    for (const bl of balloons) {
+      if (!bl.alive) continue;
+      const dx = bl.x - pos.x;
+      const dy = (bl.y + 6) - pos.y;
+      const dz = bl.z - pos.z;
+      const reach = bl.r + blast;
+      if (dx * dx + dy * dy + dz * dz < reach * reach) {
+        bl.alive = false;
+        bl.kill();
+        killed.push(bl);
       }
     }
     for (const m of dirtyMeshes) m.instanceMatrix.needsUpdate = true;
@@ -1018,8 +1157,33 @@ export function buildWorld(scene) {
     return killed;
   }
 
+  // Find best destructible target inside forward aiming cone for HUD lock-on & missile homing
+  function findLockTarget(origin, fwdDir, maxRange = 460) {
+    let best = null;
+    let bestScore = Infinity;
+    const toTarget = new THREE.Vector3();
+    for (const t of lockableTargets) {
+      if (!t.alive) continue;
+      const ty = t.y + (t.h || 6) * 0.5;
+      toTarget.set(t.x - origin.x, ty - origin.y, t.z - origin.z);
+      const dist = toTarget.length();
+      if (dist < 18 || dist > maxRange) continue;
+      toTarget.divideScalar(dist);
+      const dot = toTarget.dot(fwdDir);
+      if (dot < 0.90) continue; // ~25 deg cone
+      const anglePenalty = (1.0 - dot) * 900;
+      const score = dist + anglePenalty;
+      if (score < bestScore) {
+        bestScore = score;
+        best = t;
+      }
+    }
+    return best;
+  }
+
   return {
     damage,
+    findLockTarget,
     addWaterRipple(x, z, time) {
       rippleUniforms[nextRippleIdx].set(x, z, time, 1.0);
       nextRippleIdx = (nextRippleIdx + 1) % MAX_RIPPLES;
@@ -1077,6 +1241,30 @@ export function buildWorld(scene) {
       }
       boatHulls.instanceMatrix.needsUpdate = true;
       boatSails.instanceMatrix.needsUpdate = true;
+
+      // Animate naval ships cruising the bay
+      for (const sh of ships) {
+        if (!sh.alive) continue;
+        const nx = sh.x + Math.sin(sh.angle) * sh.speed * dt;
+        const nz = sh.z + Math.cos(sh.angle) * sh.speed * dt;
+        if (getTerrainHeight(nx, nz) < -4.0 && Math.abs(nx) < 950 && Math.abs(nz) < 950) {
+          sh.x = nx;
+          sh.z = nz;
+        } else {
+          sh.angle += 1.4;
+        }
+        sh.group.position.set(sh.x, WATER_LEVEL + Math.sin(time * 1.5 + sh.phase) * 0.3, sh.z);
+        sh.group.rotation.y = sh.angle;
+      }
+
+      // Gently bob floating target balloons in the sunset breeze
+      for (const bl of balloons) {
+        if (!bl.alive) continue;
+        const by = bl.baseY + Math.sin(time * 1.1 + bl.phase) * 3.0;
+        bl.y = by - 6;
+        bl.group.position.y = by;
+        bl.group.rotation.y += 0.25 * dt;
+      }
 
       // Pulse lighthouse lamps
       for (const lb of lighthouseBeacons) {

@@ -1,14 +1,20 @@
 import * as THREE from 'three';
-import { buildWorld, SUN_DIR } from './world.js';
-import { FighterJet } from './jet.js';
-import { MissileSystem } from './weapons.js';
-import { FighterCockpit } from './cockpit.js';
-import { JetSoundEngine } from './audio.js';
+import { buildWorld, SUN_DIR } from './world.js?v=5';
+import { FighterJet } from './jet.js?v=5';
+import { MissileSystem } from './weapons.js?v=5';
+import { FighterCockpit } from './cockpit.js?v=5';
+import { JetSoundEngine } from './audio.js?v=5';
 
 const PIXEL_HEIGHT = 270;
 
 const canvas = document.getElementById('game-canvas');
 const cockpitCanvas = document.getElementById('cockpit-canvas');
+const aimReticle = document.getElementById('aim-reticle');
+const hitMarker = document.getElementById('hit-marker');
+const lockBox = document.getElementById('lock-box');
+const lockLabel = document.getElementById('lock-label');
+const killBanner = document.getElementById('kill-banner');
+const destroyedBadge = document.getElementById('destroyed-badge');
 const ammoPipsEl = document.getElementById('ammo-pips');
 const camNextLabel = document.getElementById('cam-next-label');
 const camSwitchBtn = document.getElementById('cam-switch-btn');
@@ -209,7 +215,7 @@ function syncViewUI() {
   distBadge.textContent = `FOV ${Math.round(viewSettings.fov)}° · DIST ${viewSettings.camDist.toFixed(2)}x`;
 
   // Adjust fighter apparent scale slightly with objDist while keeping contrails & physics consistent
-  jet.visual.scale.setScalar(0.76 / Math.sqrt(viewSettings.objDist));
+  jet.visual.scale.setScalar(0.74 / Math.sqrt(viewSettings.objDist));
 }
 
 viewBtn.addEventListener('click', () => {
@@ -448,12 +454,23 @@ function updateCamera(dt) {
 }
 
 const clock = new THREE.Clock();
+const projVec = new THREE.Vector3();
+
+function projectToScreen(worldPos) {
+  projVec.copy(worldPos).project(camera);
+  if (projVec.z > 1.0) return null; // behind camera
+  return {
+    x: (projVec.x * 0.5 + 0.5) * window.innerWidth,
+    y: (-projVec.y * 0.5 + 0.5) * window.innerHeight,
+  };
+}
 
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(0.05, clock.getDelta());
   const elapsed = clock.elapsedTime;
-  const isCockpit = CAMERA_MODES[camModeIdx].id === 'COCKPIT';
+  const modeId = CAMERA_MODES[camModeIdx].id;
+  const isCockpit = modeId === 'COCKPIT';
 
   jet.update(dt, input, isCockpit);
 
@@ -467,13 +484,58 @@ function animate() {
 
   sound.updateJet(jet.throttle, jet.afterburner, isCockpit);
 
-  // Sync top-bar missile pips & telemetry
+  // Sync top-bar missile pips, telemetry & destruction feedback
   for (let i = 0; i < ammoPipEls.length; i++) {
     ammoPipEls[i].classList.toggle('ready', i < weapons.ammo);
   }
   const knots = Math.round(jet.speed * 9.6);
   const altFt = Math.max(0, Math.round(jet.position.y * 3.6));
   telemBadge.textContent = `SPD ${knots} · ALT ${altFt}`;
+  destroyedBadge.textContent = `DESTROYED: ${weapons.destroyed}`;
+
+  if (weapons.killBannerTimer > 0) {
+    killBanner.textContent = weapons.killBannerText;
+    killBanner.classList.remove('hidden');
+  } else {
+    killBanner.classList.add('hidden');
+  }
+
+  // Project boresight aim reticle in CHASE view so aiming cannon/missiles is accurate
+  if (modeId === 'CHASE') {
+    const aimPt = jet.position.clone().addScaledVector(jet.getForwardDirection(), 180);
+    const sp = projectToScreen(aimPt);
+    if (sp) {
+      aimReticle.classList.remove('hidden');
+      aimReticle.style.left = `${sp.x}px`;
+      aimReticle.style.top = `${sp.y}px`;
+      hitMarker.classList.toggle('active', weapons.hitMarkerTimer > 0);
+    } else {
+      aimReticle.classList.add('hidden');
+    }
+  } else {
+    aimReticle.classList.add('hidden');
+  }
+
+  // Project target lock-on bracket over nearest destructible target ahead
+  if (weapons.lockedTarget && weapons.lockedTarget.alive && modeId !== 'TOP') {
+    const t = weapons.lockedTarget;
+    const tPos = new THREE.Vector3(t.x, t.y + (t.h || 6) * 0.5, t.z);
+    const sp = projectToScreen(tPos);
+    if (sp && sp.x > 20 && sp.x < window.innerWidth - 20 && sp.y > 30 && sp.y < window.innerHeight - 30) {
+      lockBox.classList.remove('hidden');
+      lockBox.style.left = `${sp.x}px`;
+      lockBox.style.top = `${sp.y}px`;
+      const distM = Math.round(jet.position.distanceTo(tPos));
+      lockLabel.textContent = `${t.label || 'TARGET'} ${distM}M`;
+    } else {
+      lockBox.classList.add('hidden');
+    }
+  } else {
+    lockBox.classList.add('hidden');
+  }
+
+  // Expose debug handle for live inspection
+  window.__GAME__ = { jet, weapons, world, setCameraMode };
 
   // Pass 1: Render main 3D scene to low-res renderTarget
   camera.layers.set(0);
