@@ -4,6 +4,13 @@ export const WORLD_SIZE = 2800;
 export const WATER_LEVEL = 0.0;
 export const SUN_DIR = new THREE.Vector3(-0.62, 0.34, -0.71).normalize();
 
+export const CHUNK_SIZE = 960;
+export const CHUNK_SEGS = 96;
+export const CHUNK_STRIDE = CHUNK_SEGS + 1;
+export const CELL_SIZE = CHUNK_SIZE / CHUNK_SEGS; // 10m exact grid spacing
+export const ACTIVE_CHUNK_RADIUS = 2; // 5x5 chunks loaded around camera/player (4800m x 4800m window)
+export const DEFAULT_WORLD_SEED = 'SUNSET-2026';
+
 export const TERRAIN_THEMES = ['sunset', 'tropical', 'volcanic', 'alpine'];
 export const TERRAIN_DEFORM_MODES = ['normal', 'deep', 'off'];
 export const TERRAIN_CLOUD_MODES = ['full', 'light', 'clear'];
@@ -11,14 +18,78 @@ export const DEFAULT_TERRAIN_OPTIONS = {
   theme: 'sunset',
   deformMode: 'normal',
   clouds: 'full',
+  seed: DEFAULT_WORLD_SEED,
 };
 
-// Live deformable terrain grid state (shared so flight collision, missiles, radar & water stay in sync!)
-const TERRAIN_SEGS = 280;
-const TERRAIN_STRIDE = TERRAIN_SEGS + 1;
-const CELL_SIZE = WORLD_SIZE / TERRAIN_SEGS;
-let liveHeights = null;
-let baseHeights = null;
+export function sanitizeSeedString(raw) {
+  const s = String(raw ?? '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9_-]/g, '')
+    .slice(0, 16);
+  return s || DEFAULT_WORLD_SEED;
+}
+
+export function seedToNumber(seedStr) {
+  const clean = sanitizeSeedString(seedStr);
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < clean.length; i++) {
+    h ^= clean.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0) || 1;
+}
+
+export function generateRandomSeed() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let p1 = '';
+  let p2 = '';
+  for (let i = 0; i < 4; i++) p1 += chars[Math.floor(Math.random() * chars.length)];
+  for (let i = 0; i < 4; i++) p2 += chars[Math.floor(Math.random() * chars.length)];
+  return `${p1}-${p2}`;
+}
+
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function chunkSeedHash(seedNum, cx, cz, salt = 0) {
+  let h = (seedNum ^ Math.imul(cx, 374761393) ^ Math.imul(cz, 668265263) ^ Math.imul(salt, 1442695041)) >>> 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
+// Active seed state & active chunk registry for fast global height queries
+let currentSeedStr = DEFAULT_WORLD_SEED;
+let currentSeedNum = seedToNumber(DEFAULT_WORLD_SEED);
+let seedOffsetX = 0;
+let seedOffsetZ = 0;
+let activeWorldChunks = null; // Map<'cx,cz', ChunkRecord>
+let globalDeformHistory = []; // Array<{ x, z, r, d, dx, dz }> so unloaded chunks re-apply craters when revisited!
+
+function updateSeedOffsets(seedStr) {
+  currentSeedStr = sanitizeSeedString(seedStr);
+  currentSeedNum = seedToNumber(currentSeedStr);
+  if (currentSeedStr === DEFAULT_WORLD_SEED) {
+    seedOffsetX = 0;
+    seedOffsetZ = 0;
+  } else {
+    const rng = mulberry32(currentSeedNum);
+    seedOffsetX = (rng() - 0.5) * 20000.0;
+    seedOffsetZ = (rng() - 0.5) * 20000.0;
+  }
+}
+updateSeedOffsets(DEFAULT_WORLD_SEED);
+
+export function getWorldSeed() {
+  return currentSeedStr;
+}
 
 function writeTSMatrix(arr, index, x, y, z, sx, sy, sz) {
   const o = index * 16;
@@ -65,19 +136,13 @@ function writeZeroMatrix(arr, index) {
   arr.fill(0, o, o + 16);
 }
 
-function mulberry32(seed) {
-  let a = seed >>> 0;
-  return function () {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
 function hash2(x, z) {
   const s = Math.sin(x * 127.1 + z * 311.7) * 43758.5453123;
+  return s - Math.floor(s);
+}
+
+function hash2Seed(x, z, sOff) {
+  const s = Math.sin((x + sOff) * 127.1 + (z - sOff * 0.73) * 311.7) * 43758.5453123;
   return s - Math.floor(s);
 }
 
@@ -111,14 +176,54 @@ function ridgeNoise(x, z) {
   return 1.0 - Math.abs(noise2D(x, z) * 2.0 - 1.0);
 }
 
-/**
- * Procedural base heightmap before player craters / mountain excavations.
- */
-export function getBaseTerrainHeight(x, z) {
-  const nLarge = fbm(x * 0.0017 + 3.1, z * 0.0017 - 1.7, 4);
-  const nMed = fbm(x * 0.0052 - 5.2, z * 0.0052 + 4.3, 3);
-  const nDetail = fbm(x * 0.015 + 1.4, z * 0.015 + 2.8, 2);
-  const ridge = ridgeNoise(x * 0.0048 + 2.0, z * 0.0048 - 1.2);
+// Central archipelago mountain chain (keeps origin area iconic with bays, volcano, canyon, alpine range & airstrip)
+const ORIGIN_MOUNTAINS = [
+  // --- Central Autumn & Emerald Headlands ---
+  { x: -310, z: -155, r: 210, h: 68, p: 1.45, ridged: true },
+  { x: -145, z: -310, r: 195, h: 64, p: 1.5, ridged: true },
+  { x: 245, z: -185, r: 215, h: 74, p: 1.4, ridged: false },
+  { x: 45, z: 330, r: 235, h: 52, p: 1.45, ridged: false },
+  { x: -245, z: 245, r: 190, h: 48, p: 1.5, ridged: false },
+
+  // --- Massive Eastern & Northeastern Snow-Capped Alpine Range ---
+  { x: 540, z: -360, r: 290, h: 198, p: 1.45, ridged: true },
+  { x: 640, z: -120, r: 285, h: 225, p: 1.5, ridged: true },
+  { x: 590, z: 140, r: 260, h: 184, p: 1.45, ridged: true },
+  { x: 470, z: 380, r: 250, h: 158, p: 1.5, ridged: true },
+  { x: 350, z: -540, r: 270, h: 190, p: 1.5, ridged: true },
+  { x: 760, z: -260, r: 270, h: 212, p: 1.55, ridged: true },
+
+  // --- Northern Fjord Peaks ---
+  { x: 40, z: -690, r: 265, h: 162, p: 1.5, ridged: true },
+  { x: -290, z: -660, r: 250, h: 148, p: 1.45, ridged: true },
+  { x: -560, z: -510, r: 255, h: 135, p: 1.45, ridged: true },
+
+  // --- Northwestern Volcanic Caldera & Basalt Spires ---
+  { x: -720, z: -280, r: 255, h: 185, p: 1.35, volcano: true },
+  { x: -840, z: -50, r: 215, h: 128, p: 1.55, ridged: true },
+  { x: -640, z: 110, r: 195, h: 102, p: 1.5, ridged: true },
+
+  // --- Southwestern Terracotta Canyon Mesas (stepped plateaus!) ---
+  { x: -580, z: 480, r: 255, h: 105, p: 1.25, mesa: true },
+  { x: -340, z: 640, r: 235, h: 96, p: 1.25, mesa: true },
+  { x: -760, z: 680, r: 240, h: 118, p: 1.25, mesa: true },
+
+  // --- Southern Mountain Islands ---
+  { x: 120, z: 710, r: 265, h: 146, p: 1.5, ridged: true },
+  { x: 430, z: 690, r: 245, h: 132, p: 1.5, ridged: true },
+
+  // --- Scenic Bay Islets & Sea Stacks ---
+  { x: -72, z: 52, r: 52, h: 22, p: 1.75, ridged: false },
+  { x: 118, z: -38, r: 58, h: 26, p: 1.65, ridged: true },
+  { x: 145, z: 140, r: 44, h: 34, p: 1.9, ridged: true },
+  { x: -160, z: -45, r: 36, h: 28, p: 2.0, ridged: true },
+];
+
+function computeOriginArchipelagoHeight(x, z, sx, sz) {
+  const nLarge = fbm(sx * 0.0017 + 3.1, sz * 0.0017 - 1.7, 4);
+  const nMed = fbm(sx * 0.0052 - 5.2, sz * 0.0052 + 4.3, 3);
+  const nDetail = fbm(sx * 0.015 + 1.4, sz * 0.015 + 2.8, 2);
+  const ridge = ridgeNoise(sx * 0.0048 + 2.0, sz * 0.0048 - 1.2);
 
   // Scenic interconnected turquoise bays
   const bay1 = Math.exp(-((x + 25) * (x + 25) + (z - 15) * (z - 15)) / (310 * 310));
@@ -129,61 +234,17 @@ export function getBaseTerrainHeight(x, z) {
   let base = (nLarge * 0.72 + nMed * 0.28 - 0.45) * 105.0;
   base -= bay1 * 54.0 + bay2 * 40.0 + bay3 * 36.0 + bay4 * 38.0;
 
-  // Dramatic mountain ranges, volcanic peaks, mesas & scenic island chains
-  const mountains = [
-    // --- Central Autumn & Emerald Headlands ---
-    { x: -310, z: -155, r: 210, h: 68, p: 1.45, ridged: true },
-    { x: -145, z: -310, r: 195, h: 64, p: 1.5, ridged: true },
-    { x: 245, z: -185, r: 215, h: 74, p: 1.4, ridged: false },
-    { x: 45, z: 330, r: 235, h: 52, p: 1.45, ridged: false },
-    { x: -245, z: 245, r: 190, h: 48, p: 1.5, ridged: false },
-
-    // --- Massive Eastern & Northeastern Snow-Capped Alpine Range ---
-    { x: 540, z: -360, r: 290, h: 198, p: 1.45, ridged: true },
-    { x: 640, z: -120, r: 285, h: 225, p: 1.5, ridged: true },
-    { x: 590, z: 140, r: 260, h: 184, p: 1.45, ridged: true },
-    { x: 470, z: 380, r: 250, h: 158, p: 1.5, ridged: true },
-    { x: 350, z: -540, r: 270, h: 190, p: 1.5, ridged: true },
-    { x: 760, z: -260, r: 270, h: 212, p: 1.55, ridged: true },
-
-    // --- Northern Fjord Peaks ---
-    { x: 40, z: -690, r: 265, h: 162, p: 1.5, ridged: true },
-    { x: -290, z: -660, r: 250, h: 148, p: 1.45, ridged: true },
-    { x: -560, z: -510, r: 255, h: 135, p: 1.45, ridged: true },
-
-    // --- Northwestern Volcanic Caldera & Basalt Spires ---
-    { x: -720, z: -280, r: 255, h: 185, p: 1.35, volcano: true },
-    { x: -840, z: -50, r: 215, h: 128, p: 1.55, ridged: true },
-    { x: -640, z: 110, r: 195, h: 102, p: 1.5, ridged: true },
-
-    // --- Southwestern Terracotta Canyon Mesas (stepped plateaus!) ---
-    { x: -580, z: 480, r: 255, h: 105, p: 1.25, mesa: true },
-    { x: -340, z: 640, r: 235, h: 96, p: 1.25, mesa: true },
-    { x: -760, z: 680, r: 240, h: 118, p: 1.25, mesa: true },
-
-    // --- Southern Mountain Islands ---
-    { x: 120, z: 710, r: 265, h: 146, p: 1.5, ridged: true },
-    { x: 430, z: 690, r: 245, h: 132, p: 1.5, ridged: true },
-
-    // --- Scenic Bay Islets & Sea Stacks ---
-    { x: -72, z: 52, r: 52, h: 22, p: 1.75, ridged: false },
-    { x: 118, z: -38, r: 58, h: 26, p: 1.65, ridged: true },
-    { x: 145, z: 140, r: 44, h: 34, p: 1.9, ridged: true },
-    { x: -160, z: -45, r: 36, h: 28, p: 2.0, ridged: true },
-  ];
-
-  for (const m of mountains) {
+  for (let i = 0; i < ORIGIN_MOUNTAINS.length; i++) {
+    const m = ORIGIN_MOUNTAINS[i];
     const dx = x - m.x;
     const dz = z - m.z;
     const d = Math.sqrt(dx * dx + dz * dz) / m.r;
     if (d < 1.0) {
-      let falloff = Math.pow(1.0 - d * d, m.p);
+      const falloff = Math.pow(1.0 - d * d, m.p);
       if (m.volcano) {
-        // Carve dramatic crater into volcano summit
         const crater = d < 0.22 ? Math.pow(1.0 - d / 0.22, 1.5) * 0.42 : 0;
         base += (falloff - crater) * m.h * (0.82 + 0.34 * nMed);
       } else if (m.mesa) {
-        // Stepped flat-topped terracotta canyon plateaus
         const raw = falloff * m.h;
         const stepped = Math.floor(raw / 24.0) * 24.0 + Math.min(1.0, (raw % 24.0) / 7.0) * 24.0;
         base += THREE.MathUtils.lerp(raw, stepped, 0.72);
@@ -195,7 +256,6 @@ export function getBaseTerrainHeight(x, z) {
     }
   }
 
-  // Detail crags & rolling dunes
   if (base > 0) {
     base += (nDetail - 0.5) * 12.0 * Math.min(1, base / 20.0);
   }
@@ -209,49 +269,158 @@ export function getBaseTerrainHeight(x, z) {
     base = THREE.MathUtils.lerp(base, 8.5, t);
   }
 
-  // Smooth ocean drop-off near world boundaries
-  const edgeDist = Math.max(Math.abs(x), Math.abs(z)) / (WORLD_SIZE * 0.5);
-  if (edgeDist > 0.84) {
-    const t = Math.min(1, (edgeDist - 0.84) / 0.16);
-    base = THREE.MathUtils.lerp(base, -22.0, t * t);
-  }
-
   return base;
 }
 
 /**
- * Live terrain elevation at (x, z) with bilinear interpolation over the deformable height grid.
+ * Infinite procedural archipelago heightmap (seeded) beyond the central core.
+ * Generates endless island chains, navigable turquoise sea channels, alpine peaks,
+ * volcanic calderas, and stepped terracotta canyon mesas in every direction!
+ */
+function computeInfiniteProceduralHeight(x, z) {
+  const sx = x + seedOffsetX;
+  const sz = z + seedOffsetZ;
+  const sOff = (currentSeedNum % 9973) * 0.137;
+
+  const nContinent = fbm(sx * 0.00072 + 1.9, sz * 0.00072 - 2.4, 4);
+  const nArch = fbm(sx * 0.00185 - 3.7, sz * 0.00185 + 4.1, 4);
+  const nMed = fbm(sx * 0.0052 + 2.3, sz * 0.0052 - 1.8, 3);
+  const nDetail = fbm(sx * 0.015 - 1.1, sz * 0.015 + 2.6, 2);
+  const ridge = ridgeNoise(sx * 0.0046 + 1.4, sz * 0.0046 - 2.1);
+
+  // Interconnected navigable ocean channels & island clusters (~45% water, ~55% islands/mountains)
+  let base = (nContinent * 0.56 + nArch * 0.44 - 0.485) * 125.0;
+
+  // Carve winding sea channels between islands so ships always have deep turquoise passages
+  const channelWave = Math.abs(noise2D(sx * 0.0011 + 7.2, sz * 0.0011 - 5.4) * 2.0 - 1.0);
+  if (channelWave < 0.18) {
+    const chDepth = (1.0 - channelWave / 0.18);
+    base -= chDepth * chDepth * 38.0;
+  }
+
+  // Deterministic regional mountain peaks, volcanoes & canyon mesas on a 680m procedural macro-grid
+  const CELL = 680.0;
+  const gx = Math.floor(x / CELL);
+  const gz = Math.floor(z / CELL);
+
+  for (let dz = -1; dz <= 1; dz++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const cx = gx + dx;
+      const cz = gz + dz;
+      const h1 = hash2Seed(cx * 1.37, cz * 2.41, sOff);
+      if (h1 < 0.24) continue; // open water / bay cell
+
+      const h2 = hash2Seed(cx * 3.11 + 5.2, cz * 1.73 - 2.9, sOff);
+      const h3 = hash2Seed(cx * 2.07 - 7.1, cz * 4.19 + 1.3, sOff);
+
+      const mx = (cx + 0.22 + h2 * 0.56) * CELL;
+      const mz = (cz + 0.22 + h3 * 0.56) * CELL;
+      const mr = 185.0 + h1 * 125.0;
+      const d = Math.hypot(x - mx, z - mz) / mr;
+      if (d >= 1.0) continue;
+
+      const mh = 72.0 + h2 * 155.0;
+      const falloff = Math.pow(1.0 - d * d, 1.42);
+
+      if (h3 > 0.84) {
+        // Volcanic caldera island
+        const crater = d < 0.23 ? Math.pow(1.0 - d / 0.23, 1.5) * 0.44 : 0;
+        base += (falloff - crater) * mh * (0.82 + 0.34 * nMed);
+      } else if (h3 < 0.22) {
+        // Stepped terracotta canyon mesa
+        const raw = falloff * (68.0 + h2 * 75.0);
+        const stepped = Math.floor(raw / 24.0) * 24.0 + Math.min(1.0, (raw % 24.0) / 7.0) * 24.0;
+        base += THREE.MathUtils.lerp(raw, stepped, 0.74);
+      } else {
+        // Alpine ridged peak
+        base += falloff * mh * (0.66 + 0.58 * ridge);
+      }
+    }
+  }
+
+  if (base > 0) {
+    base += (nDetail - 0.5) * 12.5 * Math.min(1, base / 20.0);
+  }
+  return Math.max(-42.0, base);
+}
+
+/**
+ * Procedural base heightmap at any infinite world coordinate (x, z) before player craters.
+ * Preserves the exact central archipelago around (-1080..1080) and seamlessly blends into
+ * infinite seeded procedural island chains beyond!
+ */
+export function getBaseTerrainHeight(x, z) {
+  const distFromOrigin = Math.max(Math.abs(x), Math.abs(z));
+  const sx = x + seedOffsetX * 0.08;
+  const sz = z + seedOffsetZ * 0.08;
+
+  if (distFromOrigin <= 1020) {
+    return computeOriginArchipelagoHeight(x, z, sx, sz);
+  }
+  const procH = computeInfiniteProceduralHeight(x, z);
+  if (distFromOrigin >= 1420) {
+    return procH;
+  }
+  const origH = computeOriginArchipelagoHeight(x, z, sx, sz);
+  const t = THREE.MathUtils.smoothstep(distFromOrigin, 1020, 1420);
+  return THREE.MathUtils.lerp(origH, procH, t);
+}
+
+/**
+ * Live terrain elevation at (x, z) with bilinear interpolation over active loaded chunks.
  * Reflects all holes, trenches, and craters blasted into mountains in real time!
  */
 export function getTerrainHeight(x, z) {
-  if (!liveHeights) return getBaseTerrainHeight(x, z);
-  const gx = ((x / WORLD_SIZE) + 0.5) * TERRAIN_SEGS;
-  const gz = ((z / WORLD_SIZE) + 0.5) * TERRAIN_SEGS;
-  if (gx < 0 || gx >= TERRAIN_SEGS || gz < 0 || gz >= TERRAIN_SEGS) {
+  if (!activeWorldChunks || activeWorldChunks.size === 0) {
     return getBaseTerrainHeight(x, z);
   }
+  const cx = Math.floor((x + CHUNK_SIZE * 0.5) / CHUNK_SIZE);
+  const cz = Math.floor((z + CHUNK_SIZE * 0.5) / CHUNK_SIZE);
+  const chunk = activeWorldChunks.get(cx + ',' + cz);
+  if (!chunk || !chunk.liveHeights) {
+    return getBaseTerrainHeight(x, z);
+  }
+
+  const lx = x - (cx * CHUNK_SIZE - CHUNK_SIZE * 0.5);
+  const lz = z - (cz * CHUNK_SIZE - CHUNK_SIZE * 0.5);
+  const gx = THREE.MathUtils.clamp((lx / CHUNK_SIZE) * CHUNK_SEGS, 0, CHUNK_SEGS - 0.0001);
+  const gz = THREE.MathUtils.clamp((lz / CHUNK_SIZE) * CHUNK_SEGS, 0, CHUNK_SEGS - 0.0001);
+
   const ix = Math.floor(gx);
   const iz = Math.floor(gz);
   const fx = gx - ix;
   const fz = gz - iz;
-  const row0 = iz * TERRAIN_STRIDE;
-  const row1 = row0 + TERRAIN_STRIDE;
-  const h00 = liveHeights[row0 + ix];
-  const h10 = liveHeights[row0 + ix + 1];
-  const h01 = liveHeights[row1 + ix];
-  const h11 = liveHeights[row1 + ix + 1];
+  const row0 = iz * CHUNK_STRIDE;
+  const row1 = row0 + CHUNK_STRIDE;
+  const lh = chunk.liveHeights;
+  const h00 = lh[row0 + ix];
+  const h10 = lh[row0 + ix + 1];
+  const h01 = lh[row1 + ix];
+  const h11 = lh[row1 + ix + 1];
   const top = h00 + (h10 - h00) * fx;
   const bot = h01 + (h11 - h01) * fx;
   return top + (bot - top) * fz;
 }
 
-function buildHeightTexture() {
-  const size = 512;
+const HEIGHT_TEX_SPAN = CHUNK_SIZE * (ACTIVE_CHUNK_RADIUS * 2 + 1); // 4800m sliding window
+
+function createSlidingHeightTexture() {
+  const size = 256;
   const data = new Uint8Array(size * size * 4);
+  const tex = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearFilter;
+  return { tex, data, size, centerX: 0, centerZ: 0 };
+}
+
+function rebuildHeightTextureForWindow(heightTexObj, centerX, centerZ) {
+  heightTexObj.centerX = centerX;
+  heightTexObj.centerZ = centerZ;
+  const { size, data, tex } = heightTexObj;
   for (let iz = 0; iz < size; iz++) {
-    const z = ((iz / (size - 1)) - 0.5) * WORLD_SIZE;
+    const z = centerZ + ((iz / (size - 1)) - 0.5) * HEIGHT_TEX_SPAN;
     for (let ix = 0; ix < size; ix++) {
-      const x = ((ix / (size - 1)) - 0.5) * WORLD_SIZE;
+      const x = centerX + ((ix / (size - 1)) - 0.5) * HEIGHT_TEX_SPAN;
       const h = getTerrainHeight(x, z);
       const norm = THREE.MathUtils.clamp((h + 50.0) / 300.0, 0.0, 1.0);
       const v = Math.round(norm * 255);
@@ -262,11 +431,36 @@ function buildHeightTexture() {
       data[idx + 3] = 255;
     }
   }
-  const tex = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
-  tex.magFilter = THREE.LinearFilter;
-  tex.minFilter = THREE.LinearFilter;
   tex.needsUpdate = true;
-  return { tex, data, size };
+}
+
+function updateHeightTexturePatch(heightTexObj, wx, wz, radius) {
+  const { size, data, tex, centerX, centerZ } = heightTexObj;
+  const minX = ((wx - radius - CELL_SIZE - centerX) / HEIGHT_TEX_SPAN + 0.5) * (size - 1);
+  const maxX = ((wx + radius + CELL_SIZE - centerX) / HEIGHT_TEX_SPAN + 0.5) * (size - 1);
+  const minZ = ((wz - radius - CELL_SIZE - centerZ) / HEIGHT_TEX_SPAN + 0.5) * (size - 1);
+  const maxZ = ((wz + radius + CELL_SIZE - centerZ) / HEIGHT_TEX_SPAN + 0.5) * (size - 1);
+
+  const txMin = Math.max(0, Math.floor(minX));
+  const txMax = Math.min(size - 1, Math.ceil(maxX));
+  const tzMin = Math.max(0, Math.floor(minZ));
+  const tzMax = Math.min(size - 1, Math.ceil(maxZ));
+  if (txMin > txMax || tzMin > tzMax) return;
+
+  for (let tz = tzMin; tz <= tzMax; tz++) {
+    const z = centerZ + ((tz / (size - 1)) - 0.5) * HEIGHT_TEX_SPAN;
+    for (let tx = txMin; tx <= txMax; tx++) {
+      const x = centerX + ((tx / (size - 1)) - 0.5) * HEIGHT_TEX_SPAN;
+      const h = getTerrainHeight(x, z);
+      const norm = THREE.MathUtils.clamp((h + 50.0) / 300.0, 0.0, 1.0);
+      const v = Math.round(norm * 255);
+      const off = (tz * size + tx) * 4;
+      data[off] = v;
+      data[off + 1] = v;
+      data[off + 2] = v;
+    }
+  }
+  tex.needsUpdate = true;
 }
 
 export function buildWorld(scene) {
@@ -274,22 +468,15 @@ export function buildWorld(scene) {
   const terrainOptions = { ...DEFAULT_TERRAIN_OPTIONS };
   let deformScale = 1.0;
 
-  // Initialize live deformable heightmap arrays first so buildHeightTexture & objects align cleanly
-  liveHeights = new Float32Array(TERRAIN_STRIDE * TERRAIN_STRIDE);
-  baseHeights = new Float32Array(TERRAIN_STRIDE * TERRAIN_STRIDE);
-  const scorchData = new Float32Array(TERRAIN_STRIDE * TERRAIN_STRIDE);
-  for (let iz = 0; iz <= TERRAIN_SEGS; iz++) {
-    const z = ((iz / TERRAIN_SEGS) - 0.5) * WORLD_SIZE;
-    for (let ix = 0; ix <= TERRAIN_SEGS; ix++) {
-      const x = ((ix / TERRAIN_SEGS) - 0.5) * WORLD_SIZE;
-      const h = getBaseTerrainHeight(x, z);
-      const idx = iz * TERRAIN_STRIDE + ix;
-      liveHeights[idx] = h;
-      baseHeights[idx] = h;
-    }
-  }
+  // Map of currently loaded chunks in memory: key 'cx,cz' -> ChunkData
+  const loadedChunks = new Map();
+  activeWorldChunks = loadedChunks;
+  globalDeformHistory = [];
 
-  const heightTexObj = buildHeightTexture();
+  // Persistent destroyed state across chunk unload/reload: chunkKey -> Set<localId>
+  const destroyedChunkProps = new Map();
+
+  const heightTexObj = createSlidingHeightTexture();
   const heightTex = heightTexObj.tex;
 
   const MAX_CLOUDS = 24;
@@ -307,9 +494,9 @@ export function buildWorld(scene) {
   let lastRippleAt = -999;
 
   // =========================================================================
-  // 1. SUNSET SKY DOME (lavender -> peach -> apricot -> cream + dramatic cirrus streaks)
+  // 1. SUNSET SKY DOME (follows camera so player never reaches the sky edge!)
   // =========================================================================
-  const skyGeo = new THREE.SphereGeometry(2600, 36, 24);
+  const skyGeo = new THREE.SphereGeometry(2800, 36, 24);
   const skyMat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
     depthWrite: false,
@@ -431,24 +618,13 @@ export function buildWorld(scene) {
       }
     `,
   });
-  scene.add(new THREE.Mesh(skyGeo, skyMat));
+  const skyMesh = new THREE.Mesh(skyGeo, skyMat);
+  skyMesh.frustumCulled = false;
+  scene.add(skyMesh);
 
   // =========================================================================
-  // 2. DEFORMABLE MULTI-BIOME TERRAIN SHADER
-  //    (Supports blasting real craters & holes through mountains with scorched rock!)
+  // 2. DEFORMABLE MULTI-BIOME TERRAIN SHADER (shared across all procedural chunks!)
   // =========================================================================
-  const terrainGeo = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE, TERRAIN_SEGS, TERRAIN_SEGS);
-  terrainGeo.rotateX(-Math.PI / 2);
-
-  const posAttr = terrainGeo.attributes.position;
-  for (let i = 0; i < posAttr.count; i++) {
-    posAttr.setY(i, liveHeights[i]);
-  }
-  const scorchAttr = new THREE.BufferAttribute(scorchData, 1);
-  terrainGeo.setAttribute('aScorch', scorchAttr);
-  terrainGeo.computeVertexNormals();
-  const normAttr = terrainGeo.attributes.normal;
-
   const terrainMat = new THREE.ShaderMaterial({
     uniforms: {
       uSunDir: { value: SUN_DIR.clone() },
@@ -511,23 +687,26 @@ export function buildWorld(scene) {
         vec3 N = normalize(vNormal);
         float slope = 1.0 - clamp(N.y, 0.0, 1.0);
 
-        // Crisp world-space pixel stippling (controlled by uTerrainGrain so HD/Anime styles look clean!)
         vec2 pixCell = floor(p * 0.72);
         float rawStipple = hash(pixCell);
         float smoothCluster = noise(p * 0.14);
         float fineCluster = mix(smoothCluster, noise(floor(p * 0.30) * 0.55), uTerrainGrain);
         float stipple = mix(smoothCluster, rawStipple, uTerrainGrain);
 
-        // Regional biome weights
         float biomeA = fbm(p * 0.0085 + vec2(2.1, -4.3));
         float biomeB = fbm(p * 0.013 - vec2(6.4, 1.9));
         float forestPatch = fbm(p * 0.018 + vec2(0.5, 3.7));
+        float macroBiome = fbm(p * 0.0012 + vec2(5.2, -3.1));
 
-        // Regional masks: SW Terracotta Canyon & NW Volcanic Caldera
-        float canyonMask = smoothstep(-140.0, -390.0, p.x) * smoothstep(200.0, 440.0, p.y);
-        float volcanoMask = smoothstep(-320.0, -560.0, p.x) * smoothstep(100.0, -160.0, p.y);
+        // Regional masks: SW Terracotta Canyon & NW Volcanic Caldera + repeating infinite biomes!
+        float origCanyon = smoothstep(-140.0, -390.0, p.x) * smoothstep(200.0, 440.0, p.y) * (1.0 - smoothstep(1100.0, 1500.0, length(p)));
+        float origVolcano = smoothstep(-320.0, -560.0, p.x) * smoothstep(100.0, -160.0, p.y) * (1.0 - smoothstep(1100.0, 1500.0, length(p)));
+        float procCanyon = smoothstep(0.67, 0.76, macroBiome) * smoothstep(950.0, 1350.0, length(p));
+        float procVolcano = (1.0 - smoothstep(0.24, 0.33, macroBiome)) * smoothstep(950.0, 1350.0, length(p));
 
-        // Palette matched to sunset screenshots + expanded biome harmony
+        float canyonMask = clamp(origCanyon + procCanyon, 0.0, 1.0);
+        float volcanoMask = clamp(origVolcano + procVolcano, 0.0, 1.0);
+
         vec3 colSandLight   = vec3(0.90, 0.86, 0.58);
         vec3 colSandShade   = vec3(0.79, 0.75, 0.49);
         vec3 colGoldLeaf    = vec3(0.92, 0.72, 0.24);
@@ -542,12 +721,10 @@ export function buildWorld(scene) {
         vec3 colRockDark    = vec3(0.44, 0.40, 0.50);
         vec3 colSnow        = vec3(0.96, 0.94, 0.96);
 
-        // Terracotta canyon bands
         vec3 colCanyonSand  = vec3(0.88, 0.65, 0.43);
         vec3 colCanyonRed   = vec3(0.74, 0.34, 0.24);
         vec3 colCanyonOchre = vec3(0.84, 0.50, 0.28);
 
-        // Volcanic basalt & magma glow
         vec3 colBasalt      = vec3(0.30, 0.26, 0.36);
         vec3 colAsh         = vec3(0.46, 0.42, 0.50);
         vec3 colLava        = vec3(1.00, 0.46, 0.14);
@@ -581,30 +758,24 @@ export function buildWorld(scene) {
           colSnow       = vec3(0.96, 0.98, 1.00);
         }
 
-        // 1. Coastal sandy beaches & dunes
         vec3 baseCol = mix(colSandShade, colSandLight, step(0.42, stipple * 0.6 + fineCluster * 0.4));
 
-        // 2. Forests & Wildflower Meadows above beach shelf
         float treeMask = smoothstep(4.0, 10.5, h + (forestPatch - 0.5) * 9.0) * (1.0 - smoothstep(68.0, 92.0, h));
         if (treeMask > 0.05) {
           vec3 foliage;
           if (biomeA > 0.63) {
-            // Emerald pine forests
             foliage = mix(colGreenDark, colGreenLight, step(0.46, stipple * 0.55 + fineCluster * 0.45));
             if (biomeB > 0.66 && stipple > 0.75) foliage = colGoldLeaf;
           } else if (biomeA > 0.49 && biomeB < 0.44) {
-            // Sunlit wildflower meadows & golden savanna
             foliage = mix(colMeadow, colGoldLeaf, step(0.62, fineCluster));
             if (stipple > 0.89) foliage = colFlower;
           } else if (biomeB > 0.48) {
-            // Crimson & tangerine autumn woods
             float rMix = stipple * 0.6 + fineCluster * 0.4;
             if (rMix < 0.28) foliage = colDeepRed;
             else if (rMix < 0.62) foliage = colRedLeaf;
             else if (rMix < 0.85) foliage = colOrangeLeaf;
             else foliage = colGoldLeaf;
           } else {
-            // Golden-amber groves
             float gMix = stipple * 0.6 + fineCluster * 0.4;
             if (gMix < 0.34) foliage = colOrangeLeaf;
             else if (gMix < 0.78) foliage = colGoldLeaf;
@@ -614,27 +785,23 @@ export function buildWorld(scene) {
           baseCol = mix(baseCol, foliage, ditherCut);
         }
 
-        // 3. Southwestern Terracotta Canyon Biome (stratified sedimentary bands!)
         if (canyonMask > 0.05 && h > 2.5) {
           float strata = fract(h * 0.085 + fineCluster * 0.25);
           vec3 canyonCol = strata < 0.35 ? colCanyonRed : strata < 0.72 ? colCanyonOchre : colCanyonSand;
-          if (slope < 0.14 && stipple > 0.84) canyonCol = colGoldLeaf; // desert scrub dots
+          if (slope < 0.14 && stipple > 0.84) canyonCol = colGoldLeaf;
           baseCol = mix(baseCol, canyonCol, canyonMask * 0.92);
         }
 
-        // 4. Northwestern Volcanic Basalt & Glowing Caldera Biome
         if (volcanoMask > 0.05 && h > 4.0) {
           vec3 volcCol = mix(colBasalt, colAsh, step(0.54, fineCluster * 0.6 + stipple * 0.4));
-          // Subtle glowing magma veins near volcano caldera (-720, -280)
           float dCaldera = length(p - vec2(-720.0, -280.0));
           float lavaPulse = 0.75 + 0.25 * sin(uTime * 2.2 + dCaldera * 0.15);
-          if (dCaldera < 62.0 && h > 85.0 && stipple > 0.55) {
-            volcCol = mix(volcCol, colLava * lavaPulse, smoothstep(62.0, 22.0, dCaldera));
+          if ((dCaldera < 62.0 || (volcanoMask > 0.6 && h > 115.0 && slope < 0.28)) && h > 85.0 && stipple > 0.55) {
+            volcCol = mix(volcCol, colLava * lavaPulse, 0.75);
           }
           baseCol = mix(baseCol, volcCol, volcanoMask * smoothstep(4.0, 22.0, h));
         }
 
-        // 5. Exposed rocky alpine cliffs & ridges
         float rockMask = smoothstep(66.0, 96.0, h) + smoothstep(0.28, 0.46, slope) * smoothstep(18.0, 36.0, h);
         rockMask = clamp(rockMask, 0.0, 1.0) * (1.0 - canyonMask * 0.8) * (1.0 - volcanoMask * 0.75);
         if (rockMask > 0.05) {
@@ -642,7 +809,6 @@ export function buildWorld(scene) {
           baseCol = mix(baseCol, rock, smoothstep(0.2, 0.7, rockMask));
         }
 
-        // 6. Snow-capped Alpine summits (excluding volcanic & canyon zones unless Alpine theme)
         float snowLine = 112.0 + (biomeA - 0.5) * 22.0 - slope * 24.0;
         float snowZoneMask = (1.0 - volcanoMask * 0.9) * (1.0 - canyonMask);
         if (uTerrainTheme >= 2.5) {
@@ -654,19 +820,16 @@ export function buildWorld(scene) {
         float snowMask = smoothstep(snowLine, snowLine + 16.0, h) * snowZoneMask;
         baseCol = mix(baseCol, colSnow, snowMask);
 
-        // 7. Blasted craters & excavated mountain holes (charred fractured rock + glowing embers!)
         if (vScorch > 0.04) {
           vec3 craterRock = mix(vec3(0.24, 0.20, 0.28), vec3(0.46, 0.36, 0.38), step(0.45, stipple * 0.65 + fineCluster * 0.35));
           float scorchEdge = step(1.0 - clamp(vScorch * 1.15, 0.0, 1.0), stipple * 0.55 + 0.25);
           baseCol = mix(baseCol, craterRock, clamp(vScorch * 0.85 + scorchEdge * 0.35, 0.0, 1.0));
-          // Hot embers deep inside freshly blasted rock craters
           if (vScorch > 0.68 && stipple > 0.76) {
             float emberPulse = 0.7 + 0.3 * sin(uTime * 4.5 + p.x * 0.2);
             baseCol = mix(baseCol, vec3(1.0, 0.45, 0.14) * emberPulse, (vScorch - 0.68) * 2.2);
           }
         }
 
-        // Stepped sunset cel-lighting with theme shadows
         float ndl = dot(N, uSunDir);
         float lit = smoothstep(-0.18, 0.08, ndl) * 0.5 + smoothstep(0.18, 0.45, ndl) * 0.5;
         vec3 shadowTint = vec3(0.56, 0.52, 0.68);
@@ -687,7 +850,6 @@ export function buildWorld(scene) {
         }
         vec3 col = baseCol * mix(shadowTint, sunTint, lit);
 
-        // Distance to camera & dynamic-bound cloud shadows
         float dist = length(uCamPos - vWorldPos);
         if (uCloudCount > 0 && dist < 1850.0) {
           float cloudDark = 0.0;
@@ -701,7 +863,6 @@ export function buildWorld(scene) {
           col = mix(col, col * vec3(0.58, 0.56, 0.74), cloudDark * 0.65);
         }
 
-        // Atmospheric horizon fog (pushed back for epic long vistas!)
         float fog = smoothstep(420.0, 1850.0, dist);
         col = mix(col, fogCol, fog);
 
@@ -709,12 +870,11 @@ export function buildWorld(scene) {
       }
     `,
   });
-  scene.add(new THREE.Mesh(terrainGeo, terrainMat));
 
   // =========================================================================
-  // 3. SUNSET OCEAN WITH SHORELINE FOAM, CORAL SHOALS, CLOUD SHADOWS & RIPPLES
+  // 3. INFINITE SUNSET OCEAN (follows camera with sliding heightTex window)
   // =========================================================================
-  const waterGeo = new THREE.PlaneGeometry(4200, 4200, 1, 1);
+  const waterGeo = new THREE.PlaneGeometry(5400, 5400, 1, 1);
   waterGeo.rotateX(-Math.PI / 2);
   const waterMat = new THREE.ShaderMaterial({
     uniforms: {
@@ -722,7 +882,8 @@ export function buildWorld(scene) {
       uSunDir: { value: SUN_DIR.clone() },
       uCamPos: { value: new THREE.Vector3() },
       uHeightTex: { value: heightTex },
-      uWorldSize: { value: WORLD_SIZE },
+      uHeightTexCenter: { value: new THREE.Vector2(0, 0) },
+      uHeightTexSpan: { value: HEIGHT_TEX_SPAN },
       uClouds: { value: cloudShadowUniforms },
       uCloudCount: { value: MAX_CLOUDS },
       uRipples: { value: rippleUniforms },
@@ -742,7 +903,8 @@ export function buildWorld(scene) {
       uniform vec3 uSunDir;
       uniform vec3 uCamPos;
       uniform sampler2D uHeightTex;
-      uniform float uWorldSize;
+      uniform vec2 uHeightTexCenter;
+      uniform float uHeightTexSpan;
       uniform vec4 uClouds[${MAX_CLOUDS}];
       uniform int uCloudCount;
       uniform vec4 uRipples[${MAX_RIPPLES}];
@@ -766,9 +928,9 @@ export function buildWorld(scene) {
 
       void main() {
         vec2 p = vWorldPos.xz;
-        vec2 uv = (p / uWorldSize) + 0.5;
+        vec2 uv = ((p - uHeightTexCenter) / uHeightTexSpan) + 0.5;
 
-        float hNorm = 0.0;
+        float hNorm = 0.1;
         if (uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0) {
           hNorm = texture2D(uHeightTex, uv).r;
         }
@@ -802,14 +964,12 @@ export function buildWorld(scene) {
           fogCol   = vec3(0.84, 0.86, 0.95);
         }
 
-        // Coral reef shoal tint in shallow turquoise lagoons
         float reefN = noise(p * 0.035);
         vec3 shallowBase = mix(cShallow, cCoral, smoothstep(0.55, 0.78, reefN) * smoothstep(10.0, 2.0, depth));
 
         vec3 col = mix(shallowBase, cMid, smoothstep(2.0, 14.0, depth));
         col = mix(col, cDeep, smoothstep(12.0, 32.0, depth));
 
-        // Crisp coastal foam ribbon
         float shoreWave = sin(depth * 2.0 - uTime * 2.4 + noise(p * 0.07) * 4.5);
         float foamEdge = smoothstep(2.6, 0.25, depth);
         float foamRibbon = smoothstep(0.45, 0.85, shoreWave) * smoothstep(6.0, 1.2, depth) * 0.55;
@@ -817,7 +977,6 @@ export function buildWorld(scene) {
 
         float distCam = length(uCamPos - vWorldPos);
 
-        // Oval cloud shadows on ocean (dynamic active bound & distance guard)
         if (uCloudCount > 0 && distCam < 1920.0) {
           float cloudShadow = 0.0;
           for (int i = 0; i < ${MAX_CLOUDS}; i++) {
@@ -830,7 +989,6 @@ export function buildWorld(scene) {
           col = mix(col, vec3(0.22, 0.27, 0.45), cloudShadow * 0.64);
         }
 
-        // Twinkling white pixel sun-sparkles & wave flecks (skipped beyond fade range)
         if (distCam < 920.0) {
           vec2 sparkGrid = floor(p * 0.32);
           float tStep = floor(uTime * 3.5 + hash(sparkGrid) * 10.0);
@@ -847,7 +1005,6 @@ export function buildWorld(scene) {
           }
         }
 
-        // Expanding white concentric water impact ripples
         if (uRippleCount > 0 && distCam < 1800.0) {
           for (int i = 0; i < ${MAX_RIPPLES}; i++) {
             if (i >= uRippleCount) break;
@@ -877,91 +1034,80 @@ export function buildWorld(scene) {
   });
   const waterMesh = new THREE.Mesh(waterGeo, waterMat);
   waterMesh.position.y = WATER_LEVEL;
+  waterMesh.frustumCulled = false;
   scene.add(waterMesh);
 
   // =========================================================================
-  // 4. 3D WORLD DETAILS (Biome Trees, Lighthouses, Coastal Villages, Sailboats, Airstrip!)
+  // 4. SHARED GEOMETRIES, MATERIALS & SPATIAL HASH REGISTRY FOR CHUNK OBJECTS
   // =========================================================================
   const dummy = new THREE.Object3D();
-
-  // ---- Destructible object registry (spatial hash grid + priority target list) ----
   const ZERO_M = new THREE.Matrix4().makeScale(0, 0, 0);
   const GRID = 48;
   const grid = new Map();
   const dirtyMeshes = new Set();
-  const lockableTargets = []; // ships, balloons, lighthouses, towers, hangars, fuel tanks, houses
+  const lockableTargets = [];
+  const lighthouseBeacons = [];
+
   function registerDestructible(obj, lockable = false) {
-    obj.alive = true;
     const key = Math.floor(obj.x / GRID) + ',' + Math.floor(obj.z / GRID);
+    obj._gridKey = key;
     if (!grid.has(key)) grid.set(key, []);
     grid.get(key).push(obj);
     if (lockable) lockableTargets.push(obj);
   }
 
-  // 4a. Instanced Biome Trees (1800 stylized trees: autumn crimson/gold/orange + emerald pines + desert scrub)
-  const treeCount = 1800;
+  function unregisterDestructible(obj) {
+    if (obj._gridKey) {
+      const list = grid.get(obj._gridKey);
+      if (list) {
+        const idx = list.indexOf(obj);
+        if (idx >= 0) list.splice(idx, 1);
+        if (list.length === 0) grid.delete(obj._gridKey);
+      }
+    }
+    const lIdx = lockableTargets.indexOf(obj);
+    if (lIdx >= 0) lockableTargets.splice(lIdx, 1);
+  }
+
   const treeGeo = new THREE.ConeGeometry(2.8, 7.6, 5);
   const treeMat = new THREE.MeshLambertMaterial({ flatShading: true });
-  const trees = new THREE.InstancedMesh(treeGeo, treeMat, treeCount);
-
   const autumnCols = [0xc93b26, 0xe36c28, 0xebba38, 0xa82820];
   const pineCols = [0x2d683b, 0x3b7d45, 0x224f31];
   const scrubCols = [0x7e8a42, 0xb8863c, 0x62733a];
 
-  let placedTrees = 0;
-  let treeAttempts = 0;
-  while (placedTrees < treeCount && treeAttempts < 9000) {
-    treeAttempts++;
-    const tx = (rand() - 0.5) * 2150;
-    const tz = (rand() - 0.5) * 2150;
-    // Skip airstrip plateau
-    if (Math.abs(tx + 215) < 58 && Math.abs(tz - 225) < 110) continue;
-
-    const ty = getTerrainHeight(tx, tz);
-    if (ty < 5.5 || ty > 78.0) continue;
-
-    const isCanyon = tx < -240 && tz > 260;
-    const isVolcano = tx < -420 && tz < -40;
-    if (isVolcano && ty > 25) continue;
-
-    const s = isCanyon ? 0.55 + rand() * 0.5 : 0.75 + rand() * 1.25;
-    dummy.position.set(tx, ty + 3.0 * s, tz);
-    dummy.scale.set(s, s * (0.9 + rand() * 0.55), s);
-    dummy.rotation.set(0, rand() * Math.PI * 2, 0);
-    dummy.updateMatrix();
-    trees.setMatrixAt(placedTrees, dummy.matrix);
-
-    let hex;
-    if (isCanyon) {
-      hex = scrubCols[Math.floor(rand() * scrubCols.length)];
-    } else if (ty > 42 || fbm(tx * 0.0085 + 2.1, tz * 0.0085 - 4.3, 3) > 0.6) {
-      hex = pineCols[Math.floor(rand() * pineCols.length)];
-    } else {
-      hex = autumnCols[Math.floor(rand() * autumnCols.length)];
-    }
-    trees.setColorAt(placedTrees, new THREE.Color(hex));
-    {
-      const ti = placedTrees;
-      registerDestructible({
-        type: 'tree', x: tx, y: ty, z: tz, r: 3.2 * s, h: 9 * s, color: hex,
-        kill() { trees.setMatrixAt(ti, ZERO_M); dirtyMeshes.add(trees); },
-      });
-    }
-    placedTrees++;
-  }
-  trees.count = placedTrees;
-  trees.instanceMatrix.needsUpdate = true;
-  if (trees.instanceColor) trees.instanceColor.needsUpdate = true;
-  scene.add(trees);
-
-  // 4b. Coastal Villages (tiny warm cream houses with terracotta roofs nestled along flat bays!)
   const houseWallsGeo = new THREE.BoxGeometry(4.4, 3.2, 4.4);
   const houseRoofGeo = new THREE.ConeGeometry(3.6, 2.2, 4);
   houseRoofGeo.rotateY(Math.PI / 4);
   const houseWallMat = new THREE.MeshLambertMaterial({ color: 0xf2e4cc, flatShading: true });
   const houseRoofMat = new THREE.MeshLambertMaterial({ flatShading: true });
+  const roofPalette = [0xc94d34, 0xb83e2e, 0xd46a3b, 0x4b5c78];
 
-  const villageCenters = [
+  const lhWhiteMat = new THREE.MeshLambertMaterial({ color: 0xf7f2e8, flatShading: true });
+  const lhRedMat = new THREE.MeshLambertMaterial({ color: 0xd94534, flatShading: true });
+  const lhLampMat = new THREE.MeshBasicMaterial({ color: 0xfff08a });
+  const lhBaseGeo = new THREE.CylinderGeometry(1.6, 2.4, 7.5, 6);
+  const lhStripeGeo = new THREE.CylinderGeometry(1.25, 1.6, 4.5, 6);
+  const lhLampGeo = new THREE.BoxGeometry(1.8, 1.8, 1.8);
+  const lhCapGeo = new THREE.ConeGeometry(1.7, 2.0, 6);
+
+  const runwayGeo = new THREE.BoxGeometry(20, 0.4, 132);
+  const runwayMat = new THREE.MeshLambertMaterial({ color: 0x343746 });
+  const dashMat = new THREE.MeshBasicMaterial({ color: 0xf7efe0 });
+  const lightMat = new THREE.MeshBasicMaterial({ color: 0xffb84a });
+  const dashGeo = new THREE.BoxGeometry(1.1, 0.48, 6.5);
+  const rLightGeo = new THREE.BoxGeometry(0.9, 0.9, 0.9);
+  const towerGeo = new THREE.BoxGeometry(6, 13, 6);
+  const towerCabGeo = new THREE.BoxGeometry(7.8, 3.2, 7.8);
+  const hangarMat = new THREE.MeshLambertMaterial({ color: 0x7e889c, flatShading: true });
+  const hangarBodyGeo = new THREE.BoxGeometry(15, 7.5, 20);
+  const hangarRoofGeo = new THREE.CylinderGeometry(7.6, 7.6, 20, 6, 1, false, 0, Math.PI);
+  const tankMat = new THREE.MeshLambertMaterial({ color: 0xdf4b36, flatShading: true });
+  const tankGeo = new THREE.CylinderGeometry(3.8, 3.8, 7.2, 8);
+
+  // =========================================================================
+  // 4A. PROCEDURAL CHUNK BUILDER & UNLOADER (CULLS DISTANT CHUNKS FROM MEMORY!)
+  // =========================================================================
+  const ORIGIN_VILLAGES = [
     { x: 196, z: -112 },
     { x: 252, z: -84 },
     { x: -252, z: -168 },
@@ -969,57 +1115,7 @@ export function buildWorld(scene) {
     { x: -168, z: 224 },
     { x: -252, z: 140 },
   ];
-  const maxHouses = 140;
-  const houseWalls = new THREE.InstancedMesh(houseWallsGeo, houseWallMat, maxHouses);
-  const houseRoofs = new THREE.InstancedMesh(houseRoofGeo, houseRoofMat, maxHouses);
-  const roofPalette = [0xc94d34, 0xb83e2e, 0xd46a3b, 0x4b5c78];
-
-  let placedHouses = 0;
-  for (const vc of villageCenters) {
-    for (let k = 0; k < 28 && placedHouses < maxHouses; k++) {
-      const hx = vc.x + (rand() - 0.5) * 95;
-      const hz = vc.z + (rand() - 0.5) * 95;
-      const hy = getTerrainHeight(hx, hz);
-      if (hy < 2.2 || hy > 16.0) continue;
-      // Check flatness
-      if (Math.abs(getTerrainHeight(hx + 4, hz) - hy) > 2.2) continue;
-
-      const s = 0.75 + rand() * 0.55;
-      const rotY = rand() * Math.PI * 2;
-      dummy.position.set(hx, hy + 1.4 * s, hz);
-      dummy.scale.set(s, s, s);
-      dummy.rotation.set(0, rotY, 0);
-      dummy.updateMatrix();
-      houseWalls.setMatrixAt(placedHouses, dummy.matrix);
-
-      dummy.position.set(hx, hy + 3.9 * s, hz);
-      dummy.updateMatrix();
-      houseRoofs.setMatrixAt(placedHouses, dummy.matrix);
-      houseRoofs.setColorAt(placedHouses, new THREE.Color(roofPalette[Math.floor(rand() * roofPalette.length)]));
-      {
-        const hi = placedHouses;
-        registerDestructible({
-          type: 'house', label: 'HOUSE', x: hx, y: hy, z: hz, r: 5.2 * s, h: 7.5 * s, color: 0xf2e4cc,
-          kill() {
-            houseWalls.setMatrixAt(hi, ZERO_M);
-            houseRoofs.setMatrixAt(hi, ZERO_M);
-            dirtyMeshes.add(houseWalls); dirtyMeshes.add(houseRoofs);
-          },
-        }, true);
-      }
-      placedHouses++;
-    }
-  }
-  houseWalls.count = placedHouses;
-  houseRoofs.count = placedHouses;
-  houseWalls.instanceMatrix.needsUpdate = true;
-  houseRoofs.instanceMatrix.needsUpdate = true;
-  if (houseRoofs.instanceColor) houseRoofs.instanceColor.needsUpdate = true;
-  scene.add(houseWalls, houseRoofs);
-
-  // 4c. Coastal Lighthouses with glowing sunset beacons on scenic headlands!
-  const lighthouseBeacons = [];
-  const lhCoords = [
+  const ORIGIN_LIGHTHOUSES = [
     [168, -140],
     [224, -84],
     [-196, 140],
@@ -1029,112 +1125,625 @@ export function buildWorld(scene) {
     [196, -224],
     [-84, -308],
   ];
-  const lhWhiteMat = new THREE.MeshLambertMaterial({ color: 0xf7f2e8, flatShading: true });
-  const lhRedMat = new THREE.MeshLambertMaterial({ color: 0xd94534, flatShading: true });
-  const lhLampMat = new THREE.MeshBasicMaterial({ color: 0xfff08a });
-  const lhBaseGeo = new THREE.CylinderGeometry(1.6, 2.4, 7.5, 6);
-  const lhStripeGeo = new THREE.CylinderGeometry(1.25, 1.6, 4.5, 6);
-  const lhLampGeo = new THREE.BoxGeometry(1.8, 1.8, 1.8);
-  const lhCapGeo = new THREE.ConeGeometry(1.7, 2.0, 6);
 
-  for (const [lx, lz] of lhCoords) {
-    const ly = getTerrainHeight(lx, lz);
-    if (ly < 2.0) continue;
-    const g = new THREE.Group();
-    const base = new THREE.Mesh(lhBaseGeo, lhWhiteMat);
-    base.position.y = 3.75;
-    const stripe = new THREE.Mesh(lhStripeGeo, lhRedMat);
-    stripe.position.y = 9.75;
-    const lamp = new THREE.Mesh(lhLampGeo, lhLampMat);
-    lamp.position.y = 13.0;
-    const cap = new THREE.Mesh(lhCapGeo, lhRedMat);
-    cap.position.y = 14.8;
-    g.add(base, stripe, lamp, cap);
-    g.position.set(lx, ly - 0.5, lz);
-    scene.add(g);
-    lighthouseBeacons.push({ lamp, phase: rand() * Math.PI * 2, group: g });
-    registerDestructible({
-      type: 'lighthouse', label: 'LIGHTHOUSE', x: lx, y: ly, z: lz, r: 5.0, h: 18, color: 0xf7f2e8,
-      kill() { g.visible = false; },
-    }, true);
-  }
-
-  // 4d. Coastal Island Airstrip at (-215, 225) for epic low flybys! (Instanced dashes & edge lights)
-  const stripY = getTerrainHeight(-215, 225) + 0.35;
-  const runway = new THREE.Mesh(
-    new THREE.BoxGeometry(20, 0.4, 132),
-    new THREE.MeshLambertMaterial({ color: 0x343746 })
-  );
-  runway.position.set(-215, stripY, 225);
-  scene.add(runway);
-
-  const dashMat = new THREE.MeshBasicMaterial({ color: 0xf7efe0 });
-  const lightMat = new THREE.MeshBasicMaterial({ color: 0xffb84a });
-  const dashGeo = new THREE.BoxGeometry(1.1, 0.48, 6.5);
-  const rLightGeo = new THREE.BoxGeometry(0.9, 0.9, 0.9);
-  const runwayDashes = new THREE.InstancedMesh(dashGeo, dashMat, 9);
-  const runwayLights = new THREE.InstancedMesh(rLightGeo, lightMat, 18);
-  let dashIdx = 0;
-  let lightIdx = 0;
-  for (let dz = -54; dz <= 54; dz += 14) {
-    dummy.position.set(-215, stripY + 0.05, 225 + dz);
-    dummy.rotation.set(0, 0, 0);
-    dummy.scale.set(1, 1, 1);
-    dummy.updateMatrix();
-    runwayDashes.setMatrixAt(dashIdx++, dummy.matrix);
-
-    for (const sx of [-10.5, 10.5]) {
-      dummy.position.set(-215 + sx, stripY + 0.5, 225 + dz);
-      dummy.updateMatrix();
-      runwayLights.setMatrixAt(lightIdx++, dummy.matrix);
+  function applyCraterToChunkData(chunk, cxWorld, czWorld, effRadius, effDepth, updateNormalsAndTex = true) {
+    const rSq = effRadius * effRadius;
+    if (
+      cxWorld + effRadius < chunk.minX - CELL_SIZE ||
+      cxWorld - effRadius > chunk.maxX + CELL_SIZE ||
+      czWorld + effRadius < chunk.minZ - CELL_SIZE ||
+      czWorld - effRadius > chunk.maxZ + CELL_SIZE
+    ) {
+      return false;
     }
-  }
-  runwayDashes.count = dashIdx;
-  runwayLights.count = lightIdx;
-  runwayDashes.instanceMatrix.needsUpdate = true;
-  runwayLights.instanceMatrix.needsUpdate = true;
-  scene.add(runwayDashes, runwayLights);
-  // Control tower beside airstrip
-  const tower = new THREE.Mesh(new THREE.BoxGeometry(6, 13, 6), lhWhiteMat);
-  tower.position.set(-196, stripY + 6.5, 215);
-  const towerCab = new THREE.Mesh(new THREE.BoxGeometry(7.8, 3.2, 7.8), lhLampMat);
-  towerCab.position.set(-196, stripY + 14.5, 215);
-  scene.add(tower, towerCab);
-  registerDestructible({
-    type: 'tower', label: 'CONTROL TOWER', x: -196, y: stripY, z: 215, r: 7.5, h: 19, color: 0xf7f2e8,
-    kill() { tower.visible = false; towerCab.visible = false; },
-  }, true);
 
-  // Destructible hangars & red fuel tanks beside the airstrip
-  const hangarMat = new THREE.MeshLambertMaterial({ color: 0x7e889c, flatShading: true });
-  const tankMat = new THREE.MeshLambertMaterial({ color: 0xdf4b36, flatShading: true });
-  for (const hz of [185, 248]) {
-    const hg = new THREE.Group();
-    const hBody = new THREE.Mesh(new THREE.BoxGeometry(15, 7.5, 20), hangarMat);
-    hBody.position.y = 3.75;
-    const hRoof = new THREE.Mesh(new THREE.CylinderGeometry(7.6, 7.6, 20, 6, 1, false, 0, Math.PI), lhWhiteMat);
-    hRoof.rotation.z = Math.PI / 2;
-    hRoof.rotation.y = Math.PI / 2;
-    hRoof.position.y = 7.5;
-    hg.add(hBody, hRoof);
-    hg.position.set(-237, stripY, hz);
-    scene.add(hg);
-    registerDestructible({
-      type: 'hangar', label: 'HANGAR', x: -237, y: stripY, z: hz, r: 11.0, h: 14, color: 0xc4cad6,
-      kill() { hg.visible = false; },
-    }, true);
-  }
-  for (const [tx, tz] of [[-194, 192], [-194, 240], [-184, 202]]) {
-    const tk = new THREE.Mesh(new THREE.CylinderGeometry(3.8, 3.8, 7.2, 8), tankMat);
-    tk.position.set(tx, stripY + 3.6, tz);
-    scene.add(tk);
-    registerDestructible({
-      type: 'tank', label: 'FUEL TANK', x: tx, y: stripY, z: tz, r: 5.5, h: 9.0, color: 0xff6e38,
-      kill() { tk.visible = false; },
-    }, true);
+    const gxCenter = ((cxWorld - chunk.minX) / CHUNK_SIZE) * CHUNK_SEGS;
+    const gzCenter = ((czWorld - chunk.minZ) / CHUNK_SIZE) * CHUNK_SEGS;
+    const cellRadius = Math.ceil(effRadius / CELL_SIZE) + 1;
+
+    const ixMin = Math.max(0, Math.floor(gxCenter - cellRadius));
+    const ixMax = Math.min(CHUNK_SEGS, Math.ceil(gxCenter + cellRadius));
+    const izMin = Math.max(0, Math.floor(gzCenter - cellRadius));
+    const izMax = Math.min(CHUNK_SEGS, Math.ceil(gzCenter + cellRadius));
+    if (ixMin > ixMax || izMin > izMax) return false;
+
+    let changed = false;
+    const { liveHeights, scorchData, posAttr, normAttr, scorchAttr } = chunk;
+
+    for (let iz = izMin; iz <= izMax; iz++) {
+      const vz = chunk.minZ + (iz / CHUNK_SEGS) * CHUNK_SIZE;
+      const dz = vz - czWorld;
+      const row = iz * CHUNK_STRIDE;
+      for (let ix = ixMin; ix <= ixMax; ix++) {
+        const vx = chunk.minX + (ix / CHUNK_SEGS) * CHUNK_SIZE;
+        const dx = vx - cxWorld;
+        const dSq = dx * dx + dz * dz;
+        if (dSq >= rSq) continue;
+
+        const t = Math.sqrt(dSq) / effRadius;
+        const idx = row + ix;
+        const cragVar = 0.84 + 0.32 * hash2(vx * 0.17, vz * 0.23);
+        const carve = Math.pow(1.0 - t * t, 1.35) * effDepth * cragVar;
+
+        const newH = Math.max(-34.0, liveHeights[idx] - carve);
+        if (newH < liveHeights[idx] - 0.01) {
+          liveHeights[idx] = newH;
+          posAttr.setY(idx, newH);
+          scorchData[idx] = Math.min(1.0, scorchData[idx] + Math.pow(1.0 - t, 0.72) * 1.18);
+          changed = true;
+        }
+      }
+    }
+
+    if (!changed) return false;
+    posAttr.needsUpdate = true;
+    scorchAttr.needsUpdate = true;
+
+    if (updateNormalsAndTex) {
+      const nxMin = Math.max(0, ixMin - 1);
+      const nxMax = Math.min(CHUNK_SEGS, ixMax + 1);
+      const nzMin = Math.max(0, izMin - 1);
+      const nzMax = Math.min(CHUNK_SEGS, izMax + 1);
+      const twoCell = CELL_SIZE * 2.0;
+
+      for (let iz = nzMin; iz <= nzMax; iz++) {
+        const row = iz * CHUNK_STRIDE;
+        const vz = chunk.minZ + (iz / CHUNK_SEGS) * CHUNK_SIZE;
+        for (let ix = nxMin; ix <= nxMax; ix++) {
+          const idx = row + ix;
+          const vx = chunk.minX + (ix / CHUNK_SEGS) * CHUNK_SIZE;
+          const hL = ix > 0 ? liveHeights[idx - 1] : getTerrainHeight(vx - CELL_SIZE, vz);
+          const hR = ix < CHUNK_SEGS ? liveHeights[idx + 1] : getTerrainHeight(vx + CELL_SIZE, vz);
+          const hU = iz > 0 ? liveHeights[idx - CHUNK_STRIDE] : getTerrainHeight(vx, vz - CELL_SIZE);
+          const hD = iz < CHUNK_SEGS ? liveHeights[idx + CHUNK_STRIDE] : getTerrainHeight(vx, vz + CELL_SIZE);
+          const nx = hL - hR;
+          const ny = twoCell;
+          const nz = hU - hD;
+          const invLen = 1.0 / Math.hypot(nx, ny, nz);
+          normAttr.setXYZ(idx, nx * invLen, ny * invLen, nz * invLen);
+        }
+      }
+      normAttr.needsUpdate = true;
+    }
+
+    return true;
   }
 
-  // 4f. Large Naval Ships cruising the central bays (24 ships batched into 4 InstancedMeshes!)
+  function createChunk(cx, cz) {
+    const key = cx + ',' + cz;
+    const minX = cx * CHUNK_SIZE - CHUNK_SIZE * 0.5;
+    const maxX = minX + CHUNK_SIZE;
+    const minZ = cz * CHUNK_SIZE - CHUNK_SIZE * 0.5;
+    const maxZ = minZ + CHUNK_SIZE;
+    const centerX = cx * CHUNK_SIZE;
+    const centerZ = cz * CHUNK_SIZE;
+
+    const liveHeights = new Float32Array(CHUNK_STRIDE * CHUNK_STRIDE);
+    const baseHeights = new Float32Array(CHUNK_STRIDE * CHUNK_STRIDE);
+    const scorchData = new Float32Array(CHUNK_STRIDE * CHUNK_STRIDE);
+
+    const geo = new THREE.PlaneGeometry(CHUNK_SIZE, CHUNK_SIZE, CHUNK_SEGS, CHUNK_SEGS);
+    geo.rotateX(-Math.PI / 2);
+    const posAttr = geo.attributes.position;
+
+    for (let iz = 0; iz <= CHUNK_SEGS; iz++) {
+      const wz = minZ + (iz / CHUNK_SEGS) * CHUNK_SIZE;
+      const row = iz * CHUNK_STRIDE;
+      for (let ix = 0; ix <= CHUNK_SEGS; ix++) {
+        const wx = minX + (ix / CHUNK_SEGS) * CHUNK_SIZE;
+        const h = getBaseTerrainHeight(wx, wz);
+        const idx = row + ix;
+        liveHeights[idx] = h;
+        baseHeights[idx] = h;
+        posAttr.setY(idx, h);
+      }
+    }
+
+    const scorchAttr = new THREE.BufferAttribute(scorchData, 1);
+    geo.setAttribute('aScorch', scorchAttr);
+
+    // Compute seamless normals using analytical/world height neighbors across chunk borders
+    const normArr = new Float32Array(CHUNK_STRIDE * CHUNK_STRIDE * 3);
+    const twoCell = CELL_SIZE * 2.0;
+    for (let iz = 0; iz <= CHUNK_SEGS; iz++) {
+      const wz = minZ + (iz / CHUNK_SEGS) * CHUNK_SIZE;
+      const row = iz * CHUNK_STRIDE;
+      for (let ix = 0; ix <= CHUNK_SEGS; ix++) {
+        const wx = minX + (ix / CHUNK_SEGS) * CHUNK_SIZE;
+        const idx = row + ix;
+        const hL = ix > 0 ? liveHeights[idx - 1] : getBaseTerrainHeight(wx - CELL_SIZE, wz);
+        const hR = ix < CHUNK_SEGS ? liveHeights[idx + 1] : getBaseTerrainHeight(wx + CELL_SIZE, wz);
+        const hU = iz > 0 ? liveHeights[idx - CHUNK_STRIDE] : getBaseTerrainHeight(wx, wz - CELL_SIZE);
+        const hD = iz < CHUNK_SEGS ? liveHeights[idx + CHUNK_STRIDE] : getBaseTerrainHeight(wx, wz + CELL_SIZE);
+        const nx = hL - hR;
+        const ny = twoCell;
+        const nz = hU - hD;
+        const invLen = 1.0 / Math.hypot(nx, ny, nz);
+        const nOff = idx * 3;
+        normArr[nOff] = nx * invLen;
+        normArr[nOff + 1] = ny * invLen;
+        normArr[nOff + 2] = nz * invLen;
+      }
+    }
+    const normAttr = new THREE.BufferAttribute(normArr, 3);
+    geo.setAttribute('normal', normAttr);
+
+    const mesh = new THREE.Mesh(geo, terrainMat);
+    mesh.position.set(centerX, 0, centerZ);
+    scene.add(mesh);
+
+    const chunk = {
+      key,
+      cx,
+      cz,
+      minX,
+      maxX,
+      minZ,
+      maxZ,
+      centerX,
+      centerZ,
+      geo,
+      mesh,
+      liveHeights,
+      baseHeights,
+      scorchData,
+      posAttr,
+      normAttr,
+      scorchAttr,
+      propMeshes: [],
+      destructibles: [],
+      beacons: [],
+    };
+
+    // Re-apply any craters previously blasted in this chunk before it was unloaded
+    if (globalDeformHistory.length > 0) {
+      let anyCrater = false;
+      for (let i = 0; i < globalDeformHistory.length; i++) {
+        const d = globalDeformHistory[i];
+        if (applyCraterToChunkData(chunk, d.cxWorld, d.czWorld, d.effRadius, d.effDepth, false)) {
+          anyCrater = true;
+        }
+      }
+      if (anyCrater) {
+        geo.computeVertexNormals();
+      }
+    }
+
+    if (!destroyedChunkProps.has(key)) {
+      destroyedChunkProps.set(key, new Set());
+    }
+    const deadSet = destroyedChunkProps.get(key);
+    const cRand = mulberry32(chunkSeedHash(currentSeedNum, cx, cz, 41));
+
+    function markChunkPropDead(localId) {
+      deadSet.add(localId);
+    }
+
+    // 1. Chunk Biome Trees (InstancedMesh per chunk, disposed when chunk unloads!)
+    const maxChunkTrees = (cx === 0 && cz === 0) ? 260 : 175;
+    const treePlacements = [];
+    let tAttempts = 0;
+    while (treePlacements.length < maxChunkTrees && tAttempts < maxChunkTrees * 5) {
+      tAttempts++;
+      const tx = minX + cRand() * CHUNK_SIZE;
+      const tz = minZ + cRand() * CHUNK_SIZE;
+      if (Math.abs(tx + 215) < 58 && Math.abs(tz - 225) < 110) continue; // skip airstrip
+      const ty = getBaseTerrainHeight(tx, tz);
+      if (ty < 5.5 || ty > 78.0) continue;
+
+      const isCanyon = (tx < -240 && tz > 260 && Math.hypot(tx, tz) < 1300) || fbm(tx * 0.0012 + 5.2, tz * 0.0012 - 3.1, 3) > 0.70;
+      const isVolcano = (tx < -420 && tz < -40 && Math.hypot(tx, tz) < 1300);
+      if (isVolcano && ty > 25) continue;
+
+      const s = isCanyon ? 0.55 + cRand() * 0.5 : 0.75 + cRand() * 1.25;
+      const sy = s * (0.9 + cRand() * 0.55);
+      const rotY = cRand() * Math.PI * 2;
+      let hex;
+      if (isCanyon) {
+        hex = scrubCols[Math.floor(cRand() * scrubCols.length)];
+      } else if (ty > 42 || fbm(tx * 0.0085 + 2.1, tz * 0.0085 - 4.3, 3) > 0.6) {
+        hex = pineCols[Math.floor(cRand() * pineCols.length)];
+      } else {
+        hex = autumnCols[Math.floor(cRand() * autumnCols.length)];
+      }
+      treePlacements.push({ tx, ty, tz, s, sy, rotY, hex, localId: `t_${treePlacements.length}` });
+    }
+
+    if (treePlacements.length > 0) {
+      const treesMesh = new THREE.InstancedMesh(treeGeo, treeMat, treePlacements.length);
+      for (let i = 0; i < treePlacements.length; i++) {
+        const tp = treePlacements[i];
+        const isDead = deadSet.has(tp.localId);
+        if (isDead) {
+          treesMesh.setMatrixAt(i, ZERO_M);
+        } else {
+          dummy.position.set(tp.tx, tp.ty + 3.0 * tp.s, tp.tz);
+          dummy.scale.set(tp.s, tp.sy, tp.s);
+          dummy.rotation.set(0, tp.rotY, 0);
+          dummy.updateMatrix();
+          treesMesh.setMatrixAt(i, dummy.matrix);
+        }
+        treesMesh.setColorAt(i, new THREE.Color(tp.hex));
+
+        if (!isDead) {
+          const dObj = {
+            type: 'tree',
+            x: tp.tx,
+            y: tp.ty,
+            z: tp.tz,
+            r: 3.2 * tp.s,
+            h: 9 * tp.s,
+            color: tp.hex,
+            alive: true,
+            kill() {
+              markChunkPropDead(tp.localId);
+              treesMesh.setMatrixAt(i, ZERO_M);
+              dirtyMeshes.add(treesMesh);
+            },
+          };
+          registerDestructible(dObj, false);
+          chunk.destructibles.push(dObj);
+        }
+      }
+      treesMesh.instanceMatrix.needsUpdate = true;
+      if (treesMesh.instanceColor) treesMesh.instanceColor.needsUpdate = true;
+      scene.add(treesMesh);
+      chunk.propMeshes.push(treesMesh);
+    }
+
+    // 2. Coastal Villages (Origin villages in chunk 0,0 + procedural coastal villages in outer chunks!)
+    const chunkVillages = [];
+    if (cx === 0 && cz === 0) {
+      for (const vc of ORIGIN_VILLAGES) chunkVillages.push(vc);
+    } else {
+      for (let vAttempt = 0; vAttempt < 12 && chunkVillages.length < 2; vAttempt++) {
+        const vx = minX + (0.18 + cRand() * 0.64) * CHUNK_SIZE;
+        const vz = minZ + (0.18 + cRand() * 0.64) * CHUNK_SIZE;
+        const vh = getBaseTerrainHeight(vx, vz);
+        if (vh >= 3.2 && vh <= 15.0) {
+          chunkVillages.push({ x: vx, z: vz });
+        }
+      }
+    }
+
+    const housePlacements = [];
+    for (let vi = 0; vi < chunkVillages.length; vi++) {
+      const vc = chunkVillages[vi];
+      for (let k = 0; k < 24 && housePlacements.length < 96; k++) {
+        const hx = vc.x + (cRand() - 0.5) * 95;
+        const hz = vc.z + (cRand() - 0.5) * 95;
+        if (hx < minX || hx >= maxX || hz < minZ || hz >= maxZ) continue;
+        const hy = getBaseTerrainHeight(hx, hz);
+        if (hy < 2.2 || hy > 16.0) continue;
+        if (Math.abs(getBaseTerrainHeight(hx + 4, hz) - hy) > 2.2) continue;
+
+        const s = 0.75 + cRand() * 0.55;
+        const rotY = cRand() * Math.PI * 2;
+        const roofCol = roofPalette[Math.floor(cRand() * roofPalette.length)];
+        housePlacements.push({ hx, hy, hz, s, rotY, roofCol, localId: `h_${housePlacements.length}` });
+      }
+    }
+
+    if (housePlacements.length > 0) {
+      const houseWalls = new THREE.InstancedMesh(houseWallsGeo, houseWallMat, housePlacements.length);
+      const houseRoofs = new THREE.InstancedMesh(houseRoofGeo, houseRoofMat, housePlacements.length);
+      for (let i = 0; i < housePlacements.length; i++) {
+        const hp = housePlacements[i];
+        const isDead = deadSet.has(hp.localId);
+        if (isDead) {
+          houseWalls.setMatrixAt(i, ZERO_M);
+          houseRoofs.setMatrixAt(i, ZERO_M);
+        } else {
+          dummy.position.set(hp.hx, hp.hy + 1.4 * hp.s, hp.hz);
+          dummy.scale.set(hp.s, hp.s, hp.s);
+          dummy.rotation.set(0, hp.rotY, 0);
+          dummy.updateMatrix();
+          houseWalls.setMatrixAt(i, dummy.matrix);
+
+          dummy.position.set(hp.hx, hp.hy + 3.9 * hp.s, hp.hz);
+          dummy.updateMatrix();
+          houseRoofs.setMatrixAt(i, dummy.matrix);
+        }
+        houseRoofs.setColorAt(i, new THREE.Color(hp.roofCol));
+
+        if (!isDead) {
+          const dObj = {
+            type: 'house',
+            label: 'HOUSE',
+            x: hp.hx,
+            y: hp.hy,
+            z: hp.hz,
+            r: 5.2 * hp.s,
+            h: 7.5 * hp.s,
+            color: 0xf2e4cc,
+            alive: true,
+            kill() {
+              markChunkPropDead(hp.localId);
+              houseWalls.setMatrixAt(i, ZERO_M);
+              houseRoofs.setMatrixAt(i, ZERO_M);
+              dirtyMeshes.add(houseWalls);
+              dirtyMeshes.add(houseRoofs);
+            },
+          };
+          registerDestructible(dObj, true);
+          chunk.destructibles.push(dObj);
+        }
+      }
+      houseWalls.instanceMatrix.needsUpdate = true;
+      houseRoofs.instanceMatrix.needsUpdate = true;
+      if (houseRoofs.instanceColor) houseRoofs.instanceColor.needsUpdate = true;
+      scene.add(houseWalls, houseRoofs);
+      chunk.propMeshes.push(houseWalls, houseRoofs);
+    }
+
+    // 3. Coastal Lighthouses (Origin lighthouses in 0,0 + procedural headland lighthouses in outer chunks!)
+    const chunkLighthouses = [];
+    if (cx === 0 && cz === 0) {
+      for (const [lx, lz] of ORIGIN_LIGHTHOUSES) chunkLighthouses.push([lx, lz]);
+    } else {
+      for (let lAttempt = 0; lAttempt < 18 && chunkLighthouses.length < 2; lAttempt++) {
+        const lx = minX + (0.12 + cRand() * 0.76) * CHUNK_SIZE;
+        const lz = minZ + (0.12 + cRand() * 0.76) * CHUNK_SIZE;
+        const ly = getBaseTerrainHeight(lx, lz);
+        if (ly >= 3.2 && ly <= 18.0) {
+          // Prefer coastal headlands near water
+          const nearWater =
+            getBaseTerrainHeight(lx + 45, lz) < 0 ||
+            getBaseTerrainHeight(lx - 45, lz) < 0 ||
+            getBaseTerrainHeight(lx, lz + 45) < 0 ||
+            getBaseTerrainHeight(lx, lz - 45) < 0;
+          if (nearWater) chunkLighthouses.push([lx, lz]);
+        }
+      }
+    }
+
+    for (let li = 0; li < chunkLighthouses.length; li++) {
+      const [lx, lz] = chunkLighthouses[li];
+      const ly = getBaseTerrainHeight(lx, lz);
+      if (ly < 2.0) continue;
+      const localId = `lh_${li}`;
+      if (deadSet.has(localId)) continue;
+
+      const g = new THREE.Group();
+      const base = new THREE.Mesh(lhBaseGeo, lhWhiteMat);
+      base.position.y = 3.75;
+      const stripe = new THREE.Mesh(lhStripeGeo, lhRedMat);
+      stripe.position.y = 9.75;
+      const lamp = new THREE.Mesh(lhLampGeo, lhLampMat);
+      lamp.position.y = 13.0;
+      const cap = new THREE.Mesh(lhCapGeo, lhRedMat);
+      cap.position.y = 14.8;
+      g.add(base, stripe, lamp, cap);
+      g.position.set(lx, ly - 0.5, lz);
+      scene.add(g);
+      chunk.propMeshes.push(g);
+
+      const beaconRec = { lamp, phase: cRand() * Math.PI * 2, group: g };
+      lighthouseBeacons.push(beaconRec);
+      chunk.beacons.push(beaconRec);
+
+      const dObj = {
+        type: 'lighthouse',
+        label: 'LIGHTHOUSE',
+        x: lx,
+        y: ly,
+        z: lz,
+        r: 5.0,
+        h: 18,
+        color: 0xf7f2e8,
+        alive: true,
+        kill() {
+          markChunkPropDead(localId);
+          g.visible = false;
+        },
+      };
+      registerDestructible(dObj, true);
+      chunk.destructibles.push(dObj);
+    }
+
+    // 4. Coastal Island Airstrip & Base Structures in Origin Chunk (0, 0)
+    if (cx === 0 && cz === 0) {
+      const stripY = getBaseTerrainHeight(-215, 225) + 0.35;
+      const runway = new THREE.Mesh(runwayGeo, runwayMat);
+      runway.position.set(-215, stripY, 225);
+      scene.add(runway);
+      chunk.propMeshes.push(runway);
+
+      const runwayDashes = new THREE.InstancedMesh(dashGeo, dashMat, 9);
+      const runwayLights = new THREE.InstancedMesh(rLightGeo, lightMat, 18);
+      let dashIdx = 0;
+      let lightIdx = 0;
+      for (let dz = -54; dz <= 54; dz += 14) {
+        dummy.position.set(-215, stripY + 0.05, 225 + dz);
+        dummy.rotation.set(0, 0, 0);
+        dummy.scale.set(1, 1, 1);
+        dummy.updateMatrix();
+        runwayDashes.setMatrixAt(dashIdx++, dummy.matrix);
+
+        for (const sx of [-10.5, 10.5]) {
+          dummy.position.set(-215 + sx, stripY + 0.5, 225 + dz);
+          dummy.updateMatrix();
+          runwayLights.setMatrixAt(lightIdx++, dummy.matrix);
+        }
+      }
+      runwayDashes.count = dashIdx;
+      runwayLights.count = lightIdx;
+      runwayDashes.instanceMatrix.needsUpdate = true;
+      runwayLights.instanceMatrix.needsUpdate = true;
+      scene.add(runwayDashes, runwayLights);
+      chunk.propMeshes.push(runwayDashes, runwayLights);
+
+      if (!deadSet.has('air_tower')) {
+        const tower = new THREE.Mesh(towerGeo, lhWhiteMat);
+        tower.position.set(-196, stripY + 6.5, 215);
+        const towerCab = new THREE.Mesh(towerCabGeo, lhLampMat);
+        towerCab.position.set(-196, stripY + 14.5, 215);
+        scene.add(tower, towerCab);
+        chunk.propMeshes.push(tower, towerCab);
+
+        const tObj = {
+          type: 'tower',
+          label: 'CONTROL TOWER',
+          x: -196,
+          y: stripY,
+          z: 215,
+          r: 7.5,
+          h: 19,
+          color: 0xf7f2e8,
+          alive: true,
+          kill() {
+            markChunkPropDead('air_tower');
+            tower.visible = false;
+            towerCab.visible = false;
+          },
+        };
+        registerDestructible(tObj, true);
+        chunk.destructibles.push(tObj);
+      }
+
+      for (const hz of [185, 248]) {
+        const hId = `air_hangar_${hz}`;
+        if (deadSet.has(hId)) continue;
+        const hg = new THREE.Group();
+        const hBody = new THREE.Mesh(hangarBodyGeo, hangarMat);
+        hBody.position.y = 3.75;
+        const hRoof = new THREE.Mesh(hangarRoofGeo, lhWhiteMat);
+        hRoof.rotation.z = Math.PI / 2;
+        hRoof.rotation.y = Math.PI / 2;
+        hRoof.position.y = 7.5;
+        hg.add(hBody, hRoof);
+        hg.position.set(-237, stripY, hz);
+        scene.add(hg);
+        chunk.propMeshes.push(hg);
+
+        const hObj = {
+          type: 'hangar',
+          label: 'HANGAR',
+          x: -237,
+          y: stripY,
+          z: hz,
+          r: 11.0,
+          h: 14,
+          color: 0xc4cad6,
+          alive: true,
+          kill() {
+            markChunkPropDead(hId);
+            hg.visible = false;
+          },
+        };
+        registerDestructible(hObj, true);
+        chunk.destructibles.push(hObj);
+      }
+
+      for (const [tx, tz] of [[-194, 192], [-194, 240], [-184, 202]]) {
+        const tkId = `air_tank_${tx}_${tz}`;
+        if (deadSet.has(tkId)) continue;
+        const tk = new THREE.Mesh(tankGeo, tankMat);
+        tk.position.set(tx, stripY + 3.6, tz);
+        scene.add(tk);
+        chunk.propMeshes.push(tk);
+
+        const tkObj = {
+          type: 'tank',
+          label: 'FUEL TANK',
+          x: tx,
+          y: stripY,
+          z: tz,
+          r: 5.5,
+          h: 9.0,
+          color: 0xff6e38,
+          alive: true,
+          kill() {
+            markChunkPropDead(tkId);
+            tk.visible = false;
+          },
+        };
+        registerDestructible(tkObj, true);
+        chunk.destructibles.push(tkObj);
+      }
+    }
+
+    loadedChunks.set(key, chunk);
+    return chunk;
+  }
+
+  function unloadChunk(key) {
+    const chunk = loadedChunks.get(key);
+    if (!chunk) return;
+
+    scene.remove(chunk.mesh);
+    chunk.geo.dispose();
+
+    for (const pm of chunk.propMeshes) {
+      scene.remove(pm);
+      if (pm.isInstancedMesh) {
+        pm.dispose();
+      }
+    }
+    for (const dObj of chunk.destructibles) {
+      unregisterDestructible(dObj);
+    }
+    for (const b of chunk.beacons) {
+      const bIdx = lighthouseBeacons.indexOf(b);
+      if (bIdx >= 0) lighthouseBeacons.splice(bIdx, 1);
+    }
+
+    loadedChunks.delete(key);
+  }
+
+  let lastCenterChunkX = null;
+  let lastCenterChunkZ = null;
+
+  function updateVisibleChunks(centerX, centerZ, forceRebuildTex = false) {
+    const cx = Math.floor((centerX + CHUNK_SIZE * 0.5) / CHUNK_SIZE);
+    const cz = Math.floor((centerZ + CHUNK_SIZE * 0.5) / CHUNK_SIZE);
+
+    if (!forceRebuildTex && cx === lastCenterChunkX && cz === lastCenterChunkZ) {
+      return false;
+    }
+
+    const neededKeys = new Set();
+    let changed = false;
+
+    for (let dz = -ACTIVE_CHUNK_RADIUS; dz <= ACTIVE_CHUNK_RADIUS; dz++) {
+      for (let dx = -ACTIVE_CHUNK_RADIUS; dx <= ACTIVE_CHUNK_RADIUS; dx++) {
+        const ncx = cx + dx;
+        const ncz = cz + dz;
+        const key = ncx + ',' + ncz;
+        neededKeys.add(key);
+        if (!loadedChunks.has(key)) {
+          createChunk(ncx, ncz);
+          changed = true;
+        }
+      }
+    }
+
+    // Remove and dispose any chunk outside the active visibility window!
+    for (const existingKey of Array.from(loadedChunks.keys())) {
+      if (!neededKeys.has(existingKey)) {
+        unloadChunk(existingKey);
+        changed = true;
+      }
+    }
+
+    lastCenterChunkX = cx;
+    lastCenterChunkZ = cz;
+
+    if (changed || forceRebuildTex) {
+      const winCenterX = cx * CHUNK_SIZE;
+      const winCenterZ = cz * CHUNK_SIZE;
+      rebuildHeightTextureForWindow(heightTexObj, winCenterX, winCenterZ);
+      waterMat.uniforms.uHeightTexCenter.value.set(winCenterX, winCenterZ);
+    }
+    return changed;
+  }
+
+  // Initial load around origin (0, 0)
+  updateVisibleChunks(0, 0, true);
+
+  // =========================================================================
+  // 4f. Large Naval Ships cruising the bays & endless sea channels (24 ships!)
+  // =========================================================================
   const ships = [];
   const shipHullMat = new THREE.MeshLambertMaterial({ color: 0x4b556b, flatShading: true });
   const shipDeckMat = new THREE.MeshLambertMaterial({ color: 0xb84735, flatShading: true });
@@ -1168,6 +1777,20 @@ export function buildWorld(scene) {
     [130, 175, 2.59],
     [85, 265, -0.18],
   ];
+
+  function findNearbyDeepWater(refX, refZ, minRadius = 220, maxRadius = 1150) {
+    for (let attempt = 0; attempt < 40; attempt++) {
+      const ang = Math.random() * Math.PI * 2;
+      const dist = minRadius + Math.random() * (maxRadius - minRadius);
+      const tx = refX + Math.cos(ang) * dist;
+      const tz = refZ + Math.sin(ang) * dist;
+      if (getTerrainHeight(tx, tz) < -4.2) {
+        return { x: tx, z: tz, angle: Math.random() * Math.PI * 2 };
+      }
+    }
+    return null;
+  }
+
   for (const [sx, sz, ang] of shipPositions) {
     if (getTerrainHeight(sx, sz) > -3.5) continue;
     const shipIdx = ships.length;
@@ -1242,7 +1865,7 @@ export function buildWorld(scene) {
   }
   markShipsMatricesDirty();
 
-  // 4g. Rare Sky Balloons carrying Pink-Cross Full-Heal Medkits (only 3 rare balloons in the sky!)
+  // 4g. Rare Sky Balloons carrying Pink-Cross Full-Heal Medkits (3 rare balloons in the sky!)
   const balloons = [];
   const balRoseMat = new THREE.MeshLambertMaterial({ color: 0xe84b86, flatShading: true });
   const balCreamMat = new THREE.MeshLambertMaterial({ color: 0xfff2dc, flatShading: true });
@@ -1272,17 +1895,32 @@ export function buildWorld(scene) {
     scene.add(bg);
 
     const balObj = {
-      type: 'balloon', label: 'MEDKIT BALLOON', x: bx, y: by - 6, z: bz, r: 10.5, h: 16.0, color: 0xff62a8,
-      group: bg, baseY: by, phase: rand() * Math.PI * 2, spotIdx: bi,
-      driftX: (rand() - 0.5) * 3.2, driftZ: (rand() - 0.5) * 3.2,
-      alive: true, respawnTimer: 0,
-      kill() { bg.visible = false; this.respawnTimer = 70.0 + Math.random() * 40.0; },
+      type: 'balloon',
+      label: 'MEDKIT BALLOON',
+      x: bx,
+      y: by - 6,
+      z: bz,
+      r: 10.5,
+      h: 16.0,
+      color: 0xff62a8,
+      group: bg,
+      baseY: by,
+      phase: rand() * Math.PI * 2,
+      spotIdx: bi,
+      driftX: (rand() - 0.5) * 3.2,
+      driftZ: (rand() - 0.5) * 3.2,
+      alive: true,
+      respawnTimer: 0,
+      kill() {
+        bg.visible = false;
+        this.respawnTimer = 70.0 + Math.random() * 40.0;
+      },
     };
     balloons.push(balObj);
     lockableTargets.push(balObj);
   }
 
-  // 4e. Sailboats drifting across the turquoise bays (great sense of scale!)
+  // 4e. Sailboats drifting across the turquoise bays
   const boatCount = 46;
   const hullGeo = new THREE.BoxGeometry(1.6, 0.8, 4.2);
   const sailGeo = new THREE.ConeGeometry(1.8, 5.2, 3);
@@ -1291,6 +1929,8 @@ export function buildWorld(scene) {
 
   const boatHulls = new THREE.InstancedMesh(hullGeo, hullMat, boatCount);
   const boatSails = new THREE.InstancedMesh(sailGeo, sailMat, boatCount);
+  boatHulls.frustumCulled = false;
+  boatSails.frustumCulled = false;
   const boats = [];
 
   let bAttempts = 0;
@@ -1299,7 +1939,7 @@ export function buildWorld(scene) {
     const bx = (rand() - 0.5) * 1800;
     const bz = (rand() - 0.5) * 1800;
     const bh = getTerrainHeight(bx, bz);
-    if (bh > -4.5) continue; // open water only
+    if (bh > -4.5) continue;
     boats.push({
       x: bx,
       z: bz,
@@ -1314,7 +1954,7 @@ export function buildWorld(scene) {
   scene.add(boatHulls, boatSails);
 
   // =========================================================================
-  // 5. PUFFY 3D CUMULUS CLOUDS (InstancedMesh: 54 clouds -> 2 draw calls)
+  // 5. PUFFY 3D CUMULUS CLOUDS (InstancedMesh: 54 clouds -> 2 draw calls, wraps around camera!)
   // =========================================================================
   const cloudMat = new THREE.ShaderMaterial({
     uniforms: {
@@ -1440,8 +2080,8 @@ export function buildWorld(scene) {
       });
     }
 
-    const cx = (rand() - 0.5) * 2350;
-    const cz = (rand() - 0.5) * 2350;
+    const cx = (rand() - 0.5) * 2500;
+    const cz = (rand() - 0.5) * 2500;
     const cy = isShadowCaster ? 85 + rand() * 65 : 185 + rand() * 95;
 
     clouds.push({
@@ -1496,6 +2136,9 @@ export function buildWorld(scene) {
   }
   syncCloudMatrices();
 
+  // =========================================================================
+  // 5B. DESTRUCTION, LOCK-ON & MULTI-CHUNK TERRAIN EXCAVATION
+  // =========================================================================
   function damage(pos, blast) {
     const killed = [];
     const range = Math.ceil((blast + 12) / GRID);
@@ -1556,7 +2199,6 @@ export function buildWorld(scene) {
     return killed;
   }
 
-  // Find best destructible target inside forward aiming cone for HUD lock-on & missile homing
   function findLockTarget(origin, fwdDir, maxRange = 460) {
     let best = null;
     let bestScore = Infinity;
@@ -1569,7 +2211,7 @@ export function buildWorld(scene) {
       if (dist < 18 || dist > maxRange) continue;
       toTarget.divideScalar(dist);
       const dot = toTarget.dot(fwdDir);
-      if (dot < 0.90) continue; // ~25 deg cone
+      if (dot < 0.90) continue;
       const anglePenalty = (1.0 - dot) * 900;
       const score = dist + anglePenalty;
       if (score < bestScore) {
@@ -1580,142 +2222,82 @@ export function buildWorld(scene) {
     return best;
   }
 
-  // Real-time terrain deformation: carves craters, trenches & holes right through mountains!
-  // Updates local vertex heights, local normals (fast 60fps), scorch shader mask, and ocean heightTex!
   function deformTerrain(wx, wz, radius, depth, dirX = 0, dirZ = 0) {
     if (deformScale <= 0.001) return false;
     const effRadius = deformScale > 1.0 ? radius * 1.15 : radius;
     const effDepth = depth * deformScale;
 
-    // Push excavation slightly inward along projectile direction so shooting mountain walls bites deep!
     const cxWorld = wx + dirX * effRadius * 0.25;
     const czWorld = wz + dirZ * effRadius * 0.25;
 
-    const gxCenter = ((cxWorld / WORLD_SIZE) + 0.5) * TERRAIN_SEGS;
-    const gzCenter = ((czWorld / WORLD_SIZE) + 0.5) * TERRAIN_SEGS;
-    const cellRadius = Math.ceil(effRadius / CELL_SIZE) + 1;
-
-    const ixMin = Math.max(1, Math.floor(gxCenter - cellRadius));
-    const ixMax = Math.min(TERRAIN_SEGS - 1, Math.ceil(gxCenter + cellRadius));
-    const izMin = Math.max(1, Math.floor(gzCenter - cellRadius));
-    const izMax = Math.min(TERRAIN_SEGS - 1, Math.ceil(gzCenter + cellRadius));
-
-    if (ixMin > ixMax || izMin > izMax) return false;
-
-    let changed = false;
-    const rSq = effRadius * effRadius;
-
-    for (let iz = izMin; iz <= izMax; iz++) {
-      const vz = ((iz / TERRAIN_SEGS) - 0.5) * WORLD_SIZE;
-      const dz = vz - czWorld;
-      const row = iz * TERRAIN_STRIDE;
-      for (let ix = ixMin; ix <= ixMax; ix++) {
-        const vx = ((ix / TERRAIN_SEGS) - 0.5) * WORLD_SIZE;
-        const dx = vx - cxWorld;
-        const dSq = dx * dx + dz * dz;
-        if (dSq >= rSq) continue;
-
-        const t = Math.sqrt(dSq) / effRadius;
-        const idx = row + ix;
-        const cragVar = 0.84 + 0.32 * hash2(ix * 1.7, iz * 2.3);
-        const carve = Math.pow(1.0 - t * t, 1.35) * effDepth * cragVar;
-
-        const newH = Math.max(-34.0, liveHeights[idx] - carve);
-        if (newH < liveHeights[idx] - 0.01) {
-          liveHeights[idx] = newH;
-          posAttr.setY(idx, newH);
-          scorchData[idx] = Math.min(1.0, scorchData[idx] + Math.pow(1.0 - t, 0.72) * 1.18);
-          changed = true;
-        }
+    let anyChanged = false;
+    for (const chunk of loadedChunks.values()) {
+      if (applyCraterToChunkData(chunk, cxWorld, czWorld, effRadius, effDepth, true)) {
+        anyChanged = true;
       }
     }
 
-    if (!changed) return false;
+    if (!anyChanged) return false;
 
-    // Fast local normal recalculation around the crater only (~0.05ms)
-    const nxMin = Math.max(1, ixMin - 1);
-    const nxMax = Math.min(TERRAIN_SEGS - 1, ixMax + 1);
-    const nzMin = Math.max(1, izMin - 1);
-    const nzMax = Math.min(TERRAIN_SEGS - 1, izMax + 1);
-    const twoCell = CELL_SIZE * 2.0;
+    globalDeformHistory.push({ cxWorld, czWorld, effRadius, effDepth });
+    if (globalDeformHistory.length > 360) globalDeformHistory.shift();
 
-    for (let iz = nzMin; iz <= nzMax; iz++) {
-      const row = iz * TERRAIN_STRIDE;
-      for (let ix = nxMin; ix <= nxMax; ix++) {
-        const idx = row + ix;
-        const hL = liveHeights[idx - 1];
-        const hR = liveHeights[idx + 1];
-        const hU = liveHeights[idx - TERRAIN_STRIDE];
-        const hD = liveHeights[idx + TERRAIN_STRIDE];
-        const nx = hL - hR;
-        const ny = twoCell;
-        const nz = hU - hD;
-        const invLen = 1.0 / Math.hypot(nx, ny, nz);
-        normAttr.setXYZ(idx, nx * invLen, ny * invLen, nz * invLen);
-      }
-    }
-
-    posAttr.needsUpdate = true;
-    normAttr.needsUpdate = true;
-    scorchAttr.needsUpdate = true;
-
-    // Update ocean heightTex patch locally so deep holes below sea level flood with foam & turquoise water!
-    const tSize = heightTexObj.size;
-    const tData = heightTexObj.data;
-    const txMin = Math.max(0, Math.floor((((cxWorld - effRadius - CELL_SIZE) / WORLD_SIZE) + 0.5) * (tSize - 1)));
-    const txMax = Math.min(tSize - 1, Math.ceil((((cxWorld + effRadius + CELL_SIZE) / WORLD_SIZE) + 0.5) * (tSize - 1)));
-    const tzMin = Math.max(0, Math.floor((((czWorld - effRadius - CELL_SIZE) / WORLD_SIZE) + 0.5) * (tSize - 1)));
-    const tzMax = Math.min(tSize - 1, Math.ceil((((czWorld + effRadius + CELL_SIZE) / WORLD_SIZE) + 0.5) * (tSize - 1)));
-
-    for (let tz = tzMin; tz <= tzMax; tz++) {
-      const z = ((tz / (tSize - 1)) - 0.5) * WORLD_SIZE;
-      for (let tx = txMin; tx <= txMax; tx++) {
-        const x = ((tx / (tSize - 1)) - 0.5) * WORLD_SIZE;
-        const h = getTerrainHeight(x, z);
-        const norm = THREE.MathUtils.clamp((h + 50.0) / 300.0, 0.0, 1.0);
-        const v = Math.round(norm * 255);
-        const off = (tz * tSize + tx) * 4;
-        tData[off] = v;
-        tData[off + 1] = v;
-        tData[off + 2] = v;
-      }
-    }
-    heightTex.needsUpdate = true;
+    updateHeightTexturePatch(heightTexObj, cxWorld, czWorld, effRadius);
     return true;
   }
 
-  // Restore all mountains and terrain back to original state
   function resetTerrain() {
-    liveHeights.set(baseHeights);
-    scorchData.fill(0);
-    for (let i = 0; i < posAttr.count; i++) {
-      posAttr.setY(i, liveHeights[i]);
-    }
-    terrainGeo.computeVertexNormals();
-    posAttr.needsUpdate = true;
-    normAttr.needsUpdate = true;
-    scorchAttr.needsUpdate = true;
-
-    const tSize = heightTexObj.size;
-    const tData = heightTexObj.data;
-    for (let tz = 0; tz < tSize; tz++) {
-      const z = ((tz / (tSize - 1)) - 0.5) * WORLD_SIZE;
-      for (let tx = 0; tx < tSize; tx++) {
-        const x = ((tx / (tSize - 1)) - 0.5) * WORLD_SIZE;
-        const h = getTerrainHeight(x, z);
-        const norm = THREE.MathUtils.clamp((h + 50.0) / 300.0, 0.0, 1.0);
-        const v = Math.round(norm * 255);
-        const off = (tz * tSize + tx) * 4;
-        tData[off] = v;
-        tData[off + 1] = v;
-        tData[off + 2] = v;
+    globalDeformHistory.length = 0;
+    for (const chunk of loadedChunks.values()) {
+      chunk.liveHeights.set(chunk.baseHeights);
+      chunk.scorchData.fill(0);
+      for (let i = 0; i < chunk.posAttr.count; i++) {
+        chunk.posAttr.setY(i, chunk.liveHeights[i]);
       }
+      chunk.geo.computeVertexNormals();
+      chunk.posAttr.needsUpdate = true;
+      chunk.normAttr.needsUpdate = true;
+      chunk.scorchAttr.needsUpdate = true;
     }
-    heightTex.needsUpdate = true;
+    rebuildHeightTextureForWindow(heightTexObj, heightTexObj.centerX, heightTexObj.centerZ);
+  }
+
+  function rebuildAllChunksForSeed(newSeedStr) {
+    const cleanSeed = sanitizeSeedString(newSeedStr);
+    updateSeedOffsets(cleanSeed);
+    terrainOptions.seed = cleanSeed;
+
+    globalDeformHistory.length = 0;
+    destroyedChunkProps.clear();
+
+    for (const key of Array.from(loadedChunks.keys())) {
+      unloadChunk(key);
+    }
+    const cx = lastCenterChunkX ?? 0;
+    const cz = lastCenterChunkZ ?? 0;
+    lastCenterChunkX = null;
+    lastCenterChunkZ = null;
+    updateVisibleChunks(cx * CHUNK_SIZE, cz * CHUNK_SIZE, true);
+
+    // Reposition any ships that ended up on land after seed change
+    for (const sh of ships) {
+      if (getTerrainHeight(sh.x, sh.z) > -3.5) {
+        const spot = findNearbyDeepWater(cx * CHUNK_SIZE, cz * CHUNK_SIZE, 120, 950);
+        if (spot) {
+          sh.x = spot.x;
+          sh.z = spot.z;
+          sh.originX = spot.x;
+          sh.originZ = spot.z;
+          sh.angle = spot.angle;
+        }
+      }
+      if (sh.alive) writeShipInstance(sh.idx, sh, WATER_LEVEL, true);
+    }
+    markShipsMatricesDirty();
   }
 
   // =========================================================================
-  // 6. DYNAMIC DROPPED PICKUPS: PINK-CROSS MEDKITS (BALLOONS) & SEA-SKIM MISSILE CRATES
+  // 6. DYNAMIC DROPPED PICKUPS: PINK-CROSS MEDKITS & SEA-SKIM MISSILE CRATES
   // =========================================================================
   const pickups = [];
   let dropCounter = 0;
@@ -1853,7 +2435,6 @@ export function buildWorld(scene) {
       const dz = jetPos.z - p.z;
       let hit = false;
       if (p.type === 'missile') {
-        // Sea-skimming / low pass collection requirement!
         hit = dx * dx + dz * dz <= 22 * 22 && jetPos.y <= p.y + 12.5 && jetPos.y >= p.y - 8.0;
       } else {
         hit = dx * dx + dy * dy + dz * dz <= 24 * 24;
@@ -1975,10 +2556,14 @@ export function buildWorld(scene) {
     const theme = TERRAIN_THEMES.includes(opts.theme) ? opts.theme : DEFAULT_TERRAIN_OPTIONS.theme;
     const deformMode = TERRAIN_DEFORM_MODES.includes(opts.deformMode) ? opts.deformMode : DEFAULT_TERRAIN_OPTIONS.deformMode;
     const cloudsMode = TERRAIN_CLOUD_MODES.includes(opts.clouds) ? opts.clouds : DEFAULT_TERRAIN_OPTIONS.clouds;
+    const nextSeed = sanitizeSeedString(opts.seed !== undefined ? opts.seed : terrainOptions.seed);
+
+    const seedChanged = nextSeed !== currentSeedStr;
 
     terrainOptions.theme = theme;
     terrainOptions.deformMode = deformMode;
     terrainOptions.clouds = cloudsMode;
+    terrainOptions.seed = nextSeed;
 
     const themeIdx = TERRAIN_THEMES.indexOf(theme);
     skyMat.uniforms.uTerrainTheme.value = themeIdx;
@@ -1988,6 +2573,10 @@ export function buildWorld(scene) {
 
     deformScale = deformMode === 'off' ? 0.0 : deformMode === 'deep' ? 1.5 : 1.0;
     applyCloudDensity(cloudsMode);
+
+    if (seedChanged) {
+      rebuildAllChunksForSeed(nextSeed);
+    }
 
     return { ...terrainOptions };
   }
@@ -2002,6 +2591,11 @@ export function buildWorld(scene) {
     resetTerrain,
     applyTerrainOptions,
     getTerrainOptions,
+    getSeed: () => currentSeedStr,
+    setSeed: (s) => applyTerrainOptions({ ...terrainOptions, seed: s }),
+    getLoadedChunkCount: () => loadedChunks.size,
+    getLoadedChunkKeys: () => Array.from(loadedChunks.keys()),
+    updateVisibleChunks,
     findLockTarget,
     getPickups,
     spawnDroppedPickup,
@@ -2019,6 +2613,13 @@ export function buildWorld(scene) {
       lastRippleAt = time;
     },
     update(time, camPos, dt) {
+      // Keep sky dome & infinite ocean centered on camera
+      skyMesh.position.set(camPos.x, 0, camPos.z);
+      waterMesh.position.set(camPos.x, WATER_LEVEL, camPos.z);
+
+      // Stream & cull procedural terrain chunks around camera position
+      updateVisibleChunks(camPos.x, camPos.z, false);
+
       skyMat.uniforms.uTime.value = time;
       terrainMat.uniforms.uCamPos.value.copy(camPos);
       terrainMat.uniforms.uTime.value = time;
@@ -2027,8 +2628,9 @@ export function buildWorld(scene) {
       cloudMat.uniforms.uCamPos.value.copy(camPos);
       waterMat.uniforms.uRippleCount.value = lastRippleAt >= 0 && time - lastRippleAt < 4.8 ? MAX_RIPPLES : 0;
 
-      // Drift clouds & pack nearby active shadow casters
+      // Drift clouds & wrap them seamlessly around the camera's active region
       let activeCloudCount = 0;
+      const CLOUD_SPAN = 1450;
       if (!cloudGroup.visible) {
         terrainMat.uniforms.uCloudCount.value = 0;
         waterMat.uniforms.uCloudCount.value = 0;
@@ -2037,7 +2639,10 @@ export function buildWorld(scene) {
           const c = clouds[i];
           if (dt > 0) {
             c.x += c.speed * dt;
-            if (c.x > 1250) c.x = -1250;
+            if (c.x - camPos.x > CLOUD_SPAN) c.x -= CLOUD_SPAN * 2;
+            else if (c.x - camPos.x < -CLOUD_SPAN) c.x += CLOUD_SPAN * 2;
+            if (c.z - camPos.z > CLOUD_SPAN) c.z -= CLOUD_SPAN * 2;
+            else if (c.z - camPos.z < -CLOUD_SPAN) c.z += CLOUD_SPAN * 2;
           }
           if (c.shadowIndex >= 0 && c.visible && activeCloudCount < MAX_CLOUDS) {
             const sx = c.x - SUN_DIR.x * (c.y * 0.25);
@@ -2058,7 +2663,7 @@ export function buildWorld(scene) {
 
       if (dt <= 0) return;
 
-      // Gently animate sailboats on the water
+      // Gently animate sailboats on the water (relocating very distant boats into active waters)
       const hullArr = boatHulls.instanceMatrix.array;
       const sailArr = boatSails.instanceMatrix.array;
       for (let i = 0; i < boats.length; i++) {
@@ -2068,9 +2673,17 @@ export function buildWorld(scene) {
           writeZeroMatrix(sailArr, i);
           continue;
         }
+        if (Math.hypot(b.x - camPos.x, b.z - camPos.z) > 1950) {
+          const spot = findNearbyDeepWater(camPos.x, camPos.z, 550, 1400);
+          if (spot) {
+            b.x = spot.x;
+            b.z = spot.z;
+            b.angle = spot.angle;
+          }
+        }
         const nx = b.x + Math.sin(b.angle) * b.speed * dt;
         const nz = b.z + Math.cos(b.angle) * b.speed * dt;
-        if (getTerrainHeight(nx, nz) < -4.0 && Math.abs(nx) < 1150 && Math.abs(nz) < 1150) {
+        if (getTerrainHeight(nx, nz) < -4.0) {
           b.x = nx;
           b.z = nz;
         } else {
@@ -2090,23 +2703,45 @@ export function buildWorld(scene) {
       boatHulls.instanceMatrix.needsUpdate = true;
       boatSails.instanceMatrix.needsUpdate = true;
 
-      // Animate & slowly respawn naval ships cruising the bay
+      // Animate & respawn naval ships across infinite sea channels
       for (const sh of ships) {
         if (!sh.alive) {
           sh.respawnTimer -= dt;
           if (sh.respawnTimer <= 0) {
             sh.alive = true;
             sh.respawnTimer = 0;
-            sh.x = sh.originX;
-            sh.z = sh.originZ;
-            sh.angle = sh.originAng;
+            if (Math.hypot(sh.originX - camPos.x, sh.originZ - camPos.z) > 1800) {
+              const spot = findNearbyDeepWater(camPos.x, camPos.z, 350, 1150);
+              if (spot) {
+                sh.x = spot.x;
+                sh.z = spot.z;
+                sh.angle = spot.angle;
+              } else {
+                sh.x = sh.originX;
+                sh.z = sh.originZ;
+                sh.angle = sh.originAng;
+              }
+            } else {
+              sh.x = sh.originX;
+              sh.z = sh.originZ;
+              sh.angle = sh.originAng;
+            }
             writeShipInstance(sh.idx, sh, WATER_LEVEL, true);
           }
           continue;
         }
+        // In Solo mode, if player flies far away (> 2400m), patrol ships redeploy into nearby sea channels
+        if (Math.hypot(sh.x - camPos.x, sh.z - camPos.z) > 2400) {
+          const spot = findNearbyDeepWater(camPos.x, camPos.z, 700, 1450);
+          if (spot) {
+            sh.x = spot.x;
+            sh.z = spot.z;
+            sh.angle = spot.angle;
+          }
+        }
         const nx = sh.x + Math.sin(sh.angle) * sh.speed * dt;
         const nz = sh.z + Math.cos(sh.angle) * sh.speed * dt;
-        if (getTerrainHeight(nx, nz) < -4.0 && Math.abs(nx) < 950 && Math.abs(nz) < 950) {
+        if (getTerrainHeight(nx, nz) < -4.0) {
           sh.x = nx;
           sh.z = nz;
         } else {
@@ -2116,7 +2751,7 @@ export function buildWorld(scene) {
       }
       markShipsMatricesDirty();
 
-      // Rare floating target balloons: gentle drift + rare respawn in another spot
+      // Rare floating target balloons: gentle drift + respawn near active region
       for (const bl of balloons) {
         if (!bl.alive) {
           bl.respawnTimer -= dt;
@@ -2124,11 +2759,11 @@ export function buildWorld(scene) {
             const nextIdx = (bl.spotIdx + 3 + Math.floor(Math.random() * 5)) % balloonSpawnPool.length;
             const [bx, by, bz] = balloonSpawnPool[nextIdx];
             bl.spotIdx = nextIdx;
-            bl.x = bx;
-            bl.baseY = by;
-            bl.y = by - 6;
-            bl.z = bz;
-            bl.group.position.set(bx, by, bz);
+            bl.x = camPos.x + bx;
+            bl.baseY = Math.max(by, getTerrainHeight(bl.x, camPos.z + bz) + 42);
+            bl.y = bl.baseY - 6;
+            bl.z = camPos.z + bz;
+            bl.group.position.set(bl.x, bl.baseY, bl.z);
             bl.group.visible = true;
             bl.alive = true;
           }
@@ -2136,8 +2771,12 @@ export function buildWorld(scene) {
         }
         bl.x += bl.driftX * dt;
         bl.z += bl.driftZ * dt;
-        if (Math.abs(bl.x) > 520) bl.driftX *= -1;
-        if (Math.abs(bl.z) > 520) bl.driftZ *= -1;
+        if (Math.hypot(bl.x - camPos.x, bl.z - camPos.z) > 2200) {
+          const [bx, by, bz] = balloonSpawnPool[bl.spotIdx % balloonSpawnPool.length];
+          bl.x = camPos.x + bx * 2.2;
+          bl.z = camPos.z + bz * 2.2;
+          bl.baseY = Math.max(by, getTerrainHeight(bl.x, bl.z) + 42);
+        }
         const by = bl.baseY + Math.sin(time * 1.1 + bl.phase) * 3.0;
         bl.y = by - 6;
         bl.group.position.set(bl.x, by, bl.z);
@@ -2150,7 +2789,7 @@ export function buildWorld(scene) {
         lb.lamp.scale.setScalar(pulse);
       }
 
-      // Animate & descend dropped pickups (pink-cross medkits & sea-skim missile crates)
+      // Animate & descend dropped pickups
       for (let i = pickups.length - 1; i >= 0; i--) {
         const p = pickups[i];
         p.life -= dt;

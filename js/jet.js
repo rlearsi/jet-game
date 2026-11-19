@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { getTerrainHeight, WATER_LEVEL } from './world.js?v=19';
-import { SHIP_IDS, SHIP_CATALOG, buildJetVisualRig, buildAirfoilSurface } from './jets/index.js?v=19';
-import { DitheredParticlePool } from './particles.js?v=19';
+import { getTerrainHeight, WATER_LEVEL } from './world.js?v=20';
+import { SHIP_IDS, SHIP_CATALOG, buildJetVisualRig, buildAirfoilSurface } from './jets/index.js?v=20';
+import { DitheredParticlePool } from './particles.js?v=20';
 
 export { SHIP_IDS, SHIP_CATALOG, buildJetVisualRig, buildAirfoilSurface };
 
@@ -434,15 +434,6 @@ export class FighterJet {
     const fwd = this.getForwardDirection(TMP_FWD);
     this.velocity.copy(fwd).multiplyScalar(this.speed);
     this.position.addScaledVector(this.velocity, dt);
-
-    const limit = 1220;
-    if (Math.abs(this.position.x) > limit || Math.abs(this.position.z) > limit) {
-      const toCenter = Math.atan2(-this.position.x, -this.position.z);
-      const diff = Math.atan2(Math.sin(toCenter - this.yaw), Math.cos(toCenter - this.yaw));
-      this.yaw += diff * 1.8 * dt;
-      this.position.x = THREE.MathUtils.clamp(this.position.x, -1300, 1300);
-      this.position.z = THREE.MathUtils.clamp(this.position.z, -1300, 1300);
-    }
 
     if (this.spawnProtection > 0) this.spawnProtection = Math.max(0, this.spawnProtection - dt);
     if (this.scrapeCooldown > 0) this.scrapeCooldown = Math.max(0, this.scrapeCooldown - dt);

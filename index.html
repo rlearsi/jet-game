@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Sunset Striker — Pixel-Art Fighter Jet</title>
-  <link rel="stylesheet" href="style.css?v=19" />
+  <link rel="stylesheet" href="style.css?v=20" />
 </head>
 <body>
   <canvas id="game-canvas"></canvas>
@@ -477,6 +477,14 @@
             <div id="terrain-lock-banner" class="terrain-lock-banner hidden">
               &#128274; Herdado do Host (opções de terreno bloqueadas no Multiplayer)
             </div>
+            <div class="vp-row settings-vp-row settings-seed-row">
+              <span>SEED MAPA</span>
+              <input id="terrain-seed-input" class="mp-input settings-seed-input" type="text" maxlength="16" value="SUNSET-2026" placeholder="SEED DO MUNDO" />
+              <div class="settings-seed-btns">
+                <button id="terrain-seed-apply-btn" class="vp-reset-btn" type="button">OK</button>
+                <button id="terrain-seed-random-btn" class="vp-reset-btn" type="button" title="Gerar nova Seed aleatória">RAND</button>
+              </div>
+            </div>
             <label class="vp-row settings-vp-row">
               <span>AMBIENTE</span>
               <select id="terrain-theme-select" class="vp-select">
@@ -502,6 +510,9 @@
                 <option value="clear">Céu Limpo</option>
               </select>
             </label>
+            <div id="terrain-chunk-info" class="vp-tip" style="margin-top:4px;margin-bottom:6px;">
+              MUNDO INFINITO PROCEDURAL POR CHUNKS &middot; CULLING AUTOMÁTICO DE MEMÓRIA
+            </div>
             <div class="settings-footer-actions">
               <button id="rebuild-terrain-btn" class="vp-reset-btn" style="width:100%;padding:6px 8px;" type="button">RESTAURAR MONTANHAS (R)</button>
             </div>
@@ -519,6 +530,6 @@
       }
     }
   </script>
-  <script type="module" src="js/main.js?v=19"></script>
+  <script type="module" src="js/main.js?v=20"></script>
 </body>
 </html>

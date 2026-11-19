@@ -1433,6 +1433,24 @@ body.touch-active #game-canvas {
   letter-spacing: 0.06em;
 }
 
+.settings-seed-row {
+  grid-template-columns: 78px 1fr auto;
+}
+
+.settings-seed-input {
+  width: 100%;
+  text-transform: uppercase;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.settings-seed-btns {
+  display: flex;
+  gap: 4px;
+}
+
 .guide-card.guide-card-wide {
   grid-column: 1 / -1;
 }

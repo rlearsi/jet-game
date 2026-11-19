@@ -6,14 +6,17 @@ import {
   TERRAIN_DEFORM_MODES,
   TERRAIN_CLOUD_MODES,
   DEFAULT_TERRAIN_OPTIONS,
-} from './world.js?v=19';
-import { FighterJet, RemoteJet, SHIP_CATALOG, SHIP_IDS } from './jet.js?v=19';
-import { MissileSystem } from './weapons.js?v=19';
-import { FighterCockpit } from './cockpit.js?v=19';
-import { JetSoundEngine } from './audio.js?v=19';
-import { MultiplayerManager } from './multiplayer.js?v=19';
-import { GamepadController, DEFAULT_GAMEPAD_DEADZONE } from './gamepad.js?v=19';
-import { TouchController } from './touch.js?v=19';
+  DEFAULT_WORLD_SEED,
+  sanitizeSeedString,
+  generateRandomSeed,
+} from './world.js?v=20';
+import { FighterJet, RemoteJet, SHIP_CATALOG, SHIP_IDS } from './jet.js?v=20';
+import { MissileSystem } from './weapons.js?v=20';
+import { FighterCockpit } from './cockpit.js?v=20';
+import { JetSoundEngine } from './audio.js?v=20';
+import { MultiplayerManager } from './multiplayer.js?v=20';
+import { GamepadController, DEFAULT_GAMEPAD_DEADZONE } from './gamepad.js?v=20';
+import { TouchController } from './touch.js?v=20';
 
 // 6 live-switchable rendering styles (exclusively configurable inside Settings -> Render, plus V in flight)
 const RENDER_PRESETS = {
@@ -306,9 +309,13 @@ const scaleSlider = document.getElementById('scale-slider');
 const scaleVal = document.getElementById('scale-val');
 
 const terrainLockBanner = document.getElementById('terrain-lock-banner');
+const terrainSeedInput = document.getElementById('terrain-seed-input');
+const terrainSeedApplyBtn = document.getElementById('terrain-seed-apply-btn');
+const terrainSeedRandomBtn = document.getElementById('terrain-seed-random-btn');
 const terrainThemeSelect = document.getElementById('terrain-theme-select');
 const terrainDeformSelect = document.getElementById('terrain-deform-select');
 const terrainCloudsSelect = document.getElementById('terrain-clouds-select');
+const terrainChunkInfo = document.getElementById('terrain-chunk-info');
 const rebuildTerrainBtn = document.getElementById('rebuild-terrain-btn');
 
 // =========================================================================
@@ -401,6 +408,7 @@ function sanitizeTerrainObj(src) {
     theme: TERRAIN_THEMES.includes(obj.theme) ? obj.theme : DEFAULT_TERRAIN_OPTIONS.theme,
     deformMode: TERRAIN_DEFORM_MODES.includes(obj.deformMode) ? obj.deformMode : DEFAULT_TERRAIN_OPTIONS.deformMode,
     clouds: TERRAIN_CLOUD_MODES.includes(obj.clouds) ? obj.clouds : DEFAULT_TERRAIN_OPTIONS.clouds,
+    seed: sanitizeSeedString(obj.seed !== undefined ? obj.seed : DEFAULT_WORLD_SEED),
   };
 }
 
@@ -695,7 +703,8 @@ function formatTerrainSummary(opts) {
   const tLabel = TERRAIN_THEME_LABELS[opts.theme] || opts.theme;
   const dLabel = TERRAIN_DEFORM_LABELS[opts.deformMode] || opts.deformMode;
   const cLabel = TERRAIN_CLOUD_LABELS[opts.clouds] || opts.clouds;
-  return `${tLabel} · ${dLabel} · ${cLabel}`;
+  const sLabel = opts.seed || DEFAULT_WORLD_SEED;
+  return `SEED ${sLabel} · ${tLabel} · ${dLabel} · ${cLabel}`;
 }
 
 function applyTerrainSettings(opts, persistSolo = true) {
@@ -710,6 +719,12 @@ function applyTerrainSettings(opts, persistSolo = true) {
 
 function syncTerrainUI() {
   const locked = isTerrainLocked();
+  if (terrainSeedInput) {
+    terrainSeedInput.value = activeTerrain.seed || DEFAULT_WORLD_SEED;
+    terrainSeedInput.disabled = locked;
+  }
+  if (terrainSeedApplyBtn) terrainSeedApplyBtn.disabled = locked;
+  if (terrainSeedRandomBtn) terrainSeedRandomBtn.disabled = locked;
   terrainThemeSelect.value = activeTerrain.theme;
   terrainDeformSelect.value = activeTerrain.deformMode;
   terrainCloudsSelect.value = activeTerrain.clouds;
@@ -720,11 +735,15 @@ function syncTerrainUI() {
   rebuildTerrainBtn.disabled = locked;
   if (mpEditTerrainBtn) mpEditTerrainBtn.disabled = locked;
 
+  if (terrainChunkInfo) {
+    terrainChunkInfo.textContent = `MUNDO INFINITO POR CHUNKS (${world.getLoadedChunkCount()} ATIVOS) · CULLING AUTOMÁTICO`;
+  }
+
   if (locked) {
     terrainLockBanner.classList.remove('hidden');
     terrainLockBanner.textContent = mp.role === 'guest'
-      ? '🔒 Herdado do Host (opções de terreno bloqueadas no Multiplayer)'
-      : '🔒 Opções de terreno bloqueadas durante sala/partida Multiplayer';
+      ? '🔒 Herdado do Host (seed e opções de terreno bloqueadas no Multiplayer)'
+      : '🔒 Seed e opções de terreno bloqueadas durante sala/partida Multiplayer';
   } else {
     terrainLockBanner.classList.add('hidden');
   }
@@ -743,6 +762,39 @@ function syncTerrainUI() {
       ? `TERRENO: 🔒 ${summary} (Host)`
       : `TERRENO: ${summary}`;
   }
+}
+
+function commitSeedFromInput(rawSeed) {
+  if (isTerrainLocked()) return;
+  const cleanSeed = sanitizeSeedString(rawSeed);
+  if (terrainSeedInput) terrainSeedInput.value = cleanSeed;
+  applyTerrainSettings({ ...activeTerrain, seed: cleanSeed }, true);
+  sound.playSwitch();
+}
+
+if (terrainSeedApplyBtn) {
+  terrainSeedApplyBtn.addEventListener('click', () => {
+    commitSeedFromInput(terrainSeedInput ? terrainSeedInput.value : DEFAULT_WORLD_SEED);
+  });
+}
+
+if (terrainSeedInput) {
+  terrainSeedInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      commitSeedFromInput(terrainSeedInput.value);
+    }
+  });
+  terrainSeedInput.addEventListener('change', () => {
+    commitSeedFromInput(terrainSeedInput.value);
+  });
+}
+
+if (terrainSeedRandomBtn) {
+  terrainSeedRandomBtn.addEventListener('click', () => {
+    if (isTerrainLocked()) return;
+    commitSeedFromInput(generateRandomSeed());
+  });
 }
 
 terrainThemeSelect.addEventListener('change', () => {

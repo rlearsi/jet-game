@@ -61,10 +61,15 @@ function sanitizeTerrainConfig(cfg) {
   const validDeform = ['normal', 'deep', 'off'];
   const validClouds = ['full', 'light', 'clear'];
   const src = cfg && typeof cfg === 'object' ? cfg : {};
+  const cleanSeed = String(src.seed ?? 'SUNSET-2026')
+    .toUpperCase()
+    .replace(/[^A-Z0-9_-]/g, '')
+    .slice(0, 16) || 'SUNSET-2026';
   return {
     theme: validThemes.includes(src.theme) ? src.theme : 'sunset',
     deformMode: validDeform.includes(src.deformMode) ? src.deformMode : 'normal',
     clouds: validClouds.includes(src.clouds) ? src.clouds : 'full',
+    seed: cleanSeed,
   };
 }
 
