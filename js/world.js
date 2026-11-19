@@ -176,6 +176,65 @@ function ridgeNoise(x, z) {
   return 1.0 - Math.abs(noise2D(x, z) * 2.0 - 1.0);
 }
 
+/**
+ * Deterministic macro-biome classifier shared between the terrain shader and 3D tree placement.
+ * Separates the world into large, cohesive regions:
+ *  - 'desert'  : golden/amber desert dunes & mesas (no trees)
+ *  - 'jungle'  : lush green fields with layered shades of green (dense trees)
+ *  - 'canyon'  : warm ochre/sandstone plateaus (no trees)
+ *  - 'volcano' : dark basalt & ash caldera (no trees)
+ *  - 'alpine'  : high mountain range with snow peaks
+ */
+export function getBiomeWeightsAt(x, z) {
+  const dist = Math.hypot(x, z);
+  const originFade = 1.0 - THREE.MathUtils.smoothstep(dist, 980.0, 1420.0);
+  const outerFade = THREE.MathUtils.smoothstep(dist, 880.0, 1320.0);
+
+  // Origin archipelago dedicated biome zones (distinct islands / peninsulas):
+  // - NW: Volcanic Caldera (-720, -280)
+  const origVolcano =
+    THREE.MathUtils.smoothstep(-280.0, -540.0, x) *
+    THREE.MathUtils.smoothstep(120.0, -140.0, z) *
+    originFade;
+
+  // - SW: Canyon Mesas (-580, 480)
+  const origCanyon =
+    THREE.MathUtils.smoothstep(-160.0, -420.0, x) *
+    THREE.MathUtils.smoothstep(180.0, 420.0, z) *
+    originFade;
+
+  // - South / SE / Central-East peninsula & island: Golden Desert
+  const origDesert =
+    THREE.MathUtils.smoothstep(-180.0, 140.0, x) *
+    THREE.MathUtils.smoothstep(40.0, 280.0, z) *
+    (1.0 - THREE.MathUtils.smoothstep(380.0, 560.0, x)) *
+    originFade;
+
+  // Low-frequency macro noises for large, well-separated outer biomes (~1200m+ regions)
+  const macroTemp = fbm(x * 0.00075 + 5.2, z * 0.00075 - 3.1, 3);
+  const macroMoisture = fbm(x * 0.00078 - 8.4, z * 0.00078 + 6.7, 3);
+
+  const procVolcano = (1.0 - THREE.MathUtils.smoothstep(0.22, 0.30, macroTemp)) * outerFade;
+  const procCanyon =
+    THREE.MathUtils.smoothstep(0.68, 0.77, macroTemp) *
+    (1.0 - THREE.MathUtils.smoothstep(0.45, 0.56, macroMoisture)) *
+    outerFade;
+
+  const volcano = Math.min(1.0, origVolcano + procVolcano);
+  const canyon = Math.min(1.0, (origCanyon + procCanyon) * (1.0 - volcano));
+
+  // Desert vs Jungle macro separation (smooth, wide regions)
+  const procDesert =
+    THREE.MathUtils.smoothstep(0.47, 0.59, macroTemp) *
+    (1.0 - THREE.MathUtils.smoothstep(0.44, 0.56, macroMoisture)) *
+    outerFade;
+
+  const desert = Math.min(1.0, (origDesert + procDesert) * (1.0 - volcano) * (1.0 - canyon));
+  const jungle = Math.max(0.0, 1.0 - Math.min(1.0, volcano + canyon + desert));
+
+  return { jungle, desert, canyon, volcano };
+}
+
 // Central archipelago mountain chain (keeps origin area iconic with bays, volcano, canyon, alpine range & airstrip)
 const ORIGIN_MOUNTAINS = [
   // --- Central Autumn & Emerald Headlands ---
@@ -689,136 +748,161 @@ export function buildWorld(scene) {
 
         vec2 pixCell = floor(p * 0.72);
         float rawStipple = hash(pixCell);
-        float smoothCluster = noise(p * 0.14);
-        float fineCluster = mix(smoothCluster, noise(floor(p * 0.30) * 0.55), uTerrainGrain);
-        float stipple = mix(smoothCluster, rawStipple, uTerrainGrain);
+        float smoothCluster = noise(p * 0.08);
+        float fineCluster = mix(smoothCluster, noise(floor(p * 0.22) * 0.55), uTerrainGrain * 0.65);
+        float stipple = mix(smoothCluster, rawStipple, uTerrainGrain * 0.55);
 
-        float biomeA = fbm(p * 0.0085 + vec2(2.1, -4.3));
-        float biomeB = fbm(p * 0.013 - vec2(6.4, 1.9));
-        float forestPatch = fbm(p * 0.018 + vec2(0.5, 3.7));
-        float macroBiome = fbm(p * 0.0012 + vec2(5.2, -3.1));
+        // Smooth macro noises for natural, cohesive terrain contours inside each biome
+        float contourNoise = fbm(p * 0.0065 + vec2(2.1, -4.3));
+        float detailContour = fbm(p * 0.014 - vec2(6.4, 1.9));
 
-        // Regional masks: SW Terracotta Canyon & NW Volcanic Caldera + repeating infinite biomes!
-        float origCanyon = smoothstep(-140.0, -390.0, p.x) * smoothstep(200.0, 440.0, p.y) * (1.0 - smoothstep(1100.0, 1500.0, length(p)));
-        float origVolcano = smoothstep(-320.0, -560.0, p.x) * smoothstep(100.0, -160.0, p.y) * (1.0 - smoothstep(1100.0, 1500.0, length(p)));
-        float procCanyon = smoothstep(0.67, 0.76, macroBiome) * smoothstep(950.0, 1350.0, length(p));
-        float procVolcano = (1.0 - smoothstep(0.24, 0.33, macroBiome)) * smoothstep(950.0, 1350.0, length(p));
+        // Regional macro-biome masks (matches getBiomeWeightsAt in JS so trees only spawn in Jungle!)
+        float distOrigin = length(p);
+        float originFade = 1.0 - smoothstep(980.0, 1420.0, distOrigin);
+        float outerFade  = smoothstep(880.0, 1320.0, distOrigin);
 
-        float canyonMask = clamp(origCanyon + procCanyon, 0.0, 1.0);
+        float origVolcano = smoothstep(-280.0, -540.0, p.x) * smoothstep(120.0, -140.0, p.y) * originFade;
+        float origCanyon  = smoothstep(-160.0, -420.0, p.x) * smoothstep(180.0, 420.0, p.y) * originFade;
+        float origDesert  = smoothstep(-180.0, 140.0, p.x) * smoothstep(40.0, 280.0, p.y) * (1.0 - smoothstep(380.0, 560.0, p.x)) * originFade;
+
+        float macroTemp     = fbm(p * 0.00075 + vec2(5.2, -3.1));
+        float macroMoisture = fbm(p * 0.00078 + vec2(-8.4, 6.7));
+
+        float procVolcano = (1.0 - smoothstep(0.22, 0.30, macroTemp)) * outerFade;
+        float procCanyon  = smoothstep(0.68, 0.77, macroTemp) * (1.0 - smoothstep(0.45, 0.56, macroMoisture)) * outerFade;
+        float procDesert  = smoothstep(0.47, 0.59, macroTemp) * (1.0 - smoothstep(0.44, 0.56, macroMoisture)) * outerFade;
+
         float volcanoMask = clamp(origVolcano + procVolcano, 0.0, 1.0);
+        float canyonMask  = clamp((origCanyon + procCanyon) * (1.0 - volcanoMask), 0.0, 1.0);
+        float desertMask  = clamp((origDesert + procDesert) * (1.0 - volcanoMask) * (1.0 - canyonMask), 0.0, 1.0);
+        float jungleMask  = clamp(1.0 - (volcanoMask + canyonMask + desertMask), 0.0, 1.0);
 
-        vec3 colSandLight   = vec3(0.90, 0.86, 0.58);
-        vec3 colSandShade   = vec3(0.79, 0.75, 0.49);
-        vec3 colGoldLeaf    = vec3(0.92, 0.72, 0.24);
-        vec3 colOrangeLeaf  = vec3(0.88, 0.44, 0.17);
-        vec3 colRedLeaf     = vec3(0.78, 0.21, 0.16);
-        vec3 colDeepRed     = vec3(0.56, 0.15, 0.15);
-        vec3 colGreenLight  = vec3(0.32, 0.62, 0.32);
-        vec3 colGreenDark   = vec3(0.18, 0.43, 0.24);
-        vec3 colMeadow      = vec3(0.64, 0.74, 0.36);
-        vec3 colFlower      = vec3(0.95, 0.76, 0.82);
-        vec3 colRockLight   = vec3(0.74, 0.70, 0.68);
-        vec3 colRockDark    = vec3(0.44, 0.40, 0.50);
-        vec3 colSnow        = vec3(0.96, 0.94, 0.96);
+        // Cohesive biome palettes (no clashing confetti patches!)
+        // 1. Coastal beach sand
+        vec3 colSandLight    = vec3(0.92, 0.87, 0.62);
+        vec3 colSandShade    = vec3(0.82, 0.76, 0.52);
 
-        vec3 colCanyonSand  = vec3(0.88, 0.65, 0.43);
-        vec3 colCanyonRed   = vec3(0.74, 0.34, 0.24);
-        vec3 colCanyonOchre = vec3(0.84, 0.50, 0.28);
+        // 2. Jungle Biome: uniform lush green fields with layered shades of green for depth
+        vec3 colJungleMeadow = vec3(0.48, 0.72, 0.34);
+        vec3 colJungleMid    = vec3(0.32, 0.60, 0.29);
+        vec3 colJungleDeep   = vec3(0.20, 0.46, 0.23);
+        vec3 colJungleRidge  = vec3(0.14, 0.36, 0.19);
 
-        vec3 colBasalt      = vec3(0.30, 0.26, 0.36);
-        vec3 colAsh         = vec3(0.46, 0.42, 0.50);
-        vec3 colLava        = vec3(1.00, 0.46, 0.14);
+        // 3. Desert Biome: strictly golden & warm yellow-amber tones for dune depth
+        vec3 colDesertPale   = vec3(0.95, 0.86, 0.52);
+        vec3 colDesertGold   = vec3(0.90, 0.76, 0.38);
+        vec3 colDesertAmber  = vec3(0.81, 0.65, 0.29);
+        vec3 colDesertShadow = vec3(0.70, 0.54, 0.23);
+
+        // 4. Canyon Plateau Biome: warm sandstone & ochre strata (uniform without neon spots)
+        vec3 colCanyonSand   = vec3(0.86, 0.67, 0.44);
+        vec3 colCanyonOchre  = vec3(0.78, 0.53, 0.33);
+        vec3 colCanyonDeep   = vec3(0.66, 0.41, 0.26);
+
+        // 5. Volcanic Biome: dark basalt, ash & caldera lava
+        vec3 colBasalt       = vec3(0.28, 0.25, 0.34);
+        vec3 colAsh          = vec3(0.42, 0.39, 0.47);
+        vec3 colLava         = vec3(1.00, 0.46, 0.14);
+
+        // 6. High Mountain Rock & Alpine Snow Peaks
+        vec3 colRockLight    = vec3(0.68, 0.66, 0.68);
+        vec3 colRockDark     = vec3(0.44, 0.42, 0.50);
+        vec3 colSnow         = vec3(0.97, 0.98, 1.00);
+        vec3 colSnowShade    = vec3(0.84, 0.89, 0.96);
 
         if (uTerrainTheme > 0.5 && uTerrainTheme < 1.5) {
-          colSandLight  = vec3(0.96, 0.91, 0.68);
-          colSandShade  = vec3(0.86, 0.80, 0.56);
-          colGreenLight = vec3(0.24, 0.74, 0.38);
-          colGreenDark  = vec3(0.12, 0.50, 0.26);
-          colMeadow     = vec3(0.54, 0.82, 0.34);
-          colGoldLeaf   = vec3(0.94, 0.80, 0.26);
+          colSandLight    = vec3(0.96, 0.91, 0.68);
+          colSandShade    = vec3(0.86, 0.80, 0.56);
+          colJungleMeadow = vec3(0.50, 0.80, 0.36);
+          colJungleMid    = vec3(0.26, 0.70, 0.36);
+          colJungleDeep   = vec3(0.15, 0.52, 0.27);
+          colJungleRidge  = vec3(0.10, 0.39, 0.21);
+          colDesertPale   = vec3(0.97, 0.89, 0.58);
+          colDesertGold   = vec3(0.92, 0.80, 0.42);
+          colDesertAmber  = vec3(0.83, 0.69, 0.32);
         } else if (uTerrainTheme >= 1.5 && uTerrainTheme < 2.5) {
-          colSandLight  = vec3(0.42, 0.34, 0.36);
-          colSandShade  = vec3(0.28, 0.22, 0.26);
-          colGreenLight = vec3(0.44, 0.32, 0.22);
-          colGreenDark  = vec3(0.28, 0.20, 0.18);
-          colMeadow     = vec3(0.50, 0.34, 0.22);
-          colGoldLeaf   = vec3(0.76, 0.42, 0.16);
-          colOrangeLeaf = vec3(0.78, 0.30, 0.14);
-          colRedLeaf    = vec3(0.64, 0.18, 0.14);
-          colRockLight  = vec3(0.52, 0.42, 0.44);
-          colRockDark   = vec3(0.26, 0.20, 0.28);
+          colSandLight    = vec3(0.42, 0.34, 0.36);
+          colSandShade    = vec3(0.28, 0.22, 0.26);
+          colJungleMeadow = vec3(0.42, 0.48, 0.28);
+          colJungleMid    = vec3(0.32, 0.38, 0.23);
+          colJungleDeep   = vec3(0.22, 0.27, 0.18);
+          colJungleRidge  = vec3(0.16, 0.20, 0.14);
+          colDesertPale   = vec3(0.78, 0.62, 0.34);
+          colDesertGold   = vec3(0.68, 0.50, 0.26);
+          colDesertAmber  = vec3(0.56, 0.39, 0.20);
+          colDesertShadow = vec3(0.44, 0.30, 0.16);
+          colRockLight    = vec3(0.52, 0.44, 0.46);
+          colRockDark     = vec3(0.28, 0.22, 0.28);
         } else if (uTerrainTheme >= 2.5) {
-          colSandLight  = vec3(0.72, 0.75, 0.78);
-          colSandShade  = vec3(0.56, 0.60, 0.66);
-          colGreenLight = vec3(0.24, 0.50, 0.38);
-          colGreenDark  = vec3(0.14, 0.34, 0.28);
-          colMeadow     = vec3(0.46, 0.62, 0.48);
-          colRockLight  = vec3(0.70, 0.74, 0.80);
-          colRockDark   = vec3(0.38, 0.44, 0.56);
-          colSnow       = vec3(0.96, 0.98, 1.00);
+          colSandLight    = vec3(0.76, 0.79, 0.82);
+          colSandShade    = vec3(0.62, 0.66, 0.72);
+          colJungleMeadow = vec3(0.42, 0.62, 0.46);
+          colJungleMid    = vec3(0.26, 0.50, 0.38);
+          colJungleDeep   = vec3(0.17, 0.37, 0.29);
+          colJungleRidge  = vec3(0.12, 0.28, 0.22);
+          colRockLight    = vec3(0.70, 0.74, 0.80);
+          colRockDark     = vec3(0.38, 0.44, 0.56);
         }
 
-        vec3 baseCol = mix(colSandShade, colSandLight, step(0.42, stipple * 0.6 + fineCluster * 0.4));
+        // Smooth shoreline sand base
+        vec3 sandCol = mix(colSandShade, colSandLight, smoothstep(0.32, 0.68, contourNoise * 0.7 + stipple * 0.3));
 
-        float treeMask = smoothstep(4.0, 10.5, h + (forestPatch - 0.5) * 9.0) * (1.0 - smoothstep(68.0, 92.0, h));
-        if (treeMask > 0.05) {
-          vec3 foliage;
-          if (biomeA > 0.63) {
-            foliage = mix(colGreenDark, colGreenLight, step(0.46, stipple * 0.55 + fineCluster * 0.45));
-            if (biomeB > 0.66 && stipple > 0.75) foliage = colGoldLeaf;
-          } else if (biomeA > 0.49 && biomeB < 0.44) {
-            foliage = mix(colMeadow, colGoldLeaf, step(0.62, fineCluster));
-            if (stipple > 0.89) foliage = colFlower;
-          } else if (biomeB > 0.48) {
-            float rMix = stipple * 0.6 + fineCluster * 0.4;
-            if (rMix < 0.28) foliage = colDeepRed;
-            else if (rMix < 0.62) foliage = colRedLeaf;
-            else if (rMix < 0.85) foliage = colOrangeLeaf;
-            else foliage = colGoldLeaf;
-          } else {
-            float gMix = stipple * 0.6 + fineCluster * 0.4;
-            if (gMix < 0.34) foliage = colOrangeLeaf;
-            else if (gMix < 0.78) foliage = colGoldLeaf;
-            else foliage = colRedLeaf;
-          }
-          float ditherCut = step(1.0 - treeMask, stipple * 0.7 + 0.15);
-          baseCol = mix(baseCol, foliage, ditherCut);
+        // Build clean Jungle Biome color (smooth transitions across 4 harmonious green tones)
+        float jElevation = clamp((h - 4.0) / 62.0, 0.0, 1.0);
+        float jDepth = clamp(contourNoise * 0.55 + detailContour * 0.30 + jElevation * 0.35 + (stipple - 0.5) * 0.12, 0.0, 1.0);
+        vec3 jungleCol = mix(colJungleMeadow, colJungleMid, smoothstep(0.22, 0.48, jDepth));
+        jungleCol = mix(jungleCol, colJungleDeep, smoothstep(0.48, 0.74, jDepth));
+        jungleCol = mix(jungleCol, colJungleRidge, smoothstep(0.74, 0.94, jDepth + slope * 0.35));
+
+        // Build clean Desert Biome color (pure yellow & golden-amber depth bands, no red/green spots)
+        float duneWave = sin(p.x * 0.022 + p.y * 0.016 + contourNoise * 4.5) * 0.5 + 0.5;
+        float dDepth = clamp(contourNoise * 0.50 + duneWave * 0.32 + slope * 0.45 + (stipple - 0.5) * 0.10, 0.0, 1.0);
+        vec3 desertCol = mix(colDesertPale, colDesertGold, smoothstep(0.20, 0.48, dDepth));
+        desertCol = mix(desertCol, colDesertAmber, smoothstep(0.48, 0.75, dDepth));
+        desertCol = mix(desertCol, colDesertShadow, smoothstep(0.75, 0.95, dDepth));
+
+        // Build clean Canyon Biome color (smooth horizontal sandstone strata)
+        float strata = sin(h * 0.22 + contourNoise * 2.4) * 0.5 + 0.5;
+        vec3 canyonCol = mix(colCanyonSand, colCanyonOchre, smoothstep(0.25, 0.60, strata));
+        canyonCol = mix(canyonCol, colCanyonDeep, smoothstep(0.62, 0.90, strata + slope * 0.3));
+
+        // Build clean Volcanic Biome color
+        vec3 volcCol = mix(colBasalt, colAsh, smoothstep(0.35, 0.70, contourNoise * 0.7 + fineCluster * 0.3));
+        float dCaldera = length(p - vec2(-720.0, -280.0));
+        float lavaPulse = 0.75 + 0.25 * sin(uTime * 2.2 + dCaldera * 0.15);
+        if ((dCaldera < 62.0 || (volcanoMask > 0.6 && h > 115.0 && slope < 0.28)) && h > 85.0 && stipple > 0.52) {
+          volcCol = mix(volcCol, colLava * lavaPulse, 0.78);
         }
 
-        if (canyonMask > 0.05 && h > 2.5) {
-          float strata = fract(h * 0.085 + fineCluster * 0.25);
-          vec3 canyonCol = strata < 0.35 ? colCanyonRed : strata < 0.72 ? colCanyonOchre : colCanyonSand;
-          if (slope < 0.14 && stipple > 0.84) canyonCol = colGoldLeaf;
-          baseCol = mix(baseCol, canyonCol, canyonMask * 0.92);
+        // Combine distinct biomes cleanly above the shoreline beach
+        float inlandMask = smoothstep(3.2, 8.5, h + (contourNoise - 0.5) * 2.5);
+        vec3 biomeSurface =
+          jungleCol * jungleMask +
+          desertCol * desertMask +
+          canyonCol * canyonMask +
+          volcCol * volcanoMask;
+        vec3 baseCol = mix(sandCol, biomeSurface, inlandMask);
+
+        // High mountain rock slopes & sub-peak cliffs
+        float rockMask = smoothstep(54.0, 82.0, h) + smoothstep(0.27, 0.45, slope) * smoothstep(18.0, 36.0, h);
+        rockMask = clamp(rockMask, 0.0, 1.0) * (1.0 - canyonMask * 0.75) * (1.0 - volcanoMask * 0.75) * (1.0 - desertMask * 0.45);
+        if (rockMask > 0.02) {
+          vec3 rock = mix(colRockDark, colRockLight, smoothstep(0.32, 0.68, contourNoise * 0.65 + fineCluster * 0.35));
+          baseCol = mix(baseCol, rock, smoothstep(0.15, 0.72, rockMask));
         }
 
-        if (volcanoMask > 0.05 && h > 4.0) {
-          vec3 volcCol = mix(colBasalt, colAsh, step(0.54, fineCluster * 0.6 + stipple * 0.4));
-          float dCaldera = length(p - vec2(-720.0, -280.0));
-          float lavaPulse = 0.75 + 0.25 * sin(uTime * 2.2 + dCaldera * 0.15);
-          if ((dCaldera < 62.0 || (volcanoMask > 0.6 && h > 115.0 && slope < 0.28)) && h > 85.0 && stipple > 0.55) {
-            volcCol = mix(volcCol, colLava * lavaPulse, 0.75);
-          }
-          baseCol = mix(baseCol, volcCol, volcanoMask * smoothstep(4.0, 22.0, h));
-        }
-
-        float rockMask = smoothstep(66.0, 96.0, h) + smoothstep(0.28, 0.46, slope) * smoothstep(18.0, 36.0, h);
-        rockMask = clamp(rockMask, 0.0, 1.0) * (1.0 - canyonMask * 0.8) * (1.0 - volcanoMask * 0.75);
-        if (rockMask > 0.05) {
-          vec3 rock = mix(colRockDark, colRockLight, step(0.45, fineCluster * 0.65 + stipple * 0.35));
-          baseCol = mix(baseCol, rock, smoothstep(0.2, 0.7, rockMask));
-        }
-
-        float snowLine = 112.0 + (biomeA - 0.5) * 22.0 - slope * 24.0;
-        float snowZoneMask = (1.0 - volcanoMask * 0.9) * (1.0 - canyonMask);
+        // Snow caps on the highest mountain peaks (visible across all high peaks above ~72m!)
+        float snowLine = 74.0 + (contourNoise - 0.5) * 14.0 - slope * 12.0;
+        float snowZoneMask = (1.0 - volcanoMask * 0.92) * (1.0 - canyonMask * 0.85);
         if (uTerrainTheme >= 2.5) {
-          snowLine = 26.0 + (biomeA - 0.5) * 14.0 - slope * 14.0;
+          snowLine = 26.0 + (contourNoise - 0.5) * 12.0 - slope * 10.0;
           snowZoneMask = 1.0;
         } else if (uTerrainTheme >= 1.5) {
-          snowLine = 152.0 + (biomeA - 0.5) * 18.0 - slope * 20.0;
+          snowLine = 115.0 + (contourNoise - 0.5) * 14.0 - slope * 14.0;
         }
-        float snowMask = smoothstep(snowLine, snowLine + 16.0, h) * snowZoneMask;
-        baseCol = mix(baseCol, colSnow, snowMask);
+        float snowMask = smoothstep(snowLine, snowLine + 15.0, h) * snowZoneMask;
+        vec3 snowTone = mix(colSnowShade, colSnow, smoothstep(0.25, 0.75, N.y * 0.7 + contourNoise * 0.3));
+        baseCol = mix(baseCol, snowTone, snowMask);
 
         if (vScorch > 0.04) {
           vec3 craterRock = mix(vec3(0.24, 0.20, 0.28), vec3(0.46, 0.36, 0.38), step(0.45, stipple * 0.65 + fineCluster * 0.35));
@@ -1071,9 +1155,9 @@ export function buildWorld(scene) {
 
   const treeGeo = new THREE.ConeGeometry(2.8, 7.6, 5);
   const treeMat = new THREE.MeshLambertMaterial({ flatShading: true });
-  const autumnCols = [0xc93b26, 0xe36c28, 0xebba38, 0xa82820];
-  const pineCols = [0x2d683b, 0x3b7d45, 0x224f31];
-  const scrubCols = [0x7e8a42, 0xb8863c, 0x62733a];
+  const jungleLightCols = [0x438a40, 0x387a38, 0x529947];
+  const jungleDeepCols = [0x296333, 0x1e4d29, 0x31703a];
+  const alpinePineCols = [0x1c462c, 0x245636, 0x173a24];
 
   const houseWallsGeo = new THREE.BoxGeometry(4.4, 3.2, 4.4);
   const houseRoofGeo = new THREE.ConeGeometry(3.6, 2.2, 4);
@@ -1319,32 +1403,33 @@ export function buildWorld(scene) {
       deadSet.add(localId);
     }
 
-    // 1. Chunk Biome Trees (InstancedMesh per chunk, disposed when chunk unloads!)
-    const maxChunkTrees = (cx === 0 && cz === 0) ? 260 : 175;
+    // 1. Chunk Biome Trees (InstancedMesh per chunk, ONLY placed in Jungle biome below the snowline!)
+    const maxChunkTrees = (cx === 0 && cz === 0) ? 240 : 165;
     const treePlacements = [];
     let tAttempts = 0;
-    while (treePlacements.length < maxChunkTrees && tAttempts < maxChunkTrees * 5) {
+    while (treePlacements.length < maxChunkTrees && tAttempts < maxChunkTrees * 8) {
       tAttempts++;
       const tx = minX + cRand() * CHUNK_SIZE;
       const tz = minZ + cRand() * CHUNK_SIZE;
       if (Math.abs(tx + 215) < 58 && Math.abs(tz - 225) < 110) continue; // skip airstrip
       const ty = getBaseTerrainHeight(tx, tz);
-      if (ty < 5.5 || ty > 78.0) continue;
+      // Trees only grow above the beach and below the rocky/snowy mountain peaks
+      if (ty < 5.5 || ty > 66.0) continue;
 
-      const isCanyon = (tx < -240 && tz > 260 && Math.hypot(tx, tz) < 1300) || fbm(tx * 0.0012 + 5.2, tz * 0.0012 - 3.1, 3) > 0.70;
-      const isVolcano = (tx < -420 && tz < -40 && Math.hypot(tx, tz) < 1300);
-      if (isVolcano && ty > 25) continue;
+      const biomes = getBiomeWeightsAt(tx, tz);
+      // Strict biome separation: NO trees in Desert, Canyon, or Volcano biomes!
+      if (biomes.jungle < 0.62) continue;
 
-      const s = isCanyon ? 0.55 + cRand() * 0.5 : 0.75 + cRand() * 1.25;
-      const sy = s * (0.9 + cRand() * 0.55);
+      const s = 0.78 + cRand() * 1.22;
+      const sy = s * (0.92 + cRand() * 0.52);
       const rotY = cRand() * Math.PI * 2;
       let hex;
-      if (isCanyon) {
-        hex = scrubCols[Math.floor(cRand() * scrubCols.length)];
-      } else if (ty > 42 || fbm(tx * 0.0085 + 2.1, tz * 0.0085 - 4.3, 3) > 0.6) {
-        hex = pineCols[Math.floor(cRand() * pineCols.length)];
+      if (ty > 46) {
+        hex = alpinePineCols[Math.floor(cRand() * alpinePineCols.length)];
+      } else if (cRand() < 0.52) {
+        hex = jungleDeepCols[Math.floor(cRand() * jungleDeepCols.length)];
       } else {
-        hex = autumnCols[Math.floor(cRand() * autumnCols.length)];
+        hex = jungleLightCols[Math.floor(cRand() * jungleLightCols.length)];
       }
       treePlacements.push({ tx, ty, tz, s, sy, rotY, hex, localId: `t_${treePlacements.length}` });
     }

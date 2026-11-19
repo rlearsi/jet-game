@@ -1,10 +1,10 @@
-import * as striker from './striker.js?v=20';
-import * as viper from './viper.js?v=20';
-import * as phantom from './phantom.js?v=20';
-import * as hornet from './hornet.js?v=20';
-import * as starfire from './starfire.js?v=20';
-import * as sakura from './sakura.js?v=20';
-import * as raven from './raven.js?v=20';
+import * as striker from './striker.js?v=21';
+import * as viper from './viper.js?v=21';
+import * as phantom from './phantom.js?v=21';
+import * as hornet from './hornet.js?v=21';
+import * as starfire from './starfire.js?v=21';
+import * as sakura from './sakura.js?v=21';
+import * as raven from './raven.js?v=21';
 import {
   buildJetFromConfig,
   buildFuselage,
@@ -13,8 +13,8 @@ import {
   buildEngines,
   buildTail,
   buildDetails,
-} from './builder.js?v=20';
-export { buildAirfoilSurface } from './shared.js?v=20';
+} from './builder.js?v=21';
+export { buildAirfoilSurface } from './shared.js?v=21';
 export {
   buildJetFromConfig,
   buildFuselage,
