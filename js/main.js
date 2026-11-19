@@ -6,13 +6,13 @@ import {
   TERRAIN_DEFORM_MODES,
   TERRAIN_CLOUD_MODES,
   DEFAULT_TERRAIN_OPTIONS,
-} from './world.js?v=15';
-import { FighterJet, RemoteJet, SHIP_CATALOG, SHIP_IDS } from './jet.js?v=15';
-import { MissileSystem } from './weapons.js?v=15';
-import { FighterCockpit } from './cockpit.js?v=15';
-import { JetSoundEngine } from './audio.js?v=15';
-import { MultiplayerManager } from './multiplayer.js?v=15';
-import { GamepadController, DEFAULT_GAMEPAD_DEADZONE } from './gamepad.js?v=15';
+} from './world.js?v=17';
+import { FighterJet, RemoteJet, SHIP_CATALOG, SHIP_IDS } from './jet.js?v=17';
+import { MissileSystem } from './weapons.js?v=17';
+import { FighterCockpit } from './cockpit.js?v=17';
+import { JetSoundEngine } from './audio.js?v=17';
+import { MultiplayerManager } from './multiplayer.js?v=17';
+import { GamepadController, DEFAULT_GAMEPAD_DEADZONE } from './gamepad.js?v=17';
 
 // 6 live-switchable rendering styles (exclusively configurable inside Settings -> Render, plus V in flight)
 const RENDER_PRESETS = {
@@ -199,6 +199,7 @@ const menuBtnSettings = document.getElementById('menu-btn-settings');
 const menuBtnQuit = document.getElementById('menu-btn-quit');
 
 const menuHangarBox = document.getElementById('menu-hangar-box');
+const menuHangarCount = document.getElementById('menu-hangar-count');
 const menuHangarList = document.getElementById('menu-hangar-list');
 const menuTerrainChip = document.getElementById('menu-terrain-chip');
 
@@ -609,6 +610,9 @@ function createShipCardEl(id, locked) {
 
 function renderAllHangars() {
   const locked = isShipLocked();
+  if (menuHangarCount) {
+    menuHangarCount.textContent = String(SHIP_IDS.length);
+  }
   for (const container of [menuHangarList, mpHangarList]) {
     if (!container) continue;
     container.innerHTML = '';

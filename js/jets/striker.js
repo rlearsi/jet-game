@@ -1,0 +1,70 @@
+export const spec = {
+  id: 'striker',
+  name: 'F-22 STRIKER',
+  role: 'BALANCED MULTIROLE',
+  cruiseSpeed: 64,
+  abSpeed: 98,
+  turnRate: 1.32,
+  abTurnRate: 1.05,
+  bankMax: 1.15,
+  maxHp: 100,
+  maxMissiles: 4,
+  cannonCd: 0.068,
+  cannonDmg: 16,
+  palette: {
+    base: '#e5eaf6',
+    shade: '#cfd7ea',
+    camo1: '#8b93ae',
+    camo2: '#6c7490',
+    wingPatch: '#aeb6ce',
+    accent: '#e55238',
+    canopyTop: '#f8d84e',
+    canopyHi: '#fff7c4',
+    canopyBot: '#e3a12a',
+  },
+};
+
+export const visual = {
+  textureStyle: 'classic',
+  finStyle: 'classic',
+  wings: {
+    main: {
+      rootLE: [0.85, -1.25],
+      rootTE: [0.85, 1.08],
+      tipLE: [3.95, 0.56],
+      tipTE: [3.95, 0.98],
+      rootThick: 0.24,
+      tipThick: 0.07,
+      yOff: 0.03,
+    },
+  },
+  tail: {
+    tailplanes: {
+      rootLE: [0.72, 1.38],
+      rootTE: [0.72, 2.28],
+      tipLE: [2.22, 1.98],
+      tipTE: [2.22, 2.46],
+      rootThick: 0.14,
+      tipThick: 0.06,
+      yOff: 0.01,
+    },
+    fins: {
+      mode: 'twin',
+      x: 0.64,
+      y: 0.20,
+      z: 1.66,
+      cant: 0.28,
+    },
+  },
+  cockpit: {
+    pos: [0, 0.24, -1.62],
+    scale: [0.32, 0.30, 1.05],
+  },
+  engines: {
+    count: 2,
+    x: 0.40,
+    y: 0.0,
+    z: 2.60,
+  },
+  wingtipPoint: [3.95, 0.03, 0.96],
+};
