@@ -12,6 +12,7 @@ export class JetSoundEngine {
     this.abGain = null;
     this.turbineOsc = null;
     this.turbineGain = null;
+    this.rwrTimer = 0;
   }
 
   init() {
@@ -107,31 +108,6 @@ export class JetSoundEngine {
 
     this.turbineOsc.frequency.setTargetAtTime(480 + throttle * 260 + (afterburner ? 120 : 0), now, 0.1);
     this.turbineGain.gain.setTargetAtTime(inCockpit ? 0.018 : 0.012, now, 0.1);
-  }
-
-  playCannon() {
-    if (!this.initialized || !this.enabled || !this.ctx) return;
-    const now = this.ctx.currentTime;
-
-    // Punchy Vulcan autocannon thump
-    const osc = this.ctx.createOscillator();
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(165 + Math.random() * 25, now);
-    osc.frequency.exponentialRampToValueAtTime(52, now + 0.055);
-
-    const filter = this.ctx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.value = 620;
-
-    const gain = this.ctx.createGain();
-    gain.gain.setValueAtTime(0.16, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.065);
-
-    osc.connect(filter);
-    filter.connect(gain);
-    gain.connect(this.master);
-    osc.start(now);
-    osc.stop(now + 0.07);
   }
 
   playCannon() {
@@ -277,5 +253,86 @@ export class JetSoundEngine {
     g.connect(this.master);
     osc.start(now);
     osc.stop(now + 0.06);
+  }
+
+  // RWR incoming homing-missile alert tone (speeds up as missile closes in)
+  updateMissileAlert(dt, minDist) {
+    if (!(minDist > 0 && minDist < 650)) {
+      this.rwrTimer = 0;
+      return;
+    }
+    this.rwrTimer -= dt;
+    if (this.rwrTimer > 0) return;
+
+    const interval = minDist < 120 ? 0.10 : minDist < 320 ? 0.22 : 0.42;
+    this.rwrTimer = interval;
+
+    if (!this.initialized || !this.enabled || !this.ctx) return;
+    const now = this.ctx.currentTime;
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.value = 1400;
+    filter.Q.value = 1.8;
+    filter.connect(this.master);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.18, now + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.065);
+    gain.connect(filter);
+
+    const osc1 = this.ctx.createOscillator();
+    osc1.type = 'square';
+    osc1.frequency.setValueAtTime(1180, now);
+    osc1.connect(gain);
+    osc1.start(now);
+    osc1.stop(now + 0.065);
+
+    const osc2 = this.ctx.createOscillator();
+    osc2.type = 'square';
+    osc2.frequency.setValueAtTime(1560, now);
+    osc2.connect(gain);
+    osc2.start(now);
+    osc2.stop(now + 0.065);
+  }
+
+  playPickup(kind) {
+    if (!this.initialized || !this.enabled || !this.ctx) return;
+    const now = this.ctx.currentTime;
+    const notes = kind === 'health' ? [523.25, 659.25, 783.99] : [440, 659.25];
+    notes.forEach((freq, i) => {
+      const start = now + i * 0.065;
+      const osc = this.ctx.createOscillator();
+      osc.type = kind === 'health' ? 'triangle' : 'square';
+      osc.frequency.setValueAtTime(freq, start);
+
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.001, start);
+      g.gain.linearRampToValueAtTime(kind === 'health' ? 0.14 : 0.09, start + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.001, start + 0.14);
+
+      osc.connect(g);
+      g.connect(this.master);
+      osc.start(start);
+      osc.stop(start + 0.15);
+    });
+  }
+
+  playEmpty() {
+    if (!this.initialized || !this.enabled || !this.ctx) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(190, now);
+
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.08, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
+
+    osc.connect(g);
+    g.connect(this.master);
+    osc.start(now);
+    osc.stop(now + 0.045);
   }
 }

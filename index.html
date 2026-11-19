@@ -30,6 +30,13 @@
   <!-- 3D projected remote pilot nameplates -->
   <div id="remote-labels"></div>
 
+  <!-- Closest health / missile supply waypoints -->
+  <div id="pickup-markers"></div>
+
+  <!-- Incoming homing missile alert overlay -->
+  <div id="missile-vignette" class="missile-vignette hidden"></div>
+  <div id="missile-alert" class="missile-alert hidden">&#9888; MISSILE ALERT &middot; EVADE!</div>
+
   <!-- Top slim control bar -->
   <div id="hud-top-bar">
     <div class="top-controls">
@@ -54,11 +61,21 @@
     </div>
   </div>
 
-  <!-- Top-right buttons: MULTIPLAYER + VIEW / RENDER + SOUND -->
+  <!-- Top-right buttons: HANGAR + MULTIPLAYER + VIEW / RENDER + SOUND -->
   <div id="hud-top-right">
+    <button id="hangar-btn" class="hud-btn" type="button">HANGAR (5)</button>
     <button id="mp-btn" class="hud-btn" type="button">MULTIPLAYER</button>
     <button id="view-btn" class="hud-btn" type="button">VIEW / RENDER</button>
     <button id="sound-btn" class="hud-btn" type="button">SOUND: OFF</button>
+  </div>
+
+  <!-- Collapsible Hangar: 5 Fighter Jet Varieties -->
+  <div id="hangar-panel" class="hangar-panel hidden">
+    <div class="vp-header">
+      <span>HANGAR (5 JETS)</span>
+      <span class="mp-badge connecting">SELECT</span>
+    </div>
+    <div id="hangar-list" class="hangar-list"></div>
   </div>
 
   <!-- Collapsible WebRTC P2P Multiplayer Panel -->
@@ -167,7 +184,12 @@
     <span id="dist-badge">FOV 80&deg; &middot; DIST 1.35x</span>
     <span class="sep">&middot;</span>
     <span id="destroyed-badge" class="destroyed-badge">DESTROYED: 0</span>
-    <span id="hp-badge" class="hp-badge hidden">&middot; HP 100</span>
+    <span class="sep">&middot;</span>
+    <span id="player-hp-wrap" class="player-hp-wrap">
+      <span class="player-hp-label">HP</span>
+      <span class="player-hp-bar"><span id="player-hp-fill" class="player-hp-fill" style="width:100%"></span></span>
+      <span id="player-hp-text" class="player-hp-text">100/100</span>
+    </span>
   </div>
 
   <!-- Brief intro banner -->
@@ -183,6 +205,6 @@
       }
     }
   </script>
-  <script type="module" src="js/main.js?v=8"></script>
+  <script type="module" src="js/main.js?v=9"></script>
 </body>
 </html>

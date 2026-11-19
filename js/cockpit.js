@@ -1,4 +1,4 @@
-import { getTerrainHeight } from './world.js?v=8';
+import { getTerrainHeight } from './world.js?v=9';
 
 export class FighterCockpit {
   constructor(canvas) {
@@ -49,7 +49,7 @@ export class FighterCockpit {
     this.canvas.classList.toggle('active', visible);
   }
 
-  updateRadar(jet, remoteJets = null) {
+  updateRadar(jet, remoteJets = null, pickups = null, weapons = null) {
     const rc = this.radarCtx;
     const size = 56;
     const half = size / 2;
@@ -116,6 +116,31 @@ export class FighterCockpit {
     rc.lineTo(half + Math.cos(coneAngle) * r, half + Math.sin(coneAngle) * r);
     rc.stroke();
 
+    // World supply pickups on radar (green '+' for health, amber square for missile crates)
+    if (pickups) {
+      for (const pk of pickups) {
+        if (!pk.active) continue;
+        const dwx = pk.x - jet.position.x;
+        const dwz = pk.z - jet.position.z;
+        const localRight = dwx * cosY - dwz * sinY;
+        const localFwd = -dwx * sinY - dwz * cosY;
+        const px = localRight / rangeScale;
+        const py = -localFwd / rangeScale;
+        if (px * px + py * py <= (r - 2) * (r - 2)) {
+          const bx = Math.round(half + px);
+          const by = Math.round(half + py);
+          if (pk.type === 'health') {
+            rc.fillStyle = '#4cff88';
+            rc.fillRect(bx - 1, by, 3, 1);
+            rc.fillRect(bx, by - 1, 1, 3);
+          } else {
+            rc.fillStyle = '#ffba42';
+            rc.fillRect(bx - 1, by - 1, 2, 2);
+          }
+        }
+      }
+    }
+
     // Remote multiplayer pilot blips on radar
     if (remoteJets) {
       for (const rj of remoteJets.values()) {
@@ -134,6 +159,23 @@ export class FighterCockpit {
           rc.fillStyle = rj.colorHex || '#36d6ff';
           rc.fillRect(bx - 1, by - 1, 3, 3);
         }
+      }
+    }
+
+    // Incoming homing missile blip (blinking red!)
+    if (weapons?.incomingMissile && Math.floor(this.blinkTimer * 10) % 2 === 0) {
+      const mPos = weapons.incomingMissile.pos;
+      const dwx = mPos.x - jet.position.x;
+      const dwz = mPos.z - jet.position.z;
+      const localRight = dwx * cosY - dwz * sinY;
+      const localFwd = -dwx * sinY - dwz * cosY;
+      const px = localRight / rangeScale;
+      const py = -localFwd / rangeScale;
+      if (px * px + py * py <= (r - 2) * (r - 2)) {
+        const bx = Math.round(half + px);
+        const by = Math.round(half + py);
+        rc.fillStyle = '#ff3828';
+        rc.fillRect(bx - 2, by - 2, 4, 4);
       }
     }
 
@@ -198,7 +240,7 @@ export class FighterCockpit {
     }
   }
 
-  render(dt, jet, weapons, remoteJets = null) {
+  render(dt, jet, weapons, remoteJets = null, pickups = null) {
     const ctx = this.ctx;
     const w = this.w;
     const h = this.h;
@@ -211,7 +253,7 @@ export class FighterCockpit {
     this.radarTimer += dt;
     if (this.radarTimer >= 0.08) {
       this.radarTimer = 0;
-      this.updateRadar(jet, remoteJets);
+      this.updateRadar(jet, remoteJets, pickups, weapons);
     }
 
     // Subtle cockpit inertia sway on high-G turns & afterburner vibration
@@ -390,8 +432,15 @@ export class FighterCockpit {
     ctx.textAlign = 'center';
     ctx.fillText(String(altFt), hudRight - 15, hudMidY + 7);
 
-    // Yellow "FOX 2" callout when missile fired (exact match to screenshot 3!), or "GUN" during cannon burst
-    if (weapons.fox2Timer > 0) {
+    // Priority HUD callout: "! MISSILE !" > "FOX 2" > "GUN" > "PULL UP"
+    if (weapons.incomingMissile) {
+      if (Math.floor(this.blinkTimer * 10) % 2 === 0) {
+        ctx.fillStyle = '#ff4232';
+        ctx.font = 'bold 8px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('! MISSILE !', cx, hudMidY + 26);
+      }
+    } else if (weapons.fox2Timer > 0) {
       ctx.fillStyle = '#ffe56b';
       ctx.font = 'bold 8px monospace';
       ctx.textAlign = 'center';
@@ -414,13 +463,15 @@ export class FighterCockpit {
       ctx.fillRect(hudLeft + 1, hudBot - 16, hudW - 2, 16);
     }
 
-    // Bottom HUD telemetry row: G | MSL | R (radar altitude)
-    ctx.fillStyle = hudGreen;
+    // Bottom HUD telemetry row: HP | MSL | R (radar altitude)
+    ctx.fillStyle = jet.hp <= 35 ? '#ff5a44' : hudGreen;
     ctx.font = 'bold 7px monospace';
     ctx.textAlign = 'left';
-    ctx.fillText(`G ${jet.gForce.toFixed(1)}`, hudLeft + 4, hudBot - 4);
+    ctx.fillText(`HP ${Math.round(jet.hp)}`, hudLeft + 4, hudBot - 4);
+    ctx.fillStyle = weapons.ammo === 0 && Math.floor(this.blinkTimer * 5) % 2 === 0 ? '#ff5a44' : hudGreen;
     ctx.textAlign = 'center';
     ctx.fillText(`MSL ${weapons.ammo}`, cx, hudBot - 4);
+    ctx.fillStyle = hudGreen;
     ctx.textAlign = 'right';
     ctx.fillText(`R ${radarFt}`, hudRight - 4, hudBot - 4);
 
@@ -735,7 +786,7 @@ export class FighterCockpit {
     const leds = [
       { x: rightX + 25, on: true, onCol: '#69f584', offCol: '#1f3d28' },
       { x: rightX + 34, on: jet.afterburner, onCol: '#ffb842', offCol: '#45321e' },
-      { x: rightX + 43, on: jet.lowAltWarning || weapons.ammo === 0, onCol: '#ff4838', offCol: '#421d1f' },
+      { x: rightX + 43, on: Boolean(weapons.incomingMissile) || jet.lowAltWarning || weapons.ammo === 0, onCol: '#ff4838', offCol: '#421d1f' },
     ];
     for (const l of leds) {
       ctx.beginPath();

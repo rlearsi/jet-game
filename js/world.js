@@ -1374,11 +1374,150 @@ export function buildWorld(scene) {
     heightTex.needsUpdate = true;
   }
 
+  // =========================================================================
+  // 6. WORLD PICKUPS: HEALTH REPAIR POINTS (8) & MISSILE AMMO CRATES (10)
+  // =========================================================================
+  const pickups = [];
+  const healthMat = new THREE.MeshBasicMaterial({ color: 0x38f27c });
+  const healthBoxMat = new THREE.MeshLambertMaterial({ color: 0xf6fff8, flatShading: true });
+  const healthRingMat = new THREE.MeshBasicMaterial({ color: 0x62ff9c, side: THREE.DoubleSide });
+  const healthBeamMat = new THREE.MeshBasicMaterial({
+    color: 0x38f27c,
+    transparent: true,
+    opacity: 0.22,
+    depthWrite: false,
+  });
+
+  const crateBodyMat = new THREE.MeshLambertMaterial({ color: 0xf2932e, flatShading: true });
+  const crateTrimMat = new THREE.MeshLambertMaterial({ color: 0x34384a, flatShading: true });
+  const crateTipMat = new THREE.MeshBasicMaterial({ color: 0xfff08a });
+  const crateRingMat = new THREE.MeshBasicMaterial({ color: 0xffc64a, side: THREE.DoubleSide });
+  const crateBeamMat = new THREE.MeshBasicMaterial({
+    color: 0xffa638,
+    transparent: true,
+    opacity: 0.22,
+    depthWrite: false,
+  });
+
+  const beamGeo = new THREE.CylinderGeometry(1.1, 1.8, 130, 6);
+  const ringGeo = new THREE.RingGeometry(5.6, 6.8, 16);
+  ringGeo.rotateX(-Math.PI / 2);
+
+  const healthCoords = [
+    [-75, 110],   // central bay
+    [-215, 225],  // island airstrip
+    [196, -112],  // eastern village bay
+    [-252, -168], // autumn headland
+    [45, 330],    // southern island
+    [-580, 480],  // terracotta canyon mesa
+    [-720, -280], // volcanic caldera
+    [540, -180],  // eastern alpine foothills
+  ];
+
+  const missileCoords = [
+    [-40, 20],    // central bay ahead of spawn
+    [-160, 145],  // bay approach to airstrip
+    [120, -45],   // eastern strait
+    [-145, -245], // north-west headland
+    [250, -155],  // emerald peninsula
+    [10, -150],   // northern bay
+    [-310, 60],   // western bay
+    [180, 210],   // southeast bay
+    [-380, 320],  // southwest strait
+    [410, 80],    // alpine shore
+  ];
+
+  function addWorldPickup(id, type, x, z) {
+    const baseH = Math.max(WATER_LEVEL, getBaseTerrainHeight(x, z));
+    const y = baseH + (type === 'health' ? 28 : 30);
+
+    const g = new THREE.Group();
+    const core = new THREE.Group();
+
+    if (type === 'health') {
+      const box = new THREE.Mesh(new THREE.BoxGeometry(5.2, 5.2, 5.2), healthBoxMat);
+      const crossH = new THREE.Mesh(new THREE.BoxGeometry(6.0, 1.8, 5.6), healthMat);
+      const crossV = new THREE.Mesh(new THREE.BoxGeometry(1.8, 6.0, 5.6), healthMat);
+      const crossZ = new THREE.Mesh(new THREE.BoxGeometry(5.6, 1.8, 6.0), healthMat);
+      const crossZV = new THREE.Mesh(new THREE.BoxGeometry(5.6, 6.0, 1.8), healthMat);
+      core.add(box, crossH, crossV, crossZ, crossZV);
+    } else {
+      const crate = new THREE.Mesh(new THREE.BoxGeometry(6.6, 4.4, 5.0), crateBodyMat);
+      const band = new THREE.Mesh(new THREE.BoxGeometry(6.9, 1.2, 5.3), crateTrimMat);
+      core.add(crate, band);
+      for (const ox of [-1.8, 0, 1.8]) {
+        const warhead = new THREE.Mesh(new THREE.ConeGeometry(0.65, 2.2, 5), crateTipMat);
+        warhead.position.set(ox, 3.1, 0);
+        core.add(warhead);
+      }
+    }
+
+    const ring = new THREE.Mesh(ringGeo, type === 'health' ? healthRingMat : crateRingMat);
+    const beam = new THREE.Mesh(beamGeo, type === 'health' ? healthBeamMat : crateBeamMat);
+    beam.position.y = 45;
+
+    g.add(core, ring, beam);
+    g.position.set(x, y, z);
+    scene.add(g);
+
+    pickups.push({
+      id,
+      type,
+      x,
+      y,
+      z,
+      baseY: y,
+      active: true,
+      respawnTimer: 0,
+      respawnDuration: type === 'health' ? 20 : 18,
+      group: g,
+      core,
+      ring,
+      phase: rand() * Math.PI * 2,
+    });
+  }
+
+  healthCoords.forEach(([x, z], idx) => addWorldPickup(`hp_${idx}`, 'health', x, z));
+  missileCoords.forEach(([x, z], idx) => addWorldPickup(`msl_${idx}`, 'missile', x, z));
+
+  function getPickups() {
+    return pickups;
+  }
+
+  function collectPickup(jetPos, canCollectFn) {
+    for (const p of pickups) {
+      if (!p.active) continue;
+      if (canCollectFn && !canCollectFn(p)) continue;
+      const dx = jetPos.x - p.x;
+      const dy = jetPos.y - p.y;
+      const dz = jetPos.z - p.z;
+      if (dx * dx + dy * dy + dz * dz <= 24 * 24) {
+        p.active = false;
+        p.respawnTimer = p.respawnDuration;
+        p.group.visible = false;
+        return p;
+      }
+    }
+    return null;
+  }
+
+  function consumePickupById(id) {
+    const p = pickups.find((item) => item.id === id);
+    if (!p || !p.active) return null;
+    p.active = false;
+    p.respawnTimer = p.respawnDuration;
+    p.group.visible = false;
+    return p;
+  }
+
   return {
     damage,
     deformTerrain,
     resetTerrain,
     findLockTarget,
+    getPickups,
+    collectPickup,
+    consumePickupById,
     setTerrainGrain(v) {
       terrainMat.uniforms.uTerrainGrain.value = THREE.MathUtils.clamp(v, 0, 1);
     },
@@ -1468,6 +1607,24 @@ export function buildWorld(scene) {
       for (const lb of lighthouseBeacons) {
         const pulse = 0.8 + 0.35 * Math.sin(time * 3.0 + lb.phase);
         lb.lamp.scale.setScalar(pulse);
+      }
+
+      // Animate & respawn world pickups (health & missile crates)
+      for (const p of pickups) {
+        if (!p.active) {
+          p.respawnTimer -= dt;
+          if (p.respawnTimer <= 0) {
+            p.active = true;
+            p.respawnTimer = 0;
+            p.group.visible = true;
+          }
+          continue;
+        }
+        const bob = Math.sin(time * 2.2 + p.phase) * 2.4;
+        p.y = p.baseY + bob;
+        p.group.position.y = p.y;
+        p.core.rotation.y += 1.3 * dt;
+        p.ring.rotation.z -= 1.8 * dt;
       }
     },
   };

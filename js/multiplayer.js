@@ -62,6 +62,7 @@ export class MultiplayerManager {
     this.localId = makePeerId();
     this.localName = 'ACE-1';
     this.localColor = PILOT_COLORS[0];
+    this.localShip = 'striker';
 
     this.role = null; // 'host' | 'guest' | null
     this.transport = null; // 'php' | 'peerjs' | null
@@ -124,9 +125,10 @@ export class MultiplayerManager {
     return 'peerjs';
   }
 
-  async createRoom({ name = 'HOST', transportPref = 'auto' } = {}) {
+  async createRoom({ name = 'HOST', transportPref = 'auto', ship = 'striker' } = {}) {
     this.leaveRoom();
     this.localName = (name || 'HOST').trim().slice(0, 12) || 'HOST';
+    this.localShip = ship || 'striker';
     this.localId = makePeerId();
     this.localColor = PILOT_COLORS[0];
     this.role = 'host';
@@ -142,6 +144,7 @@ export class MultiplayerManager {
       name: this.localName,
       color: this.localColor,
       colorIndex: 0,
+      ship: this.localShip,
       isHost: true,
       ping: 0,
     });
@@ -184,7 +187,7 @@ export class MultiplayerManager {
     return this.roomCode;
   }
 
-  async joinRoom({ code, name = 'PILOT', transportPref = 'auto' } = {}) {
+  async joinRoom({ code, name = 'PILOT', transportPref = 'auto', ship = 'striker' } = {}) {
     const cleanCode = String(code || '')
       .toUpperCase()
       .replace(/[^A-Z0-9]/g, '')
@@ -195,6 +198,7 @@ export class MultiplayerManager {
 
     this.leaveRoom();
     this.localName = (name || 'PILOT').trim().slice(0, 12) || 'PILOT';
+    this.localShip = ship || 'striker';
     this.localId = makePeerId();
     this.role = 'guest';
     this.roomCode = cleanCode;
@@ -707,6 +711,7 @@ export class MultiplayerManager {
       name: session.name,
       color: session.color,
       colorIndex: session.colorIndex,
+      ship: session.ship || 'striker',
       isHost: false,
       ping: 0,
     });
@@ -732,7 +737,7 @@ export class MultiplayerManager {
     // Broadcast updated roster to everyone
     this.broadcast('events', { t: 'roster', list: Array.from(this.roster.values()) });
     this.emitRoster();
-    this.cb.onPeerJoined?.({ id: session.id, name: session.name, color: session.color });
+    this.cb.onPeerJoined?.({ id: session.id, name: session.name, color: session.color, ship: session.ship || 'striker' });
   }
 
   onGuestConnectedToHost(session) {
@@ -740,6 +745,7 @@ export class MultiplayerManager {
       t: 'hello',
       id: this.localId,
       name: this.localName,
+      ship: this.localShip,
     });
     this.startPingLoop();
     this.setStatus('CONNECTED', `Connected to room ${this.roomCode}`);
@@ -770,14 +776,35 @@ export class MultiplayerManager {
     // 2. Reliable events & handshake
     if (msg.t === 'hello' && this.role === 'host') {
       const session = this.peers.get(fromPeerId);
-      if (session && msg.name) {
-        session.name = String(msg.name).slice(0, 12);
+      if (session) {
+        if (msg.name) session.name = String(msg.name).slice(0, 12);
+        if (msg.ship) session.ship = String(msg.ship);
         const r = this.roster.get(fromPeerId);
         if (r) {
           r.name = session.name;
+          if (msg.ship) r.ship = String(msg.ship);
           this.broadcast('events', { t: 'roster', list: Array.from(this.roster.values()) });
           this.emitRoster();
         }
+        if (msg.ship) {
+          this.cb.onRemoteEvent?.({ t: 'ship', id: fromPeerId, sh: msg.ship, from: fromPeerId });
+        }
+      }
+      return;
+    }
+
+    if (msg.t === 'ship') {
+      const pid = msg.id || fromPeerId;
+      const r = this.roster.get(pid);
+      if (r && msg.sh) {
+        r.ship = String(msg.sh);
+        this.emitRoster();
+      }
+      if (this.role === 'host') {
+        this.broadcast('events', msg, fromPeerId);
+      }
+      if (pid !== this.localId) {
+        this.cb.onRemoteEvent?.(msg);
       }
       return;
     }
@@ -898,6 +925,18 @@ export class MultiplayerManager {
     return this.role !== null && (this.status === 'HOSTING' || this.status === 'CONNECTED');
   }
 
+  setLocalShip(shipId) {
+    this.localShip = shipId || 'striker';
+    const selfEntry = this.roster.get(this.localId);
+    if (selfEntry) {
+      selfEntry.ship = this.localShip;
+      this.emitRoster();
+    }
+    if (this.isActive()) {
+      this.sendEvent({ t: 'ship', id: this.localId, sh: this.localShip });
+    }
+  }
+
   sendLocalState(jet) {
     if (!this.isActive() || this.peers.size === 0) return;
     const now = performance.now();
@@ -920,6 +959,7 @@ export class MultiplayerManager {
       ab: jet.afterburner ? 1 : 0,
       hp: Math.round(jet.hp),
       al: jet.alive ? 1 : 0,
+      sh: jet.shipId || this.localShip,
     };
     this.broadcast('state', pkt);
   }

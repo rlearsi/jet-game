@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { getTerrainHeight, WATER_LEVEL } from './world.js?v=8';
+import { getTerrainHeight, WATER_LEVEL } from './world.js?v=9';
 
 function createDitherExplosionMat(hex) {
   return new THREE.ShaderMaterial({
@@ -50,17 +50,17 @@ export class MissileSystem {
     this.sound = sound;
     this.world = world;
 
-    // Missiles (F / Enter / Middle click)
+    // Missiles (F / Enter / Middle click) — strictly limited; refill via map crates!
     this.maxAmmo = 4;
     this.ammo = 4;
-    this.rechargeTimer = 0;
-    this.rechargeInterval = 1.15;
     this.cooldown = 0;
     this.nextSide = -1;
     this.fox2Timer = 0;
 
     // Rapid-fire Autocannon (Right click)
     this.cannonCooldown = 0;
+    this.cannonRate = 0.068;
+    this.cannonDamage = 16;
     this.cannonSide = 1;
     this.cannonActive = false;
     this.muzzleTimer = 0;
@@ -71,6 +71,7 @@ export class MissileSystem {
     this.killBannerText = '';
     this.killBannerTimer = 0;
     this.lockedTarget = null;
+    this.incomingMissile = null;
 
     this.missiles = [];
     this.bullets = [];
@@ -90,6 +91,29 @@ export class MissileSystem {
 
   setNetHooks(hooks = {}) {
     this.netHooks = hooks || {};
+  }
+
+  setShipStats(stats) {
+    if (!stats) return;
+    const prevMax = this.maxAmmo;
+    this.maxAmmo = stats.maxMissiles || 4;
+    this.cannonRate = stats.cannonCd || 0.068;
+    this.cannonDamage = stats.cannonDmg || 16;
+    if (this.maxAmmo !== prevMax) {
+      this.ammo = this.maxAmmo;
+    } else {
+      this.ammo = Math.min(this.ammo, this.maxAmmo);
+    }
+  }
+
+  refillMissiles(amount = 4) {
+    const before = this.ammo;
+    this.ammo = Math.min(this.maxAmmo, this.ammo + amount);
+    return this.ammo - before;
+  }
+
+  resetAmmo() {
+    this.ammo = this.maxAmmo;
   }
 
   // Destroy all destructible world objects within radius and spawn unmistakable fireball + wreck smoke!
@@ -165,7 +189,7 @@ export class MissileSystem {
     this.cannonActive = true;
     if (this.cannonCooldown > 0) return false;
 
-    this.cannonCooldown = 0.068;
+    this.cannonCooldown = this.cannonRate;
     this.muzzleTimer = 0.045;
     this.cannonSide *= -1;
 
@@ -197,7 +221,14 @@ export class MissileSystem {
   }
 
   tryFireMissile(jet) {
-    if (this.ammo <= 0 || this.cooldown > 0) return false;
+    if (this.cooldown > 0) return false;
+    if (this.ammo <= 0) {
+      this.cooldown = 0.25;
+      this.sound.playEmpty();
+      this.killBannerText = 'OUT OF MISSILES! FIND AMMO CRATE';
+      this.killBannerTimer = 1.4;
+      return false;
+    }
 
     this.ammo--;
     this.cooldown = 0.22;
@@ -206,27 +237,30 @@ export class MissileSystem {
 
     const origin = jet.getWorldPoint(this.nextSide * 1.95, -0.28, -0.2);
     const dir = jet.getForwardDirection();
-    const speed = Math.max(205, jet.speed + 145);
+    const speed = Math.max(155, jet.speed + 85);
 
     const mesh = new THREE.Mesh(this.missileGeo, this.missileMat);
     mesh.position.copy(origin);
     mesh.lookAt(origin.clone().add(dir));
     this.scene.add(mesh);
 
+    const targetId = this.lockedTarget?.isPlayer ? this.lockedTarget.id : null;
     this.missiles.push({
       mesh,
       pos: origin.clone(),
       vel: dir.clone().multiplyScalar(speed),
       speed,
       target: this.lockedTarget && this.lockedTarget.alive ? this.lockedTarget : null,
-      life: 6.5,
+      targetsLocalPlayer: false,
+      evaded: false,
+      life: 7.5,
       smokeAcc: 0,
       isRemote: false,
     });
 
     this.shake = Math.max(this.shake, 0.3);
     this.sound.playMissile();
-    this.netHooks.onMissile?.({ origin, dir, speed });
+    this.netHooks.onMissile?.({ origin, dir, speed, targetId });
     return true;
   }
 
@@ -247,7 +281,7 @@ export class MissileSystem {
     });
   }
 
-  spawnRemoteMissile(origin, dir, speed) {
+  spawnRemoteMissile(origin, dir, speed, targetId = null, _fromId = null, localJet = null, localId = null) {
     const o = new THREE.Vector3(origin.x, origin.y, origin.z);
     const d = new THREE.Vector3(dir.x, dir.y, dir.z).normalize();
     const mesh = new THREE.Mesh(this.missileGeo, this.missileMat);
@@ -255,16 +289,58 @@ export class MissileSystem {
     mesh.lookAt(o.clone().add(d));
     this.scene.add(mesh);
 
+    const locksLocal = Boolean(targetId && localId && targetId === localId && localJet && localJet.alive);
     this.missiles.push({
       mesh,
       pos: o,
       vel: d.multiplyScalar(speed),
       speed,
-      target: null,
-      life: 6.5,
+      target: locksLocal ? localJet : null,
+      targetsLocalPlayer: locksLocal,
+      evaded: false,
+      life: 7.5,
       smokeAcc: 0,
       isRemote: true,
     });
+  }
+
+  spawnTestThreat(jet) {
+    const fwd = jet.getForwardDirection();
+    const origin = jet.position.clone().addScaledVector(fwd, -360).add(new THREE.Vector3(45, 22, 0));
+    const dir = jet.position.clone().sub(origin).normalize();
+    const speed = Math.max(155, jet.speed + 80);
+    const mesh = new THREE.Mesh(this.missileGeo, this.missileMat);
+    mesh.position.copy(origin);
+    mesh.lookAt(origin.clone().add(dir));
+    this.scene.add(mesh);
+
+    this.missiles.push({
+      mesh,
+      pos: origin,
+      vel: dir.multiplyScalar(speed),
+      speed,
+      target: jet,
+      targetsLocalPlayer: true,
+      isTestThreat: true,
+      evaded: false,
+      life: 7.5,
+      smokeAcc: 0,
+      isRemote: true,
+    });
+  }
+
+  spawnPickupBurst(pos, isHealth) {
+    const p = new THREE.Vector3(pos.x, pos.y, pos.z);
+    const colA = isHealth ? 0x38f27c : 0xffb842;
+    const colB = isHealth ? 0xb4ffd0 : 0xfff08a;
+    for (let i = 0; i < 16; i++) {
+      const vel = new THREE.Vector3(
+        (Math.random() - 0.5) * 24,
+        (Math.random() - 0.3) * 22,
+        (Math.random() - 0.5) * 24
+      );
+      this.spawnParticle(p, vel, 1.1 + Math.random() * 0.9, 0.55 + Math.random() * 0.35, i % 2 === 0 ? colA : colB, 2.2, true);
+    }
   }
 
   applyRemoteDeform(x, z, r, d, dx, dz) {
@@ -421,6 +497,7 @@ export class MissileSystem {
             get x() { return rj.position.x; },
             get y() { return rj.position.y - 2.5; },
             get z() { return rj.position.z; },
+            get rollExtra() { return rj.rollExtra; },
             h: 5.0,
             get alive() { return rj.alive; },
           };
@@ -428,16 +505,6 @@ export class MissileSystem {
       }
     }
     this.lockedTarget = bestTarget;
-
-    if (this.ammo < this.maxAmmo) {
-      this.rechargeTimer += dt;
-      if (this.rechargeTimer >= this.rechargeInterval) {
-        this.rechargeTimer = 0;
-        this.ammo++;
-      }
-    } else {
-      this.rechargeTimer = 0;
-    }
 
     // Update cannon tracer rounds (sweep segment + splash damage on ground/water impact!)
     for (let i = this.bullets.length - 1; i >= 0; i--) {
@@ -456,7 +523,7 @@ export class MissileSystem {
               hitObj = true;
               this.hitMarkerTimer = 0.28;
               this.spawnCannonImpact(b.pos, false, time);
-              this.netHooks.onHitPlayer?.(rj.id, 16, 'cannon');
+              this.netHooks.onHitPlayer?.(rj.id, this.cannonDamage, 'cannon');
               break;
             }
           }
@@ -520,23 +587,51 @@ export class MissileSystem {
       }
     }
 
-    // Update missiles (gentle heat-seeking homing + proximity blast + water/ground blast!)
+    // Update missiles (heat-seeking homing + evasion + proximity blast + incoming RWR alert!)
+    let closestIncoming = null;
     for (let i = this.missiles.length - 1; i >= 0; i--) {
       const m = this.missiles[i];
       m.life -= dt;
 
       if (m.target && m.target.alive) {
-        const ty = m.target.y + (m.target.h || 6) * 0.5;
-        const desiredDir = new THREE.Vector3(m.target.x - m.pos.x, ty - m.pos.y, m.target.z - m.pos.z).normalize();
+        const tx = m.target.position ? m.target.position.x : m.target.x;
+        const ty = m.target.position ? m.target.position.y : m.target.y + (m.target.h || 6) * 0.5;
+        const tz = m.target.position ? m.target.position.z : m.target.z;
+        const desiredVec = new THREE.Vector3(tx - m.pos.x, ty - m.pos.y, tz - m.pos.z);
+        const dist = desiredVec.length() || 1;
+        const desiredDir = desiredVec.divideScalar(dist);
         const curDir = m.vel.clone().normalize();
-        curDir.lerp(desiredDir, Math.min(1, dt * 4.8)).normalize();
-        m.vel.copy(curDir).multiplyScalar(m.speed);
+        const dot = curDir.dot(desiredDir);
+        const targetRoll = m.target.rollExtra || 0;
+
+        // Barrel roll or sharp high-G turn breaks seeker lock!
+        if ((Math.abs(targetRoll) > 0.35 && dist < 150) || (dot < 0.36 && dist < 220)) {
+          m.target = null;
+          m.evaded = true;
+          if (m.targetsLocalPlayer) {
+            this.killBannerText = 'MISSILE EVADED!';
+            this.killBannerTimer = 1.6;
+          }
+        } else {
+          curDir.lerp(desiredDir, Math.min(1, dt * 2.65)).normalize();
+          m.vel.copy(curDir).multiplyScalar(m.speed);
+          if (m.targetsLocalPlayer && (!closestIncoming || dist < closestIncoming.dist)) {
+            closestIncoming = { missile: m, dist, pos: m.pos.clone() };
+          }
+        }
       } else {
         m.vel.y -= 5.5 * dt;
       }
 
       const mPrev = m.pos.clone();
       m.pos.addScaledVector(m.vel, dt);
+
+      if (m.isTestThreat && m.target && m.target.alive && m.pos.distanceTo(jet.position) < 16.0) {
+        this.spawnImpact(m.pos, false, time);
+        this.scene.remove(m.mesh);
+        this.missiles.splice(i, 1);
+        continue;
+      }
 
       let directHit = false;
       let hitRemotePlayer = false;
@@ -649,6 +744,9 @@ export class MissileSystem {
         this.missiles.splice(i, 1);
       }
     }
+
+    this.incomingMissile = closestIncoming;
+    this.sound.updateMissileAlert(dt, closestIncoming ? closestIncoming.dist : 0);
 
     // Update persistent burning wreck smoke columns
     for (let i = this.burners.length - 1; i >= 0; i--) {

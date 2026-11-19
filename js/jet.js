@@ -1,13 +1,141 @@
 import * as THREE from 'three';
-import { getTerrainHeight, WATER_LEVEL, SUN_DIR } from './world.js?v=8';
+import { getTerrainHeight, WATER_LEVEL, SUN_DIR } from './world.js?v=9';
+
+export const SHIP_IDS = ['striker', 'viper', 'phantom', 'hornet', 'starfire'];
+
+export const SHIP_CATALOG = {
+  striker: {
+    id: 'striker',
+    name: 'F-22 STRIKER',
+    role: 'BALANCED MULTIROLE',
+    cruiseSpeed: 64,
+    abSpeed: 98,
+    turnRate: 1.32,
+    abTurnRate: 1.05,
+    bankMax: 1.15,
+    maxHp: 100,
+    maxMissiles: 4,
+    cannonCd: 0.068,
+    cannonDmg: 16,
+    palette: {
+      base: '#e5eaf6',
+      shade: '#cfd7ea',
+      camo1: '#8b93ae',
+      camo2: '#6c7490',
+      wingPatch: '#aeb6ce',
+      accent: '#e55238',
+      canopyTop: '#f8d84e',
+      canopyHi: '#fff7c4',
+      canopyBot: '#e3a12a',
+    },
+  },
+  viper: {
+    id: 'viper',
+    name: 'X-29 VIPER',
+    role: 'AGILE INTERCEPTOR',
+    cruiseSpeed: 72,
+    abSpeed: 112,
+    turnRate: 1.62,
+    abTurnRate: 1.32,
+    bankMax: 1.30,
+    maxHp: 80,
+    maxMissiles: 4,
+    cannonCd: 0.056,
+    cannonDmg: 15,
+    palette: {
+      base: '#eef4ff',
+      shade: '#d4e2f8',
+      camo1: '#5272b8',
+      camo2: '#39528f',
+      wingPatch: '#7e9ee0',
+      accent: '#28c4ff',
+      canopyTop: '#76f0ff',
+      canopyHi: '#dcffff',
+      canopyBot: '#29b4d4',
+    },
+  },
+  phantom: {
+    id: 'phantom',
+    name: 'B-17 PHANTOM',
+    role: 'STEALTH MISSILE BOAT',
+    cruiseSpeed: 56,
+    abSpeed: 86,
+    turnRate: 1.06,
+    abTurnRate: 0.84,
+    bankMax: 0.96,
+    maxHp: 150,
+    maxMissiles: 8,
+    cannonCd: 0.082,
+    cannonDmg: 22,
+    palette: {
+      base: '#707892',
+      shade: '#59607a',
+      camo1: '#495069',
+      camo2: '#33384d',
+      wingPatch: '#838ba6',
+      accent: '#ffb842',
+      canopyTop: '#ffb842',
+      canopyHi: '#ffe59c',
+      canopyBot: '#d97a24',
+    },
+  },
+  hornet: {
+    id: 'hornet',
+    name: 'F-14 HORNET',
+    role: 'HEAVY GUNSHIP',
+    cruiseSpeed: 60,
+    abSpeed: 94,
+    turnRate: 1.22,
+    abTurnRate: 0.96,
+    bankMax: 1.08,
+    maxHp: 125,
+    maxMissiles: 6,
+    cannonCd: 0.064,
+    cannonDmg: 18,
+    palette: {
+      base: '#eee0b8',
+      shade: '#d8c79b',
+      camo1: '#88866c',
+      camo2: '#64634c',
+      wingPatch: '#b4ad86',
+      accent: '#e8682c',
+      canopyTop: '#f8d84e',
+      canopyHi: '#fff7c4',
+      canopyBot: '#e3a12a',
+    },
+  },
+  starfire: {
+    id: 'starfire',
+    name: 'SU-47 STARFIRE',
+    role: 'SUPERSONIC STRIKER',
+    cruiseSpeed: 76,
+    abSpeed: 118,
+    turnRate: 1.44,
+    abTurnRate: 1.15,
+    bankMax: 1.22,
+    maxHp: 90,
+    maxMissiles: 6,
+    cannonCd: 0.066,
+    cannonDmg: 16,
+    palette: {
+      base: '#f2eef7',
+      shade: '#dcd4eb',
+      camo1: '#7e7596',
+      camo2: '#564e6d',
+      wingPatch: '#b6add1',
+      accent: '#d94438',
+      canopyTop: '#ffe266',
+      canopyHi: '#fff9cc',
+      canopyBot: '#eb9e28',
+    },
+  },
+};
 
 /**
  * Custom top-down pixel-art texture mapped directly onto the sculpted 3D fighter planform.
- * Matches the bright silver-white wings, jagged lavender-slate dorsal camo, squadron
- * intake/wingtip accents, and dark nose tip seen in the reference screenshots.
  * UV convention: u = x / 8.4 + 0.5 (left=-4.2..right=+4.2), v = (z + 4.1) / 7.0 (nose=-4.1..tail=+2.9)
  */
-function createPlanformTexture(accentHex = '#e55238') {
+function createPlanformTexture(accentHex = '#e55238', pal = SHIP_CATALOG.striker.palette) {
   const S = 128;
   const c = document.createElement('canvas');
   c.width = S;
@@ -18,16 +146,16 @@ function createPlanformTexture(accentHex = '#e55238') {
   const toU = (x) => Math.round((x / 8.4 + 0.5) * S);
   const toV = (z) => Math.round(((z + 4.1) / 7.0) * S);
 
-  // 1. Bright icy silver-white base across entire aircraft
-  ctx.fillStyle = '#e5eaf6';
+  // 1. Bright base across entire aircraft
+  ctx.fillStyle = pal.base;
   ctx.fillRect(0, 0, S, S);
 
-  // 2. Soft cool-silver shading toward wing trailing edges & tailplanes
-  ctx.fillStyle = '#cfd7ea';
+  // 2. Soft shading toward wing trailing edges & tailplanes
+  ctx.fillStyle = pal.shade;
   ctx.fillRect(0, toV(0.65), S, S - toV(0.65));
 
-  // 3. Signature jagged dorsal camouflage pattern (matches screenshots 2, 5, 6, 7!)
-  ctx.fillStyle = '#8b93ae';
+  // 3. Signature jagged dorsal camouflage pattern
+  ctx.fillStyle = pal.camo1;
   ctx.beginPath();
   ctx.moveTo(toU(0.0), toV(-2.2));
   ctx.lineTo(toU(0.75), toV(-1.1));
@@ -46,8 +174,8 @@ function createPlanformTexture(accentHex = '#e55238') {
   ctx.closePath();
   ctx.fill();
 
-  // Deeper slate-lavender inner spine & twin-engine valley
-  ctx.fillStyle = '#6c7490';
+  // Deeper inner spine & twin-engine valley
+  ctx.fillStyle = pal.camo2;
   ctx.beginPath();
   ctx.moveTo(toU(0.0), toV(-1.0));
   ctx.lineTo(toU(0.62), toV(-0.2));
@@ -61,12 +189,12 @@ function createPlanformTexture(accentHex = '#e55238') {
   ctx.closePath();
   ctx.fill();
 
-  // Crisp light-silver dorsal highlight ridge down the center spine
-  ctx.fillStyle = '#dde3f2';
+  // Crisp light dorsal highlight ridge down the center spine
+  ctx.fillStyle = pal.base;
   ctx.fillRect(toU(-0.24), toV(-0.7), toU(0.24) - toU(-0.24), toV(0.65) - toV(-0.7));
 
   // Subtle wing splinter patches on outer wings
-  ctx.fillStyle = '#aeb6ce';
+  ctx.fillStyle = pal.wingPatch;
   for (const side of [-1, 1]) {
     ctx.beginPath();
     ctx.moveTo(toU(side * 1.9), toV(0.15));
@@ -117,18 +245,18 @@ function createPlanformTexture(accentHex = '#e55238') {
   return tex;
 }
 
-function createCanopyTexture() {
+function createCanopyTexture(pal = SHIP_CATALOG.striker.palette) {
   const c = document.createElement('canvas');
   c.width = 16;
   c.height = 32;
   const ctx = c.getContext('2d');
   ctx.imageSmoothingEnabled = false;
 
-  ctx.fillStyle = '#f8d84e';
+  ctx.fillStyle = pal.canopyTop;
   ctx.fillRect(0, 0, 16, 32);
-  ctx.fillStyle = '#fff7c4';
+  ctx.fillStyle = pal.canopyHi;
   ctx.fillRect(4, 5, 8, 13);
-  ctx.fillStyle = '#e3a12a';
+  ctx.fillStyle = pal.canopyBot;
   ctx.fillRect(0, 23, 16, 9);
   ctx.fillStyle = '#222638';
   ctx.fillRect(0, 0, 16, 2);
@@ -141,17 +269,17 @@ function createCanopyTexture() {
   return tex;
 }
 
-function createFinTexture(accentHex = '#e65238') {
+function createFinTexture(accentHex = '#e65238', pal = SHIP_CATALOG.striker.palette) {
   const c = document.createElement('canvas');
   c.width = 16;
   c.height = 16;
   const ctx = c.getContext('2d');
   ctx.imageSmoothingEnabled = false;
 
-  // Light silver tail fin with slate lower patch, crisp squadron top tip & dark ink border
-  ctx.fillStyle = '#dce3f2';
+  // Tail fin with ship palette lower patch, crisp squadron top tip & dark ink border
+  ctx.fillStyle = pal.base;
   ctx.fillRect(0, 0, 16, 16);
-  ctx.fillStyle = '#7e86a2';
+  ctx.fillStyle = pal.camo1;
   ctx.fillRect(0, 9, 16, 7);
   ctx.fillStyle = accentHex;
   ctx.fillRect(1, 1, 14, 3);
@@ -213,22 +341,22 @@ function createBrightJetMaterial(tex, tintHex = 0xffffff) {
   });
 }
 
+const DEFAULT_FUSELAGE_STATIONS = [
+  { z: -3.95, w: 0.03, chineW: 0.03, top: 0.02, midY: 0.0, bot: -0.02 },
+  { z: -3.25, w: 0.24, chineW: 0.30, top: 0.16, midY: 0.01, bot: -0.12 },
+  { z: -2.30, w: 0.48, chineW: 0.62, top: 0.28, midY: 0.02, bot: -0.18 },
+  { z: -1.25, w: 0.72, chineW: 1.06, top: 0.34, midY: 0.04, bot: -0.22 },
+  { z: 0.15, w: 0.88, chineW: 1.18, top: 0.34, midY: 0.04, bot: -0.22 },
+  { z: 1.30, w: 0.86, chineW: 1.08, top: 0.30, midY: 0.02, bot: -0.20 },
+  { z: 2.25, w: 0.76, chineW: 0.90, top: 0.22, midY: 0.0, bot: -0.16 },
+  { z: 2.52, w: 0.60, chineW: 0.68, top: 0.14, midY: 0.0, bot: -0.12 },
+];
+
 /**
  * Builds a single continuous sculpted blended-wing-body fuselage (no stacked boxes!).
  * Cross-sections are lofted smoothly from the needle nose to twin engine nacelles.
  */
-function buildSculptedFuselage() {
-  // Each station: { z, w (half-width), top, midY, bot, chineW }
-  const stations = [
-    { z: -3.95, w: 0.03, chineW: 0.03, top: 0.02, midY: 0.0, bot: -0.02 },
-    { z: -3.25, w: 0.24, chineW: 0.30, top: 0.16, midY: 0.01, bot: -0.12 },
-    { z: -2.30, w: 0.48, chineW: 0.62, top: 0.28, midY: 0.02, bot: -0.18 },
-    { z: -1.25, w: 0.72, chineW: 1.06, top: 0.34, midY: 0.04, bot: -0.22 }, // LERX shoulders
-    { z: 0.15, w: 0.88, chineW: 1.18, top: 0.34, midY: 0.04, bot: -0.22 },
-    { z: 1.30, w: 0.86, chineW: 1.08, top: 0.30, midY: 0.02, bot: -0.20 },
-    { z: 2.25, w: 0.76, chineW: 0.90, top: 0.22, midY: 0.0, bot: -0.16 },
-    { z: 2.52, w: 0.60, chineW: 0.68, top: 0.14, midY: 0.0, bot: -0.12 },
-  ];
+function buildSculptedFuselage(stations = DEFAULT_FUSELAGE_STATIONS) {
 
   // 8-point octagonal airfoil cross-section per station (CW from top-center looking from +Z)
   const rings = stations.map((s) => [
@@ -283,10 +411,10 @@ function buildSculptedFuselage() {
 }
 
 /**
- * Builds a sleek tapered airfoil surface (used for swept main wings & horizontal tailplanes)
+ * Builds a sleek tapered airfoil surface (used for swept main wings, canards & tailplanes)
  * with sharp leading/trailing edges and exact top-down planform UV mapping.
  */
-function buildAirfoilSurface(side, rootLE, rootTE, tipLE, tipTE, rootThick, tipThick, yOff = 0.02) {
+export function buildAirfoilSurface(side, rootLE, rootTE, tipLE, tipTE, rootThick, tipThick, yOff = 0.02) {
   const s = side; // -1 left, +1 right
   const rMidZ = (rootLE[1] + rootTE[1]) * 0.5;
   const tMidZ = (tipLE[1] + tipTE[1]) * 0.5;
@@ -489,73 +617,196 @@ class RibbonTrail {
 }
 
 /**
- * Shared sculpted 3D fighter jet visual rig (used by both local FighterJet and RemoteJet).
+ * Shared sculpted 3D fighter jet visual rig supporting 5 distinct ship varieties.
  */
-function buildJetVisualRig(accentHex = '#e55238') {
+function buildJetVisualRig(shipId = 'striker', accentOverride = null) {
+  const spec = SHIP_CATALOG[shipId] || SHIP_CATALOG.striker;
+  const pal = spec.palette;
+  const accentHex = accentOverride || pal.accent;
+
   const group = new THREE.Group();
   const visual = new THREE.Group();
   const hullGroup = new THREE.Group(); // meshes included in the crisp 1px silhouette outline pass
   visual.add(hullGroup);
   group.add(visual);
 
-  const planTex = createPlanformTexture(accentHex);
-  const canopyTex = createCanopyTexture();
-  const finTex = createFinTexture(accentHex);
+  const planTex = createPlanformTexture(accentHex, pal);
+  const canopyTex = createCanopyTexture(pal);
+  const finTex = createFinTexture(accentHex, pal);
 
   const bodyMat = createBrightJetMaterial(planTex, 0xffffff);
   const finMat = createBrightJetMaterial(finTex, 0xffffff);
   const canopyMat = new THREE.MeshBasicMaterial({ map: canopyTex });
   const nozzleMat = new THREE.MeshBasicMaterial({ color: 0x2c3044 });
+  const podMat = new THREE.MeshBasicMaterial({ color: 0x3b4157 });
 
-  // 1. Continuous sculpted blended-wing-body fuselage
-  const fuselage = new THREE.Mesh(buildSculptedFuselage(), bodyMat);
-  hullGroup.add(fuselage);
+  // Ship-specific fuselage profiles
+  let stations = DEFAULT_FUSELAGE_STATIONS;
+  if (shipId === 'phantom') {
+    stations = [
+      { z: -3.45, w: 0.06, chineW: 0.08, top: 0.02, midY: 0.0, bot: -0.02 },
+      { z: -2.40, w: 0.65, chineW: 0.95, top: 0.22, midY: 0.02, bot: -0.14 },
+      { z: -1.10, w: 1.05, chineW: 1.65, top: 0.30, midY: 0.04, bot: -0.18 },
+      { z: 0.35, w: 1.25, chineW: 1.85, top: 0.30, midY: 0.04, bot: -0.18 },
+      { z: 1.65, w: 1.15, chineW: 1.60, top: 0.24, midY: 0.02, bot: -0.16 },
+      { z: 2.38, w: 0.82, chineW: 1.05, top: 0.14, midY: 0.0, bot: -0.12 },
+    ];
+  } else if (shipId === 'starfire') {
+    stations = [
+      { z: -4.35, w: 0.03, chineW: 0.03, top: 0.02, midY: 0.0, bot: -0.02 },
+      { z: -3.35, w: 0.24, chineW: 0.32, top: 0.16, midY: 0.01, bot: -0.12 },
+      { z: -2.20, w: 0.50, chineW: 0.66, top: 0.28, midY: 0.02, bot: -0.18 },
+      { z: -1.05, w: 0.74, chineW: 1.08, top: 0.34, midY: 0.04, bot: -0.22 },
+      { z: 0.25, w: 0.88, chineW: 1.18, top: 0.34, midY: 0.04, bot: -0.22 },
+      { z: 1.40, w: 0.86, chineW: 1.08, top: 0.28, midY: 0.02, bot: -0.20 },
+      { z: 2.38, w: 0.72, chineW: 0.86, top: 0.18, midY: 0.0, bot: -0.14 },
+      { z: 2.62, w: 0.58, chineW: 0.66, top: 0.12, midY: 0.0, bot: -0.10 },
+    ];
+  } else if (shipId === 'viper') {
+    stations = [
+      { z: -3.85, w: 0.03, chineW: 0.03, top: 0.02, midY: 0.0, bot: -0.02 },
+      { z: -3.05, w: 0.22, chineW: 0.28, top: 0.15, midY: 0.01, bot: -0.11 },
+      { z: -2.05, w: 0.42, chineW: 0.54, top: 0.26, midY: 0.02, bot: -0.16 },
+      { z: -0.95, w: 0.62, chineW: 0.86, top: 0.32, midY: 0.04, bot: -0.20 },
+      { z: 0.30, w: 0.72, chineW: 0.94, top: 0.32, midY: 0.04, bot: -0.20 },
+      { z: 1.50, w: 0.66, chineW: 0.82, top: 0.26, midY: 0.02, bot: -0.18 },
+      { z: 2.45, w: 0.48, chineW: 0.58, top: 0.16, midY: 0.0, bot: -0.12 },
+    ];
+  }
 
-  // 2. Sculpted swept main delta-arrow wings
+  // 1. Continuous sculpted fuselage
+  hullGroup.add(new THREE.Mesh(buildSculptedFuselage(stations), bodyMat));
+
+  let wingtipPoint = [3.95, 0.03, 0.96];
+  let canopyPos = [0, 0.24, -1.62];
+  let nozzleX = 0.40;
+  let nozzleZ = 2.60;
+
+  if (shipId === 'viper') {
+    // Forward-swept main wings + front canards + single tall central vertical fin
+    wingtipPoint = [3.85, 0.04, -0.58];
+    canopyPos = [0, 0.24, -1.55];
+    nozzleX = 0.28;
+    nozzleZ = 2.52;
+    for (const side of [-1, 1]) {
+      hullGroup.add(new THREE.Mesh(
+        buildAirfoilSurface(side, [0.72, -0.10], [0.72, 1.35], [3.85, -1.05], [3.85, -0.55], 0.22, 0.06, 0.03),
+        bodyMat
+      ));
+      // Agile front canards
+      hullGroup.add(new THREE.Mesh(
+        buildAirfoilSurface(side, [0.46, -2.55], [0.46, -2.02], [1.62, -2.18], [1.62, -1.78], 0.12, 0.05, 0.03),
+        bodyMat
+      ));
+      // Compact tailplane
+      hullGroup.add(new THREE.Mesh(
+        buildAirfoilSurface(side, [0.58, 1.48], [0.58, 2.25], [1.75, 1.92], [1.75, 2.38], 0.12, 0.05, 0.01),
+        bodyMat
+      ));
+    }
+    const centerFin = new THREE.Mesh(buildVerticalFin(0), finMat);
+    centerFin.scale.set(1.0, 1.25, 1.1);
+    centerFin.position.set(0, 0.24, 1.65);
+    hullGroup.add(centerFin);
+  } else if (shipId === 'phantom') {
+    // Broad stealth flying-wing delta (no rear horizontal stabilizers)
+    wingtipPoint = [4.65, 0.03, 1.72];
+    canopyPos = [0, 0.22, -1.35];
+    nozzleX = 0.56;
+    nozzleZ = 2.48;
+    for (const side of [-1, 1]) {
+      hullGroup.add(new THREE.Mesh(
+        buildAirfoilSurface(side, [1.05, -1.75], [1.05, 1.52], [4.65, 0.92], [4.65, 1.75], 0.26, 0.08, 0.03),
+        bodyMat
+      ));
+      const fin = new THREE.Mesh(buildVerticalFin(side), finMat);
+      fin.scale.set(1.0, 0.78, 1.15);
+      fin.position.set(side * 1.15, 0.16, 1.48);
+      hullGroup.add(fin);
+    }
+  } else if (shipId === 'hornet') {
+    // Broad high-aspect wings + wide twin tails + twin underwing missile pods
+    wingtipPoint = [4.35, 0.04, 0.42];
+    canopyPos = [0, 0.25, -1.58];
+    nozzleX = 0.46;
+    nozzleZ = 2.62;
+    for (const side of [-1, 1]) {
+      hullGroup.add(new THREE.Mesh(
+        buildAirfoilSurface(side, [0.88, -1.32], [0.88, 1.10], [4.35, -0.18], [4.35, 0.46], 0.25, 0.08, 0.03),
+        bodyMat
+      ));
+      hullGroup.add(new THREE.Mesh(
+        buildAirfoilSurface(side, [0.78, 1.40], [0.78, 2.34], [2.42, 1.96], [2.42, 2.48], 0.15, 0.06, 0.01),
+        bodyMat
+      ));
+      const fin = new THREE.Mesh(buildVerticalFin(side), finMat);
+      fin.scale.set(1.0, 1.1, 1.05);
+      fin.position.set(side * 0.88, 0.20, 1.66);
+      hullGroup.add(fin);
+
+      // Underwing missile/gun pod
+      const pod = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 1.6, 6), podMat);
+      pod.rotation.x = Math.PI / 2;
+      pod.position.set(side * 1.85, -0.18, 0.12);
+      hullGroup.add(pod);
+    }
+  } else if (shipId === 'starfire') {
+    // Double-delta supersonic fighter with front canards & extra-long nose
+    wingtipPoint = [4.10, 0.03, 1.24];
+    canopyPos = [0, 0.24, -1.85];
+    nozzleX = 0.40;
+    nozzleZ = 2.68;
+    for (const side of [-1, 1]) {
+      hullGroup.add(new THREE.Mesh(
+        buildAirfoilSurface(side, [0.85, -1.25], [0.85, 1.25], [4.10, 0.72], [4.10, 1.26], 0.24, 0.07, 0.03),
+        bodyMat
+      ));
+      hullGroup.add(new THREE.Mesh(
+        buildAirfoilSurface(side, [0.50, -2.55], [0.50, -1.85], [1.75, -1.85], [1.75, -1.42], 0.13, 0.05, 0.03),
+        bodyMat
+      ));
+      hullGroup.add(new THREE.Mesh(
+        buildAirfoilSurface(side, [0.72, 1.42], [0.72, 2.36], [2.25, 2.04], [2.25, 2.52], 0.14, 0.06, 0.01),
+        bodyMat
+      ));
+      const fin = new THREE.Mesh(buildVerticalFin(side), finMat);
+      fin.position.set(side * 0.66, 0.20, 1.72);
+      hullGroup.add(fin);
+    }
+  } else {
+    // Default 'striker' (F-22 Striker)
+    for (const side of [-1, 1]) {
+      hullGroup.add(new THREE.Mesh(
+        buildAirfoilSurface(side, [0.85, -1.25], [0.85, 1.08], [3.95, 0.56], [3.95, 0.98], 0.24, 0.07, 0.03),
+        bodyMat
+      ));
+      hullGroup.add(new THREE.Mesh(
+        buildAirfoilSurface(side, [0.72, 1.38], [0.72, 2.28], [2.22, 1.98], [2.22, 2.46], 0.14, 0.06, 0.01),
+        bodyMat
+      ));
+      const fin = new THREE.Mesh(buildVerticalFin(side), finMat);
+      fin.position.set(side * 0.64, 0.20, 1.66);
+      hullGroup.add(fin);
+    }
+  }
+
+  // Twin tapered engine exhaust nozzles
   for (const side of [-1, 1]) {
-    const wingGeo = buildAirfoilSurface(
-      side,
-      [0.85, -1.25],
-      [0.85, 1.08],
-      [3.95, 0.56],
-      [3.95, 0.98],
-      0.24,
-      0.07,
-      0.03
-    );
-    hullGroup.add(new THREE.Mesh(wingGeo, bodyMat));
-
-    const tailGeo = buildAirfoilSurface(
-      side,
-      [0.72, 1.38],
-      [0.72, 2.28],
-      [2.22, 1.98],
-      [2.22, 2.46],
-      0.14,
-      0.06,
-      0.01
-    );
-    hullGroup.add(new THREE.Mesh(tailGeo, bodyMat));
-
-    const fin = new THREE.Mesh(buildVerticalFin(side), finMat);
-    fin.position.set(side * 0.64, 0.20, 1.66);
-    hullGroup.add(fin);
-
     const nozGeo = new THREE.CylinderGeometry(0.22, 0.28, 0.58, 7);
     nozGeo.rotateX(Math.PI / 2);
     const noz = new THREE.Mesh(nozGeo, nozzleMat);
-    noz.position.set(side * 0.40, 0.0, 2.60);
+    noz.position.set(side * nozzleX, 0.0, nozzleZ);
     hullGroup.add(noz);
   }
 
-  // 3. Sculpted teardrop golden-yellow bubble canopy
+  // Sculpted teardrop bubble canopy
   const canopyGeo = new THREE.SphereGeometry(1.0, 10, 8, 0, Math.PI * 2, 0, Math.PI * 0.62);
   const canopy = new THREE.Mesh(canopyGeo, canopyMat);
   canopy.scale.set(0.32, 0.30, 1.05);
-  canopy.position.set(0, 0.24, -1.62);
+  canopy.position.set(canopyPos[0], canopyPos[1], canopyPos[2]);
   hullGroup.add(canopy);
 
-  // 4. Twin animated afterburner flames
+  // Twin animated afterburner flames
   const flameOuterMat = new THREE.MeshBasicMaterial({ color: 0xff8026 });
   const flameInnerMat = new THREE.MeshBasicMaterial({ color: 0xfff6a0 });
   const outerConeGeo = new THREE.ConeGeometry(0.23, 2.25, 6);
@@ -567,23 +818,23 @@ function buildJetVisualRig(accentHex = '#e55238') {
   innerConeGeo.translate(0, 0, 0.72);
 
   const flameL = new THREE.Group();
-  flameL.position.set(-0.40, 0.0, 2.82);
+  flameL.position.set(-nozzleX, 0.0, nozzleZ + 0.22);
   flameL.add(new THREE.Mesh(outerConeGeo, flameOuterMat), new THREE.Mesh(innerConeGeo, flameInnerMat));
   visual.add(flameL);
 
   const flameR = new THREE.Group();
-  flameR.position.set(0.40, 0.0, 2.82);
+  flameR.position.set(nozzleX, 0.0, nozzleZ + 0.22);
   flameR.add(new THREE.Mesh(outerConeGeo, flameOuterMat), new THREE.Mesh(innerConeGeo, flameInnerMat));
   visual.add(flameR);
 
-  // 5. Cannon muzzle flash at starboard wing-root gun port
+  // Cannon muzzle flash at starboard wing-root gun port
   const muzzleMat = new THREE.MeshBasicMaterial({ color: 0xfff49e });
   const muzzleFlash = new THREE.Mesh(new THREE.OctahedronGeometry(0.38, 0), muzzleMat);
   muzzleFlash.position.set(0.75, 0.0, -1.55);
   muzzleFlash.visible = false;
   visual.add(muzzleFlash);
 
-  return { group, visual, hullGroup, flameL, flameR, muzzleFlash };
+  return { group, visual, hullGroup, flameL, flameR, muzzleFlash, wingtipPoint, nozzleX, nozzleZ, spec };
 }
 
 function lerpAngle(a, b, t) {
@@ -592,15 +843,20 @@ function lerpAngle(a, b, t) {
 }
 
 export class FighterJet {
-  constructor(scene) {
+  constructor(scene, shipId = 'striker') {
     this.scene = scene;
-    const rig = buildJetVisualRig('#e55238');
+    this.shipId = SHIP_CATALOG[shipId] ? shipId : 'striker';
+    this.stats = SHIP_CATALOG[this.shipId];
+    const rig = buildJetVisualRig(this.shipId);
     this.group = rig.group;
     this.visual = rig.visual;
     this.hullGroup = rig.hullGroup;
     this.flameL = rig.flameL;
     this.flameR = rig.flameR;
     this.muzzleFlash = rig.muzzleFlash;
+    this.wingtipPoint = rig.wingtipPoint;
+    this.nozzleX = rig.nozzleX;
+    this.nozzleZ = rig.nozzleZ;
     scene.add(this.group);
 
     this.visual.scale.setScalar(0.74);
@@ -622,7 +878,7 @@ export class FighterJet {
     this.rollDir = 1;
     this.rollExtra = 0;
 
-    this.speed = 64;
+    this.speed = this.stats.cruiseSpeed;
     this.throttle = 0.65;
     this.afterburner = false;
     this.gForce = 1.0;
@@ -630,17 +886,56 @@ export class FighterJet {
     this.radarAlt = 86;
     this.lowAltWarning = false;
 
-    this.hp = 100;
-    this.maxHp = 100;
+    this.maxHp = this.stats.maxHp;
+    this.hp = this.maxHp;
     this.alive = true;
     this.respawnTimer = 0;
     this.damageCooldown = 0;
+    this.scrapeCooldown = 0;
 
     this.velocity = new THREE.Vector3(0, 0, -this.speed);
     this.prevPitch = this.pitch;
     this.prevYaw = this.yaw;
 
     this.group.position.copy(this.position);
+  }
+
+  setShip(shipId) {
+    const id = SHIP_CATALOG[shipId] ? shipId : 'striker';
+    const prevScale = this.visual ? this.visual.scale.x : 0.74;
+    const prevVisible = this.group ? this.group.visible : true;
+    const prevRatio = this.maxHp > 0 ? this.hp / this.maxHp : 1;
+
+    if (this.group) {
+      this.scene.remove(this.group);
+    }
+
+    this.shipId = id;
+    this.stats = SHIP_CATALOG[id];
+    const rig = buildJetVisualRig(id);
+    this.group = rig.group;
+    this.visual = rig.visual;
+    this.hullGroup = rig.hullGroup;
+    this.flameL = rig.flameL;
+    this.flameR = rig.flameR;
+    this.muzzleFlash = rig.muzzleFlash;
+    this.wingtipPoint = rig.wingtipPoint;
+    this.nozzleX = rig.nozzleX;
+    this.nozzleZ = rig.nozzleZ;
+
+    this.hullGroup.traverse((obj) => {
+      if (obj.isMesh) obj.layers.enable(1);
+    });
+
+    this.visual.scale.setScalar(prevScale);
+    this.group.position.copy(this.position);
+    this.group.visible = prevVisible;
+    this.scene.add(this.group);
+
+    this.maxHp = this.stats.maxHp;
+    this.hp = Math.max(1, Math.min(this.maxHp, Math.round(prevRatio * this.maxHp)));
+    this.leftTrail.clear();
+    this.rightTrail.clear();
   }
 
   respawn(offsetIndex = 0) {
@@ -700,8 +995,10 @@ export class FighterJet {
   }
 
   spawnExhaustPuffs() {
-    for (const sx of [-0.40, 0.40]) {
-      const origin = this.getWorldPoint(sx, 0.0, 3.45);
+    const nx = this.nozzleX || 0.40;
+    const nz = (this.nozzleZ || 2.60) + 0.85;
+    for (const sx of [-nx, nx]) {
+      const origin = this.getWorldPoint(sx, 0.0, nz);
       const mat = createDitherPuffMaterial();
       const mesh = new THREE.Mesh(this.puffGeo, mat);
       mesh.position.copy(origin);
@@ -780,17 +1077,17 @@ export class FighterJet {
     const targetThrottle = this.afterburner ? 1.0 : 0.64;
     this.throttle = THREE.MathUtils.lerp(this.throttle, targetThrottle, 1 - Math.exp(-5.0 * dt));
 
-    const targetBank = -steerX * 1.15;
+    const targetBank = -steerX * this.stats.bankMax;
     const targetPitch = THREE.MathUtils.clamp(-steerY * 0.68, -0.62, 0.62);
 
     this.bank = THREE.MathUtils.lerp(this.bank, targetBank, 1 - Math.exp(-6.5 * dt));
     this.pitch = THREE.MathUtils.lerp(this.pitch, targetPitch, 1 - Math.exp(-5.2 * dt));
 
-    const turnSpeed = this.afterburner ? 1.05 : 1.32;
+    const turnSpeed = this.afterburner ? this.stats.abTurnRate : this.stats.turnRate;
     this.yaw += Math.sin(this.bank) * turnSpeed * dt;
 
     const climbDrag = -Math.sin(this.pitch) * 14.0;
-    const targetSpeed = (this.afterburner ? 98 : 64) + climbDrag;
+    const targetSpeed = (this.afterburner ? this.stats.abSpeed : this.stats.cruiseSpeed) + climbDrag;
     this.speed = THREE.MathUtils.lerp(this.speed, targetSpeed, 1 - Math.exp(-2.6 * dt));
 
     const fwd = this.getForwardDirection();
@@ -806,11 +1103,17 @@ export class FighterJet {
       this.position.z = THREE.MathUtils.clamp(this.position.z, -1300, 1300);
     }
 
+    if (this.scrapeCooldown > 0) this.scrapeCooldown = Math.max(0, this.scrapeCooldown - dt);
     const groundY = Math.max(WATER_LEVEL, getTerrainHeight(this.position.x, this.position.z));
     this.radarAlt = Math.max(0, this.position.y - groundY);
     this.lowAltWarning = this.radarAlt < 16;
 
     if (this.position.y < groundY + 6.5) {
+      if (this.pitch < -0.22 && this.scrapeCooldown <= 0 && this.alive) {
+        this.hp = Math.max(1, this.hp - 12);
+        this.scrapeCooldown = 1.5;
+        this.damageCooldown = 6.0;
+      }
       this.position.y = groundY + 6.5;
       if (this.pitch < 0.06) this.pitch = THREE.MathUtils.lerp(this.pitch, 0.18, 0.25);
     }
@@ -856,8 +1159,9 @@ export class FighterJet {
       const rightVec = new THREE.Vector3(1, 0, 0).applyQuaternion(
         new THREE.Quaternion().setFromEuler(new THREE.Euler(this.pitch, this.yaw, this.bank + extraRoll, 'YXZ'))
       );
-      const tipL = this.getWorldPoint(-3.95, 0.03, 0.96);
-      const tipR = this.getWorldPoint(3.95, 0.03, 0.96);
+      const [wx, wy, wz] = this.wingtipPoint;
+      const tipL = this.getWorldPoint(-wx, wy, wz);
+      const tipR = this.getWorldPoint(wx, wy, wz);
       this.leftTrail.push(tipL, rightVec);
       this.rightTrail.push(tipR, rightVec);
     }
@@ -879,23 +1183,27 @@ export class FighterJet {
  * squadron accent colors, wingtip contrails, and dithered exhaust puffs.
  */
 export class RemoteJet {
-  constructor(scene, id, name = 'PILOT', colorHex = '#36d6ff') {
+  constructor(scene, id, name = 'PILOT', colorHex = '#36d6ff', shipId = 'striker') {
     this.scene = scene;
     this.id = id;
     this.name = name;
     this.label = name;
     this.colorHex = colorHex;
+    this.shipId = SHIP_CATALOG[shipId] ? shipId : 'striker';
     this.type = 'player';
     this.r = 8.5;
     this.h = 5.0;
 
-    const rig = buildJetVisualRig(colorHex);
+    const rig = buildJetVisualRig(this.shipId, colorHex);
     this.group = rig.group;
     this.visual = rig.visual;
     this.hullGroup = rig.hullGroup;
     this.flameL = rig.flameL;
     this.flameR = rig.flameR;
     this.muzzleFlash = rig.muzzleFlash;
+    this.wingtipPoint = rig.wingtipPoint;
+    this.nozzleX = rig.nozzleX;
+    this.nozzleZ = rig.nozzleZ;
 
     this.hullGroup.traverse((obj) => {
       if (obj.isMesh) obj.layers.enable(1);
@@ -930,13 +1238,50 @@ export class RemoteJet {
     this.targetRollExtra = 0;
 
     this.afterburner = false;
-    this.hp = 100;
+    this.maxHp = SHIP_CATALOG[this.shipId].maxHp;
+    this.hp = this.maxHp;
     this.alive = true;
     this.muzzleTimer = 0;
     this.hasReceivedState = false;
   }
 
+  setShip(shipId) {
+    const id = SHIP_CATALOG[shipId] ? shipId : 'striker';
+    if (id === this.shipId) return;
+    const prevScale = this.visual ? this.visual.scale.x : 0.74;
+    const prevVisible = this.visual ? this.visual.visible : true;
+
+    this.scene.remove(this.group);
+    this.shipId = id;
+    this.maxHp = SHIP_CATALOG[id].maxHp;
+
+    const rig = buildJetVisualRig(id, this.colorHex);
+    this.group = rig.group;
+    this.visual = rig.visual;
+    this.hullGroup = rig.hullGroup;
+    this.flameL = rig.flameL;
+    this.flameR = rig.flameR;
+    this.muzzleFlash = rig.muzzleFlash;
+    this.wingtipPoint = rig.wingtipPoint;
+    this.nozzleX = rig.nozzleX;
+    this.nozzleZ = rig.nozzleZ;
+
+    this.hullGroup.traverse((obj) => {
+      if (obj.isMesh) obj.layers.enable(1);
+    });
+    this.visual.scale.setScalar(prevScale);
+    this.visual.visible = prevVisible;
+    this.group.position.copy(this.position);
+    this.scene.add(this.group);
+
+    this.leftTrail.clear();
+    this.rightTrail.clear();
+  }
+
   applyNetworkState(st) {
+    if (st.sh && st.sh !== this.shipId) {
+      this.setShip(st.sh);
+    }
     if (!this.hasReceivedState) {
       this.position.set(st.x, st.y, st.z);
       this.yaw = st.yw;
@@ -980,8 +1325,10 @@ export class RemoteJet {
 
   spawnExhaustPuffs() {
     const fwd = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(this.pitch, this.yaw, 0, 'YXZ'));
-    for (const sx of [-0.40, 0.40]) {
-      const origin = this.getWorldPoint(sx, 0.0, 3.45);
+    const nx = this.nozzleX || 0.40;
+    const nz = (this.nozzleZ || 2.60) + 0.85;
+    for (const sx of [-nx, nx]) {
+      const origin = this.getWorldPoint(sx, 0.0, nz);
       const mat = createDitherPuffMaterial();
       const mesh = new THREE.Mesh(this.puffGeo, mat);
       mesh.position.copy(origin);
@@ -1085,8 +1432,9 @@ export class RemoteJet {
         const rightVec = new THREE.Vector3(1, 0, 0).applyQuaternion(
           new THREE.Quaternion().setFromEuler(new THREE.Euler(this.pitch, this.yaw, this.bank + this.rollExtra, 'YXZ'))
         );
-        const tipL = this.getWorldPoint(-3.95, 0.03, 0.96);
-        const tipR = this.getWorldPoint(3.95, 0.03, 0.96);
+        const [wx, wy, wz] = this.wingtipPoint;
+        const tipL = this.getWorldPoint(-wx, wy, wz);
+        const tipR = this.getWorldPoint(wx, wy, wz);
         this.leftTrail.push(tipL, rightVec);
         this.rightTrail.push(tipR, rightVec);
       }

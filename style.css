@@ -640,14 +640,204 @@ html, body {
 }
 
 .remote-tag-bar {
-  width: 34px;
-  height: 3px;
+  width: 46px;
+  height: 5px;
   margin: 2px auto 0;
-  background: rgba(16, 18, 28, 0.85);
-  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(16, 18, 28, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.35);
 }
 
 .remote-tag-fill {
   height: 100%;
-  background: #88ffa8;
+  background: #4cff88;
+  transition: width 0.08s linear;
+}
+
+/* Local Player Health Bar */
+.player-hp-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  vertical-align: middle;
+}
+
+.player-hp-label {
+  color: #b8c2d4;
+  font-weight: 700;
+}
+
+.player-hp-bar {
+  width: 68px;
+  height: 7px;
+  background: rgba(18, 12, 16, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  display: inline-block;
+  overflow: hidden;
+}
+
+.player-hp-fill {
+  display: block;
+  height: 100%;
+  background: #4cff88;
+  transition: width 0.1s linear;
+}
+
+.player-hp-fill.mid {
+  background: #ffb842;
+}
+
+.player-hp-fill.low {
+  background: #ff4534;
+}
+
+.player-hp-text {
+  color: #88ffa8;
+  font-weight: 700;
+}
+
+/* Hangar: 5 Ships Selector Panel */
+.hangar-panel {
+  position: fixed;
+  top: 32px;
+  right: 8px;
+  width: 268px;
+  z-index: 16;
+  background: rgba(16, 18, 28, 0.95);
+  border: 1px solid rgba(255, 224, 190, 0.28);
+  padding: 9px 10px;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  color: #e4ded6;
+}
+
+.hangar-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ship-card {
+  background: rgba(24, 28, 42, 0.85);
+  border: 1px solid rgba(255, 224, 190, 0.18);
+  padding: 6px 8px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.ship-card:hover {
+  border-color: rgba(255, 224, 190, 0.55);
+  background: rgba(34, 40, 60, 0.92);
+}
+
+.ship-card.selected {
+  border-color: #f28c38;
+  background: rgba(242, 140, 56, 0.16);
+}
+
+.ship-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 3px;
+}
+
+.ship-card-name {
+  font-weight: 900;
+  color: #fff2d6;
+  font-size: 10.5px;
+}
+
+.ship-card-role {
+  font-size: 8.5px;
+  color: #9ba6bc;
+}
+
+.ship-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px 8px;
+  margin-top: 4px;
+}
+
+.ship-stat-row {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  align-items: center;
+  gap: 4px;
+  font-size: 8.5px;
+  color: #b4bdd0;
+}
+
+.ship-stat-bar {
+  height: 4px;
+  background: rgba(12, 14, 22, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.ship-stat-fill {
+  height: 100%;
+  background: #62d8ff;
+}
+
+/* Incoming Homing Missile RWR Alert */
+@keyframes alertPulse {
+  0%, 100% { opacity: 0.95; }
+  50% { opacity: 0.35; }
+}
+
+.missile-vignette {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 11;
+  box-shadow: inset 0 0 65px rgba(255, 42, 28, 0.72);
+  border: 2px solid rgba(255, 58, 42, 0.85);
+  animation: alertPulse 0.32s infinite;
+}
+
+.missile-alert {
+  position: fixed;
+  top: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 14;
+  background: rgba(88, 12, 12, 0.92);
+  border: 1px solid #ff5a42;
+  color: #ffe88a;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  padding: 4px 12px;
+  pointer-events: none;
+  animation: alertPulse 0.32s infinite;
+}
+
+/* Supply Pickup Waypoint Markers */
+#pickup-markers {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 7;
+}
+
+.pickup-tag {
+  position: fixed;
+  transform: translate(-50%, -120%);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 1px 4px;
+  background: rgba(14, 16, 26, 0.76);
+  border: 1px solid;
+  white-space: nowrap;
+}
+
+.pickup-tag.health {
+  color: #7bffab;
+  border-color: rgba(76, 255, 136, 0.65);
+}
+
+.pickup-tag.missile {
+  color: #ffd470;
+  border-color: rgba(255, 186, 66, 0.65);
 }
