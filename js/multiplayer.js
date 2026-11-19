@@ -1,0 +1,1002 @@
+export const PILOT_COLORS = [
+  '#e55238',
+  '#36d6ff',
+  '#7cff6b',
+  '#ff5cc8',
+  '#ffd84a',
+  '#a87dff',
+  '#ff8c42',
+  '#52f2c8',
+];
+
+const STUN_SERVERS = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+];
+
+const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+export function generateRoomCode(len = 6) {
+  let out = '';
+  for (let i = 0; i < len; i++) {
+    out += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)];
+  }
+  return out;
+}
+
+function makePeerId() {
+  return 'p_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+}
+
+function round1(v) {
+  return Math.round(v * 10) / 10;
+}
+
+function round2(v) {
+  return Math.round(v * 100) / 100;
+}
+
+let peerJsLoadingPromise = null;
+function loadPeerJS() {
+  if (typeof window !== 'undefined' && window.Peer) {
+    return Promise.resolve(window.Peer);
+  }
+  if (peerJsLoadingPromise) return peerJsLoadingPromise;
+  peerJsLoadingPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js';
+    script.async = true;
+    script.onload = () => {
+      if (window.Peer) resolve(window.Peer);
+      else reject(new Error('PeerJS failed to initialize'));
+    };
+    script.onerror = () => reject(new Error('Could not load PeerJS library'));
+    document.head.appendChild(script);
+  });
+  return peerJsLoadingPromise;
+}
+
+export class MultiplayerManager {
+  constructor(callbacks = {}) {
+    this.cb = callbacks;
+    this.localId = makePeerId();
+    this.localName = 'ACE-1';
+    this.localColor = PILOT_COLORS[0];
+
+    this.role = null; // 'host' | 'guest' | null
+    this.transport = null; // 'php' | 'peerjs' | null
+    this.roomCode = '';
+    this.status = 'OFFLINE'; // 'OFFLINE' | 'CONNECTING' | 'HOSTING' | 'CONNECTED'
+
+    // Active peer sessions keyed by peerId
+    this.peers = new Map();
+    // Roster entries keyed by id -> { id, name, color, isHost, ping, colorIndex }
+    this.roster = new Map();
+
+    this.deformHistory = [];
+    this.damageHistory = [];
+
+    this.pollTimer = null;
+    this.pingTimer = null;
+    this.lastStateSentAt = 0;
+    this.peerJsInstance = null;
+
+    this._onBeforeUnload = () => this.leaveRoom(true);
+    if (typeof window !== 'undefined') {
+      window.addEventListener('beforeunload', this._onBeforeUnload);
+    }
+  }
+
+  setStatus(status, message = '') {
+    this.status = status;
+    this.cb.onStatusChange?.({
+      status,
+      role: this.role,
+      transport: this.transport,
+      roomCode: this.roomCode,
+      message,
+    });
+  }
+
+  emitRoster() {
+    this.cb.onRosterChange?.(Array.from(this.roster.values()));
+  }
+
+  async detectTransport(pref = 'auto') {
+    if (pref === 'local') return 'php';
+    if (pref === 'cloud') return 'peerjs';
+
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 1500);
+    try {
+      const res = await fetch('signal.php?action=ping', {
+        cache: 'no-store',
+        signal: ctrl.signal,
+      });
+      clearTimeout(timer);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.ok) return 'php';
+      }
+    } catch (_) {
+      clearTimeout(timer);
+    }
+    return 'peerjs';
+  }
+
+  async createRoom({ name = 'HOST', transportPref = 'auto' } = {}) {
+    this.leaveRoom();
+    this.localName = (name || 'HOST').trim().slice(0, 12) || 'HOST';
+    this.localId = makePeerId();
+    this.localColor = PILOT_COLORS[0];
+    this.role = 'host';
+    this.deformHistory = [];
+    this.damageHistory = [];
+
+    this.setStatus('CONNECTING', 'Detecting P2P transport...');
+    this.transport = await this.detectTransport(transportPref);
+
+    this.roster.clear();
+    this.roster.set(this.localId, {
+      id: this.localId,
+      name: this.localName,
+      color: this.localColor,
+      colorIndex: 0,
+      isHost: true,
+      ping: 0,
+    });
+
+    if (this.transport === 'php') {
+      let created = false;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const code = generateRoomCode();
+        const res = await fetch(`signal.php?action=create&code=${encodeURIComponent(code)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            code,
+            hostId: this.localId,
+            hostName: this.localName,
+          }),
+        });
+        if (res.status === 409) continue;
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          this.leaveRoom();
+          throw new Error(data?.error || 'Failed to create room');
+        }
+        this.roomCode = code;
+        created = true;
+        break;
+      }
+      if (!created) {
+        this.leaveRoom();
+        throw new Error('Could not allocate unique room code');
+      }
+      this.startPhpHostPolling();
+    } else {
+      await this.startPeerJsHost();
+    }
+
+    this.startPingLoop();
+    this.setStatus('HOSTING', `Room ${this.roomCode} ready`);
+    this.emitRoster();
+    return this.roomCode;
+  }
+
+  async joinRoom({ code, name = 'PILOT', transportPref = 'auto' } = {}) {
+    const cleanCode = String(code || '')
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '')
+      .slice(0, 10);
+    if (cleanCode.length < 4) {
+      throw new Error('Enter a valid room code');
+    }
+
+    this.leaveRoom();
+    this.localName = (name || 'PILOT').trim().slice(0, 12) || 'PILOT';
+    this.localId = makePeerId();
+    this.role = 'guest';
+    this.roomCode = cleanCode;
+
+    this.setStatus('CONNECTING', `Connecting to ${cleanCode}...`);
+    this.transport = await this.detectTransport(transportPref);
+
+    if (this.transport === 'php') {
+      const res = await fetch(`signal.php?action=join&code=${encodeURIComponent(cleanCode)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code: cleanCode,
+          peerId: this.localId,
+          name: this.localName,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        this.leaveRoom();
+        throw new Error(data?.error || 'Room not found');
+      }
+      const cIdx = typeof data.colorIndex === 'number' ? data.colorIndex : 1;
+      this.localColor = PILOT_COLORS[cIdx % PILOT_COLORS.length];
+      this.startPhpGuestPolling(data.hostId, data.hostName);
+    } else {
+      await this.startPeerJsGuest();
+    }
+    return cleanCode;
+  }
+
+  // =========================================================================
+  // PHP Signaling + Native RTCPeerConnection
+  // =========================================================================
+
+  startPhpHostPolling() {
+    const poll = async () => {
+      if (this.role !== 'host' || this.transport !== 'php') return;
+      try {
+        const res = await fetch(
+          `signal.php?action=poll&role=host&code=${encodeURIComponent(this.roomCode)}`,
+          { cache: 'no-store' }
+        );
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data.ok || !data.peers) return;
+
+        for (const [peerId, pData] of Object.entries(data.peers)) {
+          let session = this.peers.get(peerId);
+          if (!session) {
+            const cIdx = pData.colorIndex ?? 1;
+            const color = PILOT_COLORS[cIdx % PILOT_COLORS.length];
+            session = await this.createPhpHostPeer(peerId, pData.name || 'PILOT', color, cIdx);
+          }
+
+          if (pData.answer && !session.remoteSet && session.pc) {
+            session.remoteSet = true;
+            await session.pc.setRemoteDescription(new RTCSessionDescription(pData.answer));
+            for (const cand of session.pendingIce) {
+              try {
+                await session.pc.addIceCandidate(new RTCIceCandidate(cand));
+              } catch (_) {}
+            }
+            session.pendingIce.length = 0;
+          }
+
+          if (Array.isArray(pData.guestIce)) {
+            while (session.iceCursor < pData.guestIce.length) {
+              const cand = pData.guestIce[session.iceCursor++];
+              if (session.remoteSet) {
+                try {
+                  await session.pc.addIceCandidate(new RTCIceCandidate(cand));
+                } catch (_) {}
+              } else {
+                session.pendingIce.push(cand);
+              }
+            }
+          }
+        }
+      } catch (_) {
+        // Ignore transient network poll hiccups
+      }
+    };
+
+    poll();
+    this.pollTimer = setInterval(poll, 700);
+  }
+
+  async createPhpHostPeer(peerId, name, color, colorIndex) {
+    const pc = new RTCPeerConnection({ iceServers: STUN_SERVERS });
+    const session = {
+      id: peerId,
+      name,
+      color,
+      colorIndex,
+      pc,
+      stateChannel: null,
+      eventsChannel: null,
+      remoteSet: false,
+      pendingIce: [],
+      iceCursor: 0,
+      opened: false,
+      iceBuffer: [],
+      iceFlushTimer: null,
+    };
+    this.peers.set(peerId, session);
+
+    const flushIce = async () => {
+      if (!session.iceBuffer.length || this.role !== 'host') return;
+      const batch = session.iceBuffer.splice(0, session.iceBuffer.length);
+      try {
+        await fetch(`signal.php?action=signal&code=${encodeURIComponent(this.roomCode)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            code: this.roomCode,
+            role: 'host',
+            peerId,
+            ice: batch,
+          }),
+        });
+      } catch (_) {}
+    };
+
+    pc.onicecandidate = (e) => {
+      if (e.candidate) {
+        session.iceBuffer.push(e.candidate.toJSON());
+        clearTimeout(session.iceFlushTimer);
+        session.iceFlushTimer = setTimeout(flushIce, 60);
+      }
+    };
+
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'failed' || pc.connectionState === 'closed' || pc.connectionState === 'disconnected') {
+        this.handlePeerDisconnected(peerId);
+      }
+    };
+
+    const stateCh = pc.createDataChannel('state', { ordered: false, maxRetransmits: 0 });
+    const eventsCh = pc.createDataChannel('events', { ordered: true });
+    this.wireDataChannel(session, stateCh, 'state');
+    this.wireDataChannel(session, eventsCh, 'events');
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+
+    await fetch(`signal.php?action=signal&code=${encodeURIComponent(this.roomCode)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        code: this.roomCode,
+        role: 'host',
+        peerId,
+        offer: pc.localDescription.toJSON(),
+      }),
+    });
+
+    return session;
+  }
+
+  startPhpGuestPolling(hostId, hostName) {
+    const pc = new RTCPeerConnection({ iceServers: STUN_SERVERS });
+    const session = {
+      id: hostId,
+      name: hostName || 'HOST',
+      color: PILOT_COLORS[0],
+      colorIndex: 0,
+      pc,
+      stateChannel: null,
+      eventsChannel: null,
+      remoteSet: false,
+      pendingIce: [],
+      iceCursor: 0,
+      opened: false,
+      iceBuffer: [],
+      iceFlushTimer: null,
+    };
+    this.peers.set(hostId, session);
+
+    const flushIce = async () => {
+      if (!session.iceBuffer.length || this.role !== 'guest') return;
+      const batch = session.iceBuffer.splice(0, session.iceBuffer.length);
+      try {
+        await fetch(`signal.php?action=signal&code=${encodeURIComponent(this.roomCode)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            code: this.roomCode,
+            role: 'guest',
+            peerId: this.localId,
+            ice: batch,
+          }),
+        });
+      } catch (_) {}
+    };
+
+    pc.onicecandidate = (e) => {
+      if (e.candidate) {
+        session.iceBuffer.push(e.candidate.toJSON());
+        clearTimeout(session.iceFlushTimer);
+        session.iceFlushTimer = setTimeout(flushIce, 60);
+      }
+    };
+
+    pc.ondatachannel = (e) => {
+      const ch = e.channel;
+      if (ch.label === 'state' || ch.label === 'events') {
+        this.wireDataChannel(session, ch, ch.label);
+      }
+    };
+
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'failed' || pc.connectionState === 'closed' || pc.connectionState === 'disconnected') {
+        this.setStatus('OFFLINE', 'Host disconnected');
+        this.leaveRoom();
+      }
+    };
+
+    const poll = async () => {
+      if (this.role !== 'guest' || this.transport !== 'php') return;
+      try {
+        const res = await fetch(
+          `signal.php?action=poll&role=guest&code=${encodeURIComponent(this.roomCode)}&peerId=${encodeURIComponent(this.localId)}`,
+          { cache: 'no-store' }
+        );
+        if (res.status === 404) {
+          this.setStatus('OFFLINE', 'Room closed by host');
+          this.leaveRoom();
+          return;
+        }
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data.ok) return;
+
+        if (data.offer && !session.remoteSet) {
+          session.remoteSet = true;
+          await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+          if (Array.isArray(data.hostIce)) {
+            while (session.iceCursor < data.hostIce.length) {
+              const cand = data.hostIce[session.iceCursor++];
+              try {
+                await pc.addIceCandidate(new RTCIceCandidate(cand));
+              } catch (_) {}
+            }
+          }
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          await fetch(`signal.php?action=signal&code=${encodeURIComponent(this.roomCode)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              code: this.roomCode,
+              role: 'guest',
+              peerId: this.localId,
+              answer: pc.localDescription.toJSON(),
+            }),
+          });
+        } else if (session.remoteSet && Array.isArray(data.hostIce)) {
+          while (session.iceCursor < data.hostIce.length) {
+            const cand = data.hostIce[session.iceCursor++];
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(cand));
+            } catch (_) {}
+          }
+        }
+      } catch (_) {}
+    };
+
+    poll();
+    this.pollTimer = setInterval(poll, 700);
+  }
+
+  wireDataChannel(session, ch, kind) {
+    if (kind === 'state') session.stateChannel = ch;
+    else session.eventsChannel = ch;
+
+    ch.onopen = () => {
+      const sOpen = session.stateChannel && session.stateChannel.readyState === 'open';
+      const eOpen = session.eventsChannel && session.eventsChannel.readyState === 'open';
+      if (sOpen && eOpen && !session.opened) {
+        session.opened = true;
+        if (this.role === 'guest') {
+          clearInterval(this.pollTimer);
+          this.pollTimer = null;
+          this.onGuestConnectedToHost(session);
+        } else if (this.role === 'host') {
+          this.onHostPeerChannelReady(session);
+        }
+      }
+    };
+
+    ch.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        this.handleIncomingMessage(session.id, kind, msg);
+      } catch (_) {}
+    };
+
+    ch.onclose = () => {
+      if (this.role === 'guest') {
+        this.setStatus('OFFLINE', 'Connection closed');
+        this.leaveRoom();
+      } else if (this.role === 'host') {
+        this.handlePeerDisconnected(session.id);
+      }
+    };
+  }
+
+  // =========================================================================
+  // Cloud PeerJS Transport (fallback or explicit CLOUD mode)
+  // =========================================================================
+
+  async startPeerJsHost() {
+    const PeerCtor = await loadPeerJS();
+    let bound = false;
+
+    for (let attempt = 0; attempt < 4 && !bound; attempt++) {
+      const code = generateRoomCode();
+      const peerId = `ssjet-${code}`;
+      try {
+        await new Promise((resolve, reject) => {
+          const peer = new PeerCtor(peerId, { config: { iceServers: STUN_SERVERS } });
+          let settled = false;
+
+          peer.on('open', () => {
+            settled = true;
+            this.peerJsInstance = peer;
+            this.roomCode = code;
+            bound = true;
+            resolve();
+          });
+
+          peer.on('error', (err) => {
+            if (!settled) {
+              settled = true;
+              try {
+                peer.destroy();
+              } catch (_) {}
+              reject(err);
+            }
+          });
+
+          peer.on('connection', (conn) => this.handlePeerJsHostIncoming(conn));
+        });
+      } catch (_) {
+        // Retry with another code if ID taken
+      }
+    }
+
+    if (!bound) {
+      this.leaveRoom();
+      throw new Error('Could not open cloud PeerJS room');
+    }
+  }
+
+  handlePeerJsHostIncoming(conn) {
+    const remotePeerId = conn.metadata?.pilotId || conn.peer;
+    const name = (conn.metadata?.name || 'PILOT').slice(0, 12);
+    const kind = conn.label === 'state' ? 'state' : 'events';
+
+    let session = this.peers.get(remotePeerId);
+    if (!session) {
+      const used = new Set(Array.from(this.roster.values()).map((r) => r.colorIndex));
+      let cIdx = 1;
+      for (let i = 1; i <= 7; i++) {
+        if (!used.has(i)) {
+          cIdx = i;
+          break;
+        }
+      }
+      session = {
+        id: remotePeerId,
+        name,
+        color: PILOT_COLORS[cIdx % PILOT_COLORS.length],
+        colorIndex: cIdx,
+        stateConn: null,
+        eventsConn: null,
+        opened: false,
+      };
+      this.peers.set(remotePeerId, session);
+    }
+
+    if (kind === 'state') session.stateConn = conn;
+    else session.eventsConn = conn;
+
+    conn.on('open', () => {
+      const sOpen = session.stateConn && session.stateConn.open;
+      const eOpen = session.eventsConn && session.eventsConn.open;
+      if (sOpen && eOpen && !session.opened) {
+        session.opened = true;
+        this.onHostPeerChannelReady(session);
+      }
+    });
+
+    conn.on('data', (raw) => {
+      try {
+        const msg = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        this.handleIncomingMessage(session.id, kind, msg);
+      } catch (_) {}
+    });
+
+    conn.on('close', () => this.handlePeerDisconnected(remotePeerId));
+    conn.on('error', () => this.handlePeerDisconnected(remotePeerId));
+  }
+
+  async startPeerJsGuest() {
+    const PeerCtor = await loadPeerJS();
+    const targetPeerId = `ssjet-${this.roomCode}`;
+
+    await new Promise((resolve, reject) => {
+      const peer = new PeerCtor(undefined, { config: { iceServers: STUN_SERVERS } });
+      let settled = false;
+
+      const failTimeout = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          reject(new Error('Connection timed out'));
+        }
+      }, 12000);
+
+      peer.on('open', () => {
+        this.peerJsInstance = peer;
+        const meta = { pilotId: this.localId, name: this.localName };
+        const stateConn = peer.connect(targetPeerId, { label: 'state', reliable: false, metadata: meta });
+        const eventsConn = peer.connect(targetPeerId, { label: 'events', reliable: true, metadata: meta });
+
+        const session = {
+          id: targetPeerId,
+          name: 'HOST',
+          color: PILOT_COLORS[0],
+          colorIndex: 0,
+          stateConn,
+          eventsConn,
+          opened: false,
+        };
+        this.peers.set(targetPeerId, session);
+
+        const checkOpen = () => {
+          if (stateConn.open && eventsConn.open && !session.opened) {
+            session.opened = true;
+            clearTimeout(failTimeout);
+            if (!settled) {
+              settled = true;
+              this.onGuestConnectedToHost(session);
+              resolve();
+            }
+          }
+        };
+
+        stateConn.on('open', checkOpen);
+        eventsConn.on('open', checkOpen);
+        stateConn.on('data', (raw) => {
+          const msg = typeof raw === 'string' ? JSON.parse(raw) : raw;
+          this.handleIncomingMessage(session.id, 'state', msg);
+        });
+        eventsConn.on('data', (raw) => {
+          const msg = typeof raw === 'string' ? JSON.parse(raw) : raw;
+          this.handleIncomingMessage(session.id, 'events', msg);
+        });
+        eventsConn.on('close', () => {
+          this.setStatus('OFFLINE', 'Host disconnected');
+          this.leaveRoom();
+        });
+      });
+
+      peer.on('error', (err) => {
+        clearTimeout(failTimeout);
+        if (!settled) {
+          settled = true;
+          reject(new Error(err?.message || 'PeerJS error'));
+        }
+      });
+    });
+  }
+
+  // =========================================================================
+  // Session Handshake, Channel Sending & Star Relay
+  // =========================================================================
+
+  sendViaSession(session, kind, obj) {
+    if (!session) return;
+    const payload = JSON.stringify(obj);
+    if (this.transport === 'php') {
+      const ch = kind === 'state' ? session.stateChannel : session.eventsChannel;
+      if (ch && ch.readyState === 'open') {
+        try {
+          ch.send(payload);
+        } catch (_) {}
+      }
+    } else if (this.transport === 'peerjs') {
+      const conn = kind === 'state' ? session.stateConn : session.eventsConn;
+      if (conn && conn.open) {
+        try {
+          conn.send(payload);
+        } catch (_) {}
+      }
+    }
+  }
+
+  broadcast(kind, obj, exceptPeerId = null) {
+    for (const [pid, session] of this.peers.entries()) {
+      if (pid === exceptPeerId || !session.opened) continue;
+      this.sendViaSession(session, kind, obj);
+    }
+  }
+
+  onHostPeerChannelReady(session) {
+    this.roster.set(session.id, {
+      id: session.id,
+      name: session.name,
+      color: session.color,
+      colorIndex: session.colorIndex,
+      isHost: false,
+      ping: 0,
+    });
+
+    // Send welcome + assigned color + full roster + world craters/damage sync snapshot
+    this.sendViaSession(session, 'events', {
+      t: 'welcome',
+      assignedId: session.id,
+      color: session.color,
+      colorIndex: session.colorIndex,
+      hostId: this.localId,
+      roster: Array.from(this.roster.values()),
+    });
+
+    if (this.deformHistory.length || this.damageHistory.length) {
+      this.sendViaSession(session, 'events', {
+        t: 'sync',
+        deforms: this.deformHistory,
+        damages: this.damageHistory,
+      });
+    }
+
+    // Broadcast updated roster to everyone
+    this.broadcast('events', { t: 'roster', list: Array.from(this.roster.values()) });
+    this.emitRoster();
+    this.cb.onPeerJoined?.({ id: session.id, name: session.name, color: session.color });
+  }
+
+  onGuestConnectedToHost(session) {
+    this.sendViaSession(session, 'events', {
+      t: 'hello',
+      id: this.localId,
+      name: this.localName,
+    });
+    this.startPingLoop();
+    this.setStatus('CONNECTED', `Connected to room ${this.roomCode}`);
+  }
+
+  startPingLoop() {
+    clearInterval(this.pingTimer);
+    this.pingTimer = setInterval(() => {
+      const ts = performance.now();
+      this.broadcast('events', { t: 'ping', ts, from: this.localId });
+    }, 2000);
+  }
+
+  handleIncomingMessage(fromPeerId, _kind, msg) {
+    if (!msg || !msg.t) return;
+
+    // 1. High-frequency flight state
+    if (msg.t === 's') {
+      const senderId = msg.id || fromPeerId;
+      if (senderId === this.localId) return;
+      if (this.role === 'host') {
+        this.broadcast('state', msg, fromPeerId);
+      }
+      this.cb.onRemoteState?.(senderId, msg);
+      return;
+    }
+
+    // 2. Reliable events & handshake
+    if (msg.t === 'hello' && this.role === 'host') {
+      const session = this.peers.get(fromPeerId);
+      if (session && msg.name) {
+        session.name = String(msg.name).slice(0, 12);
+        const r = this.roster.get(fromPeerId);
+        if (r) {
+          r.name = session.name;
+          this.broadcast('events', { t: 'roster', list: Array.from(this.roster.values()) });
+          this.emitRoster();
+        }
+      }
+      return;
+    }
+
+    if (msg.t === 'welcome' && this.role === 'guest') {
+      this.localColor = msg.color || this.localColor;
+      this.syncRosterFromList(msg.roster || []);
+      return;
+    }
+
+    if (msg.t === 'roster' && this.role === 'guest') {
+      this.syncRosterFromList(msg.list || []);
+      return;
+    }
+
+    if (msg.t === 'sync' && this.role === 'guest') {
+      this.cb.onSyncSnapshot?.(msg.deforms || [], msg.damages || []);
+      return;
+    }
+
+    if (msg.t === 'ping') {
+      const session = this.peers.get(fromPeerId);
+      if (session) {
+        this.sendViaSession(session, 'events', { t: 'pong', ts: msg.ts, from: this.localId });
+      }
+      return;
+    }
+
+    if (msg.t === 'pong') {
+      const rtt = Math.max(1, Math.round(performance.now() - msg.ts));
+      const entry = this.roster.get(msg.from || fromPeerId);
+      if (entry) {
+        entry.ping = rtt;
+        if (this.role === 'host') {
+          this.broadcast('events', { t: 'roster', list: Array.from(this.roster.values()) });
+        }
+        this.emitRoster();
+      }
+      return;
+    }
+
+    if (msg.t === 'leave') {
+      this.handlePeerDisconnected(msg.id || fromPeerId);
+      return;
+    }
+
+    // Gameplay events: record history on host & relay to other guests
+    if (this.role === 'host') {
+      if (msg.t === 'def') this.recordDeform(msg);
+      else if (msg.t === 'dmg') this.recordDamage(msg);
+      else if (msg.t === 'rst') {
+        this.deformHistory.length = 0;
+        this.damageHistory.length = 0;
+      }
+      this.broadcast('events', msg, fromPeerId);
+    }
+
+    if (msg.from !== this.localId) {
+      this.cb.onRemoteEvent?.(msg);
+    }
+  }
+
+  syncRosterFromList(list) {
+    const nextIds = new Set();
+    for (const item of list) {
+      nextIds.add(item.id);
+      const existed = this.roster.has(item.id);
+      this.roster.set(item.id, item);
+      if (!existed && item.id !== this.localId) {
+        this.cb.onPeerJoined?.(item);
+      }
+    }
+    for (const oldId of Array.from(this.roster.keys())) {
+      if (!nextIds.has(oldId) && oldId !== this.localId) {
+        this.roster.delete(oldId);
+        this.cb.onPeerLeft?.(oldId);
+      }
+    }
+    this.emitRoster();
+  }
+
+  handlePeerDisconnected(peerId) {
+    const session = this.peers.get(peerId);
+    if (session) {
+      clearTimeout(session.iceFlushTimer);
+      try {
+        session.pc?.close();
+      } catch (_) {}
+      try {
+        session.stateConn?.close();
+      } catch (_) {}
+      try {
+        session.eventsConn?.close();
+      } catch (_) {}
+      this.peers.delete(peerId);
+    }
+    if (this.roster.has(peerId)) {
+      this.roster.delete(peerId);
+      this.cb.onPeerLeft?.(peerId);
+      if (this.role === 'host') {
+        this.broadcast('events', { t: 'roster', list: Array.from(this.roster.values()) });
+      }
+      this.emitRoster();
+    }
+  }
+
+  recordDeform(msg) {
+    this.deformHistory.push(msg);
+    if (this.deformHistory.length > 240) this.deformHistory.shift();
+  }
+
+  recordDamage(msg) {
+    this.damageHistory.push(msg);
+    if (this.damageHistory.length > 160) this.damageHistory.shift();
+  }
+
+  isActive() {
+    return this.role !== null && (this.status === 'HOSTING' || this.status === 'CONNECTED');
+  }
+
+  sendLocalState(jet) {
+    if (!this.isActive() || this.peers.size === 0) return;
+    const now = performance.now();
+    if (now - this.lastStateSentAt < 50) return; // 20 Hz
+    this.lastStateSentAt = now;
+
+    const pkt = {
+      t: 's',
+      id: this.localId,
+      x: round1(jet.position.x),
+      y: round1(jet.position.y),
+      z: round1(jet.position.z),
+      vx: round1(jet.velocity.x),
+      vy: round1(jet.velocity.y),
+      vz: round1(jet.velocity.z),
+      yw: round2(jet.yaw),
+      pt: round2(jet.pitch),
+      bk: round2(jet.bank),
+      rl: round2(jet.rollExtra || 0),
+      ab: jet.afterburner ? 1 : 0,
+      hp: Math.round(jet.hp),
+      al: jet.alive ? 1 : 0,
+    };
+    this.broadcast('state', pkt);
+  }
+
+  sendEvent(obj) {
+    if (!this.isActive()) return;
+    const pkt = { ...obj, from: this.localId };
+    if (this.role === 'host') {
+      if (pkt.t === 'def') this.recordDeform(pkt);
+      else if (pkt.t === 'dmg') this.recordDamage(pkt);
+      else if (pkt.t === 'rst') {
+        this.deformHistory.length = 0;
+        this.damageHistory.length = 0;
+      }
+    }
+    this.broadcast('events', pkt);
+  }
+
+  leaveRoom(isUnload = false) {
+    const prevRole = this.role;
+    const prevTransport = this.transport;
+    const prevCode = this.roomCode;
+
+    if (this.isActive()) {
+      this.broadcast('events', { t: 'leave', id: this.localId });
+    }
+
+    if (prevTransport === 'php' && prevCode) {
+      const url = `signal.php?action=leave&code=${encodeURIComponent(prevCode)}&role=${encodeURIComponent(prevRole || 'guest')}&peerId=${encodeURIComponent(this.localId)}`;
+      if (isUnload && typeof navigator !== 'undefined' && navigator.sendBeacon) {
+        navigator.sendBeacon(url);
+      } else if (!isUnload && typeof fetch !== 'undefined') {
+        fetch(url, { method: 'POST' }).catch(() => {});
+      }
+    }
+
+    clearInterval(this.pollTimer);
+    this.pollTimer = null;
+    clearInterval(this.pingTimer);
+    this.pingTimer = null;
+
+    for (const [pid, session] of this.peers.entries()) {
+      clearTimeout(session.iceFlushTimer);
+      try {
+        session.pc?.close();
+      } catch (_) {}
+      try {
+        session.stateConn?.close();
+      } catch (_) {}
+      try {
+        session.eventsConn?.close();
+      } catch (_) {}
+      this.peers.delete(pid);
+    }
+
+    if (this.peerJsInstance) {
+      try {
+        this.peerJsInstance.destroy();
+      } catch (_) {}
+      this.peerJsInstance = null;
+    }
+
+    for (const id of Array.from(this.roster.keys())) {
+      if (id !== this.localId) {
+        this.cb.onPeerLeft?.(id);
+      }
+    }
+    this.roster.clear();
+    this.deformHistory = [];
+    this.damageHistory = [];
+    this.role = null;
+    this.transport = null;
+    this.roomCode = '';
+
+    if (!isUnload) {
+      this.setStatus('OFFLINE', '');
+      this.emitRoster();
+    }
+  }
+}

@@ -395,3 +395,259 @@ html, body {
   padding: 4px 10px;
   border: 1px solid rgba(255, 220, 180, 0.2);
 }
+
+/* WebRTC P2P Multiplayer Panel */
+.mp-panel {
+  position: fixed;
+  top: 32px;
+  right: 8px;
+  width: 262px;
+  z-index: 16;
+  background: rgba(16, 18, 28, 0.95);
+  border: 1px solid rgba(255, 224, 190, 0.28);
+  padding: 9px 10px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: #e4ded6;
+}
+
+.mp-panel.hidden,
+.hidden {
+  display: none;
+}
+
+.mp-badge {
+  font-size: 8.5px;
+  font-weight: 700;
+  padding: 2px 5px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.mp-badge.offline {
+  color: #aeb6c4;
+  background: rgba(60, 66, 86, 0.35);
+}
+
+.mp-badge.connecting {
+  color: #ffd866;
+  border-color: rgba(255, 216, 102, 0.45);
+  background: rgba(110, 86, 28, 0.35);
+}
+
+.mp-badge.hosting,
+.mp-badge.connected {
+  color: #88ffa8;
+  border-color: rgba(136, 255, 168, 0.5);
+  background: rgba(34, 96, 56, 0.35);
+}
+
+.mp-field {
+  display: grid;
+  grid-template-columns: 52px 1fr;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.mp-input {
+  width: 100%;
+  background: #141826;
+  border: 1px solid rgba(255, 210, 160, 0.32);
+  color: #fff2d6;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 4px 6px;
+  outline: none;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.mp-input:focus {
+  border-color: #f28c38;
+}
+
+.mp-code-input {
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  text-align: center;
+}
+
+.mp-btn-primary,
+.mp-btn-secondary,
+.mp-btn-danger {
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 5px 8px;
+  cursor: pointer;
+  border: 1px solid;
+}
+
+.mp-btn-primary {
+  width: 100%;
+  background: rgba(235, 104, 48, 0.24);
+  border-color: rgba(242, 140, 56, 0.7);
+  color: #ffe8c2;
+  margin-top: 2px;
+}
+
+.mp-btn-primary:hover {
+  background: rgba(235, 104, 48, 0.42);
+}
+
+.mp-join-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px;
+}
+
+.mp-btn-secondary {
+  background: rgba(68, 166, 214, 0.22);
+  border-color: rgba(102, 204, 244, 0.6);
+  color: #d8f4ff;
+}
+
+.mp-btn-secondary:hover {
+  background: rgba(68, 166, 214, 0.38);
+}
+
+.mp-btn-danger {
+  width: 100%;
+  margin-top: 6px;
+  background: rgba(214, 62, 54, 0.22);
+  border-color: rgba(242, 92, 76, 0.6);
+  color: #ffd6d0;
+}
+
+.mp-btn-danger:hover {
+  background: rgba(214, 62, 54, 0.4);
+}
+
+.mp-code-box {
+  background: rgba(12, 14, 22, 0.85);
+  border: 1px solid rgba(255, 224, 190, 0.25);
+  padding: 6px;
+  text-align: center;
+  margin-top: 4px;
+}
+
+.mp-code-caption {
+  display: block;
+  font-size: 8.5px;
+  color: #a8b0c0;
+}
+
+.mp-code-text {
+  display: block;
+  font-size: 16px;
+  font-weight: 900;
+  letter-spacing: 0.22em;
+  color: #ffe89c;
+  margin: 3px 0 5px;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.mp-copy-row {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+}
+
+.mp-transport-info {
+  margin: 6px 0 4px;
+  font-size: 8.5px;
+  color: #9cffb4;
+  text-align: center;
+}
+
+.mp-roster {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 112px;
+  overflow-y: auto;
+  background: rgba(12, 14, 22, 0.6);
+  border: 1px solid rgba(255, 224, 190, 0.14);
+  padding: 4px 6px;
+}
+
+.mp-roster-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 9.5px;
+}
+
+.mp-roster-left {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.mp-status-dot {
+  width: 7px;
+  height: 7px;
+  display: inline-block;
+  border: 1px solid rgba(0, 0, 0, 0.65);
+}
+
+.mp-roster-ping {
+  color: #9ba4b8;
+  font-size: 8.5px;
+}
+
+.mp-msg {
+  margin-top: 5px;
+  min-height: 12px;
+  font-size: 9px;
+  color: #ffd688;
+  text-align: center;
+}
+
+.hp-badge {
+  color: #88ffa8;
+  font-weight: 700;
+}
+
+.hp-badge.low {
+  color: #ff6248;
+}
+
+.hp-badge.hidden {
+  display: none;
+}
+
+#remote-labels {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 8;
+}
+
+.remote-tag {
+  position: fixed;
+  transform: translate(-50%, -135%);
+  text-align: center;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #ffffff;
+  text-shadow: 0 1px 0 #10121c, 1px 0 0 #10121c, -1px 0 0 #10121c, 0 -1px 0 #10121c;
+  white-space: nowrap;
+}
+
+.remote-tag-bar {
+  width: 34px;
+  height: 3px;
+  margin: 2px auto 0;
+  background: rgba(16, 18, 28, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+.remote-tag-fill {
+  height: 100%;
+  background: #88ffa8;
+}

@@ -1,4 +1,4 @@
-import { getTerrainHeight } from './world.js?v=7';
+import { getTerrainHeight } from './world.js?v=8';
 
 export class FighterCockpit {
   constructor(canvas) {
@@ -49,7 +49,7 @@ export class FighterCockpit {
     this.canvas.classList.toggle('active', visible);
   }
 
-  updateRadar(jet) {
+  updateRadar(jet, remoteJets = null) {
     const rc = this.radarCtx;
     const size = 56;
     const half = size / 2;
@@ -116,6 +116,27 @@ export class FighterCockpit {
     rc.lineTo(half + Math.cos(coneAngle) * r, half + Math.sin(coneAngle) * r);
     rc.stroke();
 
+    // Remote multiplayer pilot blips on radar
+    if (remoteJets) {
+      for (const rj of remoteJets.values()) {
+        if (!rj.alive) continue;
+        const dwx = rj.position.x - jet.position.x;
+        const dwz = rj.position.z - jet.position.z;
+        const localRight = dwx * cosY - dwz * sinY;
+        const localFwd = -dwx * sinY - dwz * cosY;
+        const px = localRight / rangeScale;
+        const py = -localFwd / rangeScale;
+        if (px * px + py * py <= (r - 2) * (r - 2)) {
+          const bx = Math.round(half + px);
+          const by = Math.round(half + py);
+          rc.fillStyle = '#0e0a06';
+          rc.fillRect(bx - 2, by - 2, 5, 5);
+          rc.fillStyle = rj.colorHex || '#36d6ff';
+          rc.fillRect(bx - 1, by - 1, 3, 3);
+        }
+      }
+    }
+
     // Crisp white center '+' aircraft symbol
     rc.fillStyle = '#ffffff';
     rc.fillRect(half - 2, half, 5, 1);
@@ -177,7 +198,7 @@ export class FighterCockpit {
     }
   }
 
-  render(dt, jet, weapons) {
+  render(dt, jet, weapons, remoteJets = null) {
     const ctx = this.ctx;
     const w = this.w;
     const h = this.h;
@@ -190,7 +211,7 @@ export class FighterCockpit {
     this.radarTimer += dt;
     if (this.radarTimer >= 0.08) {
       this.radarTimer = 0;
-      this.updateRadar(jet);
+      this.updateRadar(jet, remoteJets);
     }
 
     // Subtle cockpit inertia sway on high-G turns & afterburner vibration

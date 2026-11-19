@@ -1,13 +1,13 @@
 import * as THREE from 'three';
-import { getTerrainHeight, WATER_LEVEL, SUN_DIR } from './world.js?v=7';
+import { getTerrainHeight, WATER_LEVEL, SUN_DIR } from './world.js?v=8';
 
 /**
  * Custom top-down pixel-art texture mapped directly onto the sculpted 3D fighter planform.
- * Matches the bright silver-white wings, jagged lavender-slate dorsal camo, orange-red
+ * Matches the bright silver-white wings, jagged lavender-slate dorsal camo, squadron
  * intake/wingtip accents, and dark nose tip seen in the reference screenshots.
  * UV convention: u = x / 8.4 + 0.5 (left=-4.2..right=+4.2), v = (z + 4.1) / 7.0 (nose=-4.1..tail=+2.9)
  */
-function createPlanformTexture() {
+function createPlanformTexture(accentHex = '#e55238') {
   const S = 128;
   const c = document.createElement('canvas');
   c.width = S;
@@ -89,8 +89,8 @@ function createPlanformTexture() {
   }
   ctx.stroke();
 
-  // Signature red-orange squadron flashes on wing roots & wingtip rails (visible in photos!)
-  ctx.fillStyle = '#e55238';
+  // Signature squadron flashes on wing roots & wingtip rails (visible in photos!)
+  ctx.fillStyle = accentHex;
   for (const side of [-1, 1]) {
     const x1 = toU(side * 0.92);
     const x2 = toU(side * 1.28);
@@ -141,19 +141,19 @@ function createCanopyTexture() {
   return tex;
 }
 
-function createFinTexture() {
+function createFinTexture(accentHex = '#e65238') {
   const c = document.createElement('canvas');
   c.width = 16;
   c.height = 16;
   const ctx = c.getContext('2d');
   ctx.imageSmoothingEnabled = false;
 
-  // Light silver tail fin with slate lower patch, crisp red-orange top tip & dark ink border
+  // Light silver tail fin with slate lower patch, crisp squadron top tip & dark ink border
   ctx.fillStyle = '#dce3f2';
   ctx.fillRect(0, 0, 16, 16);
   ctx.fillStyle = '#7e86a2';
   ctx.fillRect(0, 9, 16, 7);
-  ctx.fillStyle = '#e65238';
+  ctx.fillStyle = accentHex;
   ctx.fillRect(1, 1, 14, 3);
   // Crisp thin dark border around fin edges so twin tails pop against bright fuselage
   ctx.fillStyle = '#222538';
@@ -477,22 +477,132 @@ class RibbonTrail {
     this.geo.attributes.position.needsUpdate = true;
   }
 
+  clear() {
+    this.points.length = 0;
+    this.geo.attributes.position.array.fill(0);
+    this.geo.attributes.position.needsUpdate = true;
+  }
+
   setVisible(v) {
     this.mesh.visible = v;
   }
 }
 
+/**
+ * Shared sculpted 3D fighter jet visual rig (used by both local FighterJet and RemoteJet).
+ */
+function buildJetVisualRig(accentHex = '#e55238') {
+  const group = new THREE.Group();
+  const visual = new THREE.Group();
+  const hullGroup = new THREE.Group(); // meshes included in the crisp 1px silhouette outline pass
+  visual.add(hullGroup);
+  group.add(visual);
+
+  const planTex = createPlanformTexture(accentHex);
+  const canopyTex = createCanopyTexture();
+  const finTex = createFinTexture(accentHex);
+
+  const bodyMat = createBrightJetMaterial(planTex, 0xffffff);
+  const finMat = createBrightJetMaterial(finTex, 0xffffff);
+  const canopyMat = new THREE.MeshBasicMaterial({ map: canopyTex });
+  const nozzleMat = new THREE.MeshBasicMaterial({ color: 0x2c3044 });
+
+  // 1. Continuous sculpted blended-wing-body fuselage
+  const fuselage = new THREE.Mesh(buildSculptedFuselage(), bodyMat);
+  hullGroup.add(fuselage);
+
+  // 2. Sculpted swept main delta-arrow wings
+  for (const side of [-1, 1]) {
+    const wingGeo = buildAirfoilSurface(
+      side,
+      [0.85, -1.25],
+      [0.85, 1.08],
+      [3.95, 0.56],
+      [3.95, 0.98],
+      0.24,
+      0.07,
+      0.03
+    );
+    hullGroup.add(new THREE.Mesh(wingGeo, bodyMat));
+
+    const tailGeo = buildAirfoilSurface(
+      side,
+      [0.72, 1.38],
+      [0.72, 2.28],
+      [2.22, 1.98],
+      [2.22, 2.46],
+      0.14,
+      0.06,
+      0.01
+    );
+    hullGroup.add(new THREE.Mesh(tailGeo, bodyMat));
+
+    const fin = new THREE.Mesh(buildVerticalFin(side), finMat);
+    fin.position.set(side * 0.64, 0.20, 1.66);
+    hullGroup.add(fin);
+
+    const nozGeo = new THREE.CylinderGeometry(0.22, 0.28, 0.58, 7);
+    nozGeo.rotateX(Math.PI / 2);
+    const noz = new THREE.Mesh(nozGeo, nozzleMat);
+    noz.position.set(side * 0.40, 0.0, 2.60);
+    hullGroup.add(noz);
+  }
+
+  // 3. Sculpted teardrop golden-yellow bubble canopy
+  const canopyGeo = new THREE.SphereGeometry(1.0, 10, 8, 0, Math.PI * 2, 0, Math.PI * 0.62);
+  const canopy = new THREE.Mesh(canopyGeo, canopyMat);
+  canopy.scale.set(0.32, 0.30, 1.05);
+  canopy.position.set(0, 0.24, -1.62);
+  hullGroup.add(canopy);
+
+  // 4. Twin animated afterburner flames
+  const flameOuterMat = new THREE.MeshBasicMaterial({ color: 0xff8026 });
+  const flameInnerMat = new THREE.MeshBasicMaterial({ color: 0xfff6a0 });
+  const outerConeGeo = new THREE.ConeGeometry(0.23, 2.25, 6);
+  outerConeGeo.rotateX(Math.PI / 2);
+  outerConeGeo.translate(0, 0, 1.12);
+
+  const innerConeGeo = new THREE.ConeGeometry(0.13, 1.45, 6);
+  innerConeGeo.rotateX(Math.PI / 2);
+  innerConeGeo.translate(0, 0, 0.72);
+
+  const flameL = new THREE.Group();
+  flameL.position.set(-0.40, 0.0, 2.82);
+  flameL.add(new THREE.Mesh(outerConeGeo, flameOuterMat), new THREE.Mesh(innerConeGeo, flameInnerMat));
+  visual.add(flameL);
+
+  const flameR = new THREE.Group();
+  flameR.position.set(0.40, 0.0, 2.82);
+  flameR.add(new THREE.Mesh(outerConeGeo, flameOuterMat), new THREE.Mesh(innerConeGeo, flameInnerMat));
+  visual.add(flameR);
+
+  // 5. Cannon muzzle flash at starboard wing-root gun port
+  const muzzleMat = new THREE.MeshBasicMaterial({ color: 0xfff49e });
+  const muzzleFlash = new THREE.Mesh(new THREE.OctahedronGeometry(0.38, 0), muzzleMat);
+  muzzleFlash.position.set(0.75, 0.0, -1.55);
+  muzzleFlash.visible = false;
+  visual.add(muzzleFlash);
+
+  return { group, visual, hullGroup, flameL, flameR, muzzleFlash };
+}
+
+function lerpAngle(a, b, t) {
+  const diff = Math.atan2(Math.sin(b - a), Math.cos(b - a));
+  return a + diff * t;
+}
+
 export class FighterJet {
   constructor(scene) {
     this.scene = scene;
-    this.group = new THREE.Group();
-    this.visual = new THREE.Group();
-    this.hullGroup = new THREE.Group(); // meshes included in the crisp 1px silhouette outline pass
-    this.visual.add(this.hullGroup);
-    this.group.add(this.visual);
+    const rig = buildJetVisualRig('#e55238');
+    this.group = rig.group;
+    this.visual = rig.visual;
+    this.hullGroup = rig.hullGroup;
+    this.flameL = rig.flameL;
+    this.flameR = rig.flameR;
+    this.muzzleFlash = rig.muzzleFlash;
     scene.add(this.group);
 
-    this.buildMesh();
     this.visual.scale.setScalar(0.74);
 
     this.leftTrail = new RibbonTrail(scene, 84, 0.14, 0xffffff);
@@ -510,6 +620,7 @@ export class FighterJet {
     this.bank = 0;
     this.rollAnim = 0;
     this.rollDir = 1;
+    this.rollExtra = 0;
 
     this.speed = 64;
     this.throttle = 0.65;
@@ -519,6 +630,12 @@ export class FighterJet {
     this.radarAlt = 86;
     this.lowAltWarning = false;
 
+    this.hp = 100;
+    this.maxHp = 100;
+    this.alive = true;
+    this.respawnTimer = 0;
+    this.damageCooldown = 0;
+
     this.velocity = new THREE.Vector3(0, 0, -this.speed);
     this.prevPitch = this.pitch;
     this.prevYaw = this.yaw;
@@ -526,94 +643,28 @@ export class FighterJet {
     this.group.position.copy(this.position);
   }
 
-  buildMesh() {
-    const planTex = createPlanformTexture();
-    const canopyTex = createCanopyTexture();
-    const finTex = createFinTexture();
-
-    const bodyMat = createBrightJetMaterial(planTex, 0xffffff);
-    const finMat = createBrightJetMaterial(finTex, 0xffffff);
-    const canopyMat = new THREE.MeshBasicMaterial({ map: canopyTex });
-    const nozzleMat = new THREE.MeshBasicMaterial({ color: 0x2c3044 });
-
-    // 1. Continuous sculpted blended-wing-body fuselage
-    const fuselage = new THREE.Mesh(buildSculptedFuselage(), bodyMat);
-    this.hullGroup.add(fuselage);
-
-    // 2. Sculpted swept main delta-arrow wings (matches exact planform in screenshots!)
-    for (const side of [-1, 1]) {
-      const wingGeo = buildAirfoilSurface(
-        side,
-        [0.85, -1.25], // root leading edge
-        [0.85, 1.08],  // root trailing edge
-        [3.95, 0.56],  // swept wingtip leading edge
-        [3.95, 0.98],  // wingtip trailing edge
-        0.24,
-        0.07,
-        0.03
-      );
-      this.hullGroup.add(new THREE.Mesh(wingGeo, bodyMat));
-
-      // Sleek rear horizontal tailplanes with clear notch behind main wings
-      const tailGeo = buildAirfoilSurface(
-        side,
-        [0.72, 1.38],
-        [0.72, 2.28],
-        [2.22, 1.98],
-        [2.22, 2.46],
-        0.14,
-        0.06,
-        0.01
-      );
-      this.hullGroup.add(new THREE.Mesh(tailGeo, bodyMat));
-
-      // Twin canted vertical tail fins with red-orange tips
-      const fin = new THREE.Mesh(buildVerticalFin(side), finMat);
-      fin.position.set(side * 0.64, 0.20, 1.66);
-      this.hullGroup.add(fin);
-
-      // Twin tapered engine exhaust nozzles
-      const nozGeo = new THREE.CylinderGeometry(0.22, 0.28, 0.58, 7);
-      nozGeo.rotateX(Math.PI / 2);
-      const noz = new THREE.Mesh(nozGeo, nozzleMat);
-      noz.position.set(side * 0.40, 0.0, 2.60);
-      this.hullGroup.add(noz);
-    }
-
-    // 3. Sculpted teardrop golden-yellow bubble canopy
-    const canopyGeo = new THREE.SphereGeometry(1.0, 10, 8, 0, Math.PI * 2, 0, Math.PI * 0.62);
-    const canopy = new THREE.Mesh(canopyGeo, canopyMat);
-    canopy.scale.set(0.32, 0.30, 1.05);
-    canopy.position.set(0, 0.24, -1.62);
-    this.hullGroup.add(canopy);
-
-    // 4. Twin animated afterburner flames (excluded from outline mask so they glow!)
-    const flameOuterMat = new THREE.MeshBasicMaterial({ color: 0xff8026 });
-    const flameInnerMat = new THREE.MeshBasicMaterial({ color: 0xfff6a0 });
-    const outerConeGeo = new THREE.ConeGeometry(0.23, 2.25, 6);
-    outerConeGeo.rotateX(Math.PI / 2);
-    outerConeGeo.translate(0, 0, 1.12);
-
-    const innerConeGeo = new THREE.ConeGeometry(0.13, 1.45, 6);
-    innerConeGeo.rotateX(Math.PI / 2);
-    innerConeGeo.translate(0, 0, 0.72);
-
-    this.flameL = new THREE.Group();
-    this.flameL.position.set(-0.40, 0.0, 2.82);
-    this.flameL.add(new THREE.Mesh(outerConeGeo, flameOuterMat), new THREE.Mesh(innerConeGeo, flameInnerMat));
-    this.visual.add(this.flameL);
-
-    this.flameR = new THREE.Group();
-    this.flameR.position.set(0.40, 0.0, 2.82);
-    this.flameR.add(new THREE.Mesh(outerConeGeo, flameOuterMat), new THREE.Mesh(innerConeGeo, flameInnerMat));
-    this.visual.add(this.flameR);
-
-    // 5. Cannon muzzle flash at starboard wing-root gun port
-    const muzzleMat = new THREE.MeshBasicMaterial({ color: 0xfff49e });
-    this.muzzleFlash = new THREE.Mesh(new THREE.OctahedronGeometry(0.38, 0), muzzleMat);
-    this.muzzleFlash.position.set(0.75, 0.0, -1.55);
-    this.muzzleFlash.visible = false;
-    this.visual.add(this.muzzleFlash);
+  respawn(offsetIndex = 0) {
+    this.position.set(
+      -85 + (offsetIndex % 4) * 32,
+      86 + (offsetIndex % 2) * 14,
+      195 + Math.floor(offsetIndex / 4) * 32
+    );
+    this.yaw = 0.18;
+    this.pitch = -0.04;
+    this.bank = 0;
+    this.rollAnim = 0;
+    this.rollExtra = 0;
+    this.speed = 64;
+    this.hp = this.maxHp;
+    this.alive = true;
+    this.respawnTimer = 0;
+    this.damageCooldown = 0;
+    const fwd = this.getForwardDirection();
+    this.velocity.copy(fwd).multiplyScalar(this.speed);
+    this.leftTrail.clear();
+    this.rightTrail.clear();
+    this.group.position.copy(this.position);
+    this.group.visible = true;
   }
 
   triggerRoll(dir = 1) {
@@ -781,6 +832,7 @@ export class FighterJet {
       this.rollAnim = Math.max(0, this.rollAnim - dt * 1.85);
       extraRoll = (1.0 - this.rollAnim) * Math.PI * 2 * this.rollDir;
     }
+    this.rollExtra = extraRoll;
 
     this.group.position.copy(this.position);
     this.group.rotation.order = 'YXZ';
@@ -819,5 +871,253 @@ export class FighterJet {
       }
     }
     this.updatePuffs(dt);
+  }
+}
+
+/**
+ * Network-controlled remote player fighter jet with smooth dead-reckoning interpolation,
+ * squadron accent colors, wingtip contrails, and dithered exhaust puffs.
+ */
+export class RemoteJet {
+  constructor(scene, id, name = 'PILOT', colorHex = '#36d6ff') {
+    this.scene = scene;
+    this.id = id;
+    this.name = name;
+    this.label = name;
+    this.colorHex = colorHex;
+    this.type = 'player';
+    this.r = 8.5;
+    this.h = 5.0;
+
+    const rig = buildJetVisualRig(colorHex);
+    this.group = rig.group;
+    this.visual = rig.visual;
+    this.hullGroup = rig.hullGroup;
+    this.flameL = rig.flameL;
+    this.flameR = rig.flameR;
+    this.muzzleFlash = rig.muzzleFlash;
+
+    this.hullGroup.traverse((obj) => {
+      if (obj.isMesh) obj.layers.enable(1);
+    });
+
+    this.visual.scale.setScalar(0.74);
+    scene.add(this.group);
+
+    this.leftTrail = new RibbonTrail(scene, 72, 0.14, 0xffffff);
+    this.rightTrail = new RibbonTrail(scene, 72, 0.14, 0xffffff);
+    this.trailTimer = 0;
+
+    this.puffs = [];
+    this.puffGeo = new THREE.IcosahedronGeometry(1.0, 1);
+    this.puffTimer = 0;
+
+    this.position = new THREE.Vector3(-85, 96, 225);
+    this.targetPos = this.position.clone();
+    this.velocity = new THREE.Vector3(0, 0, -64);
+
+    this.x = this.position.x;
+    this.y = this.position.y;
+    this.z = this.position.z;
+
+    this.yaw = 0.18;
+    this.targetYaw = 0.18;
+    this.pitch = -0.04;
+    this.targetPitch = -0.04;
+    this.bank = 0;
+    this.targetBank = 0;
+    this.rollExtra = 0;
+    this.targetRollExtra = 0;
+
+    this.afterburner = false;
+    this.hp = 100;
+    this.alive = true;
+    this.muzzleTimer = 0;
+    this.hasReceivedState = false;
+  }
+
+  applyNetworkState(st) {
+    if (!this.hasReceivedState) {
+      this.position.set(st.x, st.y, st.z);
+      this.yaw = st.yw;
+      this.pitch = st.pt;
+      this.bank = st.bk;
+      this.rollExtra = st.rl || 0;
+      this.hasReceivedState = true;
+    }
+    this.targetPos.set(st.x, st.y, st.z);
+    this.velocity.set(st.vx || 0, st.vy || 0, st.vz || 0);
+    this.targetYaw = st.yw;
+    this.targetPitch = st.pt;
+    this.targetBank = st.bk;
+    this.targetRollExtra = st.rl || 0;
+    this.afterburner = Boolean(st.ab);
+    if (typeof st.hp === 'number') this.hp = st.hp;
+
+    const wasAlive = this.alive;
+    this.alive = st.al !== false && this.hp > 0;
+    if (wasAlive && !this.alive) {
+      this.visual.visible = false;
+      this.leftTrail.setVisible(false);
+      this.rightTrail.setVisible(false);
+    } else if (!wasAlive && this.alive) {
+      this.position.copy(this.targetPos);
+      this.leftTrail.clear();
+      this.rightTrail.clear();
+      this.visual.visible = true;
+      this.leftTrail.setVisible(true);
+      this.rightTrail.setVisible(true);
+    }
+  }
+
+  triggerMuzzleFlash() {
+    this.muzzleTimer = 0.07;
+  }
+
+  getWorldPoint(x, y, z) {
+    return new THREE.Vector3(x, y, z).applyMatrix4(this.visual.matrixWorld);
+  }
+
+  spawnExhaustPuffs() {
+    const fwd = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(this.pitch, this.yaw, 0, 'YXZ'));
+    for (const sx of [-0.40, 0.40]) {
+      const origin = this.getWorldPoint(sx, 0.0, 3.45);
+      const mat = createDitherPuffMaterial();
+      const mesh = new THREE.Mesh(this.puffGeo, mat);
+      mesh.position.copy(origin);
+      const initSize = this.afterburner ? 0.50 : 0.32;
+      mesh.scale.setScalar(initSize);
+      this.scene.add(mesh);
+
+      this.puffs.push({
+        mesh,
+        mat,
+        vel: fwd.clone().multiplyScalar(-12).add(
+          new THREE.Vector3(
+            (Math.random() - 0.5) * 3.0,
+            (Math.random() - 0.5) * 3.0,
+            (Math.random() - 0.5) * 3.0
+          )
+        ),
+        age: 0,
+        maxAge: this.afterburner ? 0.72 : 0.44,
+        initSize,
+        ab: this.afterburner,
+      });
+    }
+  }
+
+  updatePuffs(dt) {
+    const colYellow = new THREE.Color(0xffef7a);
+    const colOrange = new THREE.Color(0xf28836);
+    const colSmoke = new THREE.Color(0xb6b0c8);
+
+    for (let i = this.puffs.length - 1; i >= 0; i--) {
+      const p = this.puffs[i];
+      p.age += dt;
+      if (p.age >= p.maxAge) {
+        this.scene.remove(p.mesh);
+        p.mat.dispose();
+        this.puffs.splice(i, 1);
+        continue;
+      }
+      const t = p.age / p.maxAge;
+      p.mesh.position.addScaledVector(p.vel, dt);
+      p.vel.multiplyScalar(0.95);
+      p.mesh.scale.setScalar(p.initSize * (1.0 + t * (p.ab ? 3.5 : 2.2)));
+
+      if (t < 0.25) {
+        p.mat.uniforms.uColor.value.copy(colYellow);
+        p.mat.uniforms.uAlpha.value = 1.0;
+      } else if (t < 0.55) {
+        p.mat.uniforms.uColor.value.copy(colOrange);
+        p.mat.uniforms.uAlpha.value = 1.0 - (t - 0.25) * 0.6;
+      } else {
+        p.mat.uniforms.uColor.value.copy(colSmoke);
+        p.mat.uniforms.uAlpha.value = Math.max(0, (1.0 - t) / 0.45) * 0.85;
+      }
+    }
+  }
+
+  update(dt, localJetPos) {
+    // Dead-reckoning prediction + smooth catchup
+    this.targetPos.addScaledVector(this.velocity, dt);
+    const posBlend = 1 - Math.exp(-12 * dt);
+    this.position.lerp(this.targetPos, posBlend);
+
+    const rotBlend = 1 - Math.exp(-14 * dt);
+    this.yaw = lerpAngle(this.yaw, this.targetYaw, rotBlend);
+    this.pitch = THREE.MathUtils.lerp(this.pitch, this.targetPitch, rotBlend);
+    this.bank = THREE.MathUtils.lerp(this.bank, this.targetBank, rotBlend);
+    this.rollExtra = lerpAngle(this.rollExtra, this.targetRollExtra, rotBlend);
+
+    this.x = this.position.x;
+    this.y = this.position.y;
+    this.z = this.position.z;
+
+    this.group.position.copy(this.position);
+    this.group.rotation.order = 'YXZ';
+    this.group.rotation.y = this.yaw;
+    this.group.rotation.x = this.pitch;
+    this.visual.rotation.z = this.bank + this.rollExtra;
+    this.group.updateMatrixWorld(true);
+
+    if (this.muzzleTimer > 0) {
+      this.muzzleTimer -= dt;
+      this.muzzleFlash.visible = true;
+      const s = 0.75 + Math.random() * 0.75;
+      this.muzzleFlash.scale.set(s, s, s * 1.8);
+      this.muzzleFlash.rotation.z = Math.random() * Math.PI;
+    } else {
+      this.muzzleFlash.visible = false;
+    }
+
+    if (this.alive) {
+      const flicker = 0.85 + Math.random() * 0.34;
+      const fLen = (this.afterburner ? 1.65 : 0.72) * flicker;
+      const fRad = this.afterburner ? 1.18 : 0.78;
+      this.flameL.scale.set(fRad, fRad, fLen);
+      this.flameR.scale.set(fRad, fRad, fLen);
+
+      this.trailTimer += dt;
+      if (this.trailTimer >= 0.022) {
+        this.trailTimer = 0;
+        const rightVec = new THREE.Vector3(1, 0, 0).applyQuaternion(
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(this.pitch, this.yaw, this.bank + this.rollExtra, 'YXZ'))
+        );
+        const tipL = this.getWorldPoint(-3.95, 0.03, 0.96);
+        const tipR = this.getWorldPoint(3.95, 0.03, 0.96);
+        this.leftTrail.push(tipL, rightVec);
+        this.rightTrail.push(tipR, rightVec);
+      }
+
+      const dist = localJetPos ? this.position.distanceTo(localJetPos) : 0;
+      if (dist < 550) {
+        this.puffTimer += dt;
+        const interval = this.afterburner ? 0.052 : 0.095;
+        if (this.puffTimer >= interval) {
+          this.puffTimer = 0;
+          this.spawnExhaustPuffs();
+        }
+      }
+    }
+
+    this.updatePuffs(dt);
+  }
+
+  dispose() {
+    this.scene.remove(this.group);
+    this.scene.remove(this.leftTrail.mesh);
+    this.scene.remove(this.rightTrail.mesh);
+    this.leftTrail.geo.dispose();
+    this.leftTrail.mat.dispose();
+    this.rightTrail.geo.dispose();
+    this.rightTrail.mat.dispose();
+    for (const p of this.puffs) {
+      this.scene.remove(p.mesh);
+      p.mat.dispose();
+    }
+    this.puffs.length = 0;
+    this.puffGeo.dispose();
   }
 }

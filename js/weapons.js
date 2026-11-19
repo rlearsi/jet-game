@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { getTerrainHeight, WATER_LEVEL } from './world.js?v=7';
+import { getTerrainHeight, WATER_LEVEL } from './world.js?v=8';
 
 function createDitherExplosionMat(hex) {
   return new THREE.ShaderMaterial({
@@ -85,10 +85,15 @@ export class MissileSystem {
 
     this.sphereGeo = new THREE.IcosahedronGeometry(1.0, 1);
     this.smokeMatWhite = new THREE.MeshBasicMaterial({ color: 0xf7f4f0 });
+    this.netHooks = {};
+  }
+
+  setNetHooks(hooks = {}) {
+    this.netHooks = hooks || {};
   }
 
   // Destroy all destructible world objects within radius and spawn unmistakable fireball + wreck smoke!
-  destroyAt(pos, radius, time) {
+  destroyAt(pos, radius, time, silentNet = false) {
     const killed = this.world.damage(pos, radius);
     if (!killed.length) return 0;
 
@@ -150,6 +155,9 @@ export class MissileSystem {
 
     this.shake = Math.max(this.shake, majorHit ? 0.55 : 0.22);
     this.sound.playImpact(false);
+    if (!silentNet) {
+      this.netHooks.onDamage?.(pos.x, pos.y, pos.z, radius, pos.y <= WATER_LEVEL + 1.5);
+    }
     return killed.length;
   }
 
@@ -177,12 +185,14 @@ export class MissileSystem {
     this.bullets.push({
       mesh,
       pos: origin.clone(),
-      vel: dir.multiplyScalar(speed),
+      vel: dir.clone().multiplyScalar(speed),
       life: 2.4,
+      isRemote: false,
     });
 
     this.shake = Math.max(this.shake, 0.08);
     this.sound.playCannon();
+    this.netHooks.onCannon?.({ origin, dir, speed });
     return true;
   }
 
@@ -211,11 +221,80 @@ export class MissileSystem {
       target: this.lockedTarget && this.lockedTarget.alive ? this.lockedTarget : null,
       life: 6.5,
       smokeAcc: 0,
+      isRemote: false,
     });
 
     this.shake = Math.max(this.shake, 0.3);
     this.sound.playMissile();
+    this.netHooks.onMissile?.({ origin, dir, speed });
     return true;
+  }
+
+  spawnRemoteCannon(origin, dir, speed) {
+    const o = new THREE.Vector3(origin.x, origin.y, origin.z);
+    const d = new THREE.Vector3(dir.x, dir.y, dir.z).normalize();
+    const mesh = new THREE.Mesh(this.bulletGeo, this.bulletMat);
+    mesh.position.copy(o);
+    mesh.lookAt(o.clone().add(d));
+    this.scene.add(mesh);
+
+    this.bullets.push({
+      mesh,
+      pos: o,
+      vel: d.multiplyScalar(speed),
+      life: 2.4,
+      isRemote: true,
+    });
+  }
+
+  spawnRemoteMissile(origin, dir, speed) {
+    const o = new THREE.Vector3(origin.x, origin.y, origin.z);
+    const d = new THREE.Vector3(dir.x, dir.y, dir.z).normalize();
+    const mesh = new THREE.Mesh(this.missileGeo, this.missileMat);
+    mesh.position.copy(o);
+    mesh.lookAt(o.clone().add(d));
+    this.scene.add(mesh);
+
+    this.missiles.push({
+      mesh,
+      pos: o,
+      vel: d.multiplyScalar(speed),
+      speed,
+      target: null,
+      life: 6.5,
+      smokeAcc: 0,
+      isRemote: true,
+    });
+  }
+
+  applyRemoteDeform(x, z, r, d, dx, dz) {
+    this.world.deformTerrain(x, z, r, d, dx, dz);
+  }
+
+  applyRemoteDamage(x, y, z, r, isWater, time) {
+    if (isWater) {
+      this.world.addWaterRipple(x, z, time);
+    }
+    this.destroyAt(new THREE.Vector3(x, y, z), r, time, true);
+  }
+
+  spawnJetExplosion(pos, time) {
+    this.shake = Math.max(this.shake, 0.9);
+    this.sound.playImpact(false);
+    const p = new THREE.Vector3(pos.x, pos.y, pos.z);
+    for (let i = 0; i < 36; i++) {
+      const vel = new THREE.Vector3(
+        (Math.random() - 0.5) * 46,
+        (Math.random() - 0.3) * 40,
+        (Math.random() - 0.5) * 46
+      );
+      const r = Math.random();
+      const col = r < 0.28 ? 0xfff49a : r < 0.62 ? 0xf57428 : r < 0.85 ? 0xd93c26 : 0x4b4658;
+      this.spawnParticle(p, vel, 1.8 + Math.random() * 2.2, 0.9 + Math.random() * 0.7, col, 3.0, true);
+    }
+    if (p.y <= WATER_LEVEL + 6) {
+      this.world.addWaterRipple(p.x, p.z, time);
+    }
   }
 
   spawnParticle(pos, vel, size, maxLife, hex, grow, dithered = true) {
@@ -308,8 +387,47 @@ export class MissileSystem {
     if (this.fox2Timer > 0) this.fox2Timer = Math.max(0, this.fox2Timer - dt);
     this.shake = Math.max(0, this.shake - dt * 2.4);
 
-    // Update target lock-on in front of jet
-    this.lockedTarget = this.world.findLockTarget(jet.position, jet.getForwardDirection(), 520);
+    // Update target lock-on in front of jet (world destructibles + remote players)
+    const fwdDir = jet.getForwardDirection();
+    let bestTarget = this.world.findLockTarget(jet.position, fwdDir, 520);
+    let bestScore = Infinity;
+    if (bestTarget) {
+      const ty = bestTarget.y + (bestTarget.h || 6) * 0.5;
+      const v = new THREE.Vector3(bestTarget.x - jet.position.x, ty - jet.position.y, bestTarget.z - jet.position.z);
+      const d = v.length() || 1;
+      const dot = v.divideScalar(d).dot(fwdDir);
+      bestScore = d + (1.0 - dot) * 900;
+    }
+
+    const remoteJets = this.netHooks.getRemoteJets?.();
+    if (remoteJets) {
+      const toP = new THREE.Vector3();
+      for (const rj of remoteJets.values()) {
+        if (!rj.alive) continue;
+        toP.subVectors(rj.position, jet.position);
+        const dist = toP.length();
+        if (dist < 18 || dist > 780) continue;
+        toP.divideScalar(dist);
+        const dot = toP.dot(fwdDir);
+        if (dot < 0.88) continue;
+        const score = dist + (1.0 - dot) * 900 - 40; // slight priority for PvP pilot lock
+        if (score < bestScore) {
+          bestScore = score;
+          bestTarget = {
+            id: rj.id,
+            type: 'player',
+            label: rj.name,
+            isPlayer: true,
+            get x() { return rj.position.x; },
+            get y() { return rj.position.y - 2.5; },
+            get z() { return rj.position.z; },
+            h: 5.0,
+            get alive() { return rj.alive; },
+          };
+        }
+      }
+    }
+    this.lockedTarget = bestTarget;
 
     if (this.ammo < this.maxAmmo) {
       this.rechargeTimer += dt;
@@ -330,12 +448,28 @@ export class MissileSystem {
       b.pos.addScaledVector(b.vel, dt);
 
       let hitObj = false;
-      for (let k = 1; k <= 5; k++) {
-        const sp = bPrev.clone().lerp(b.pos, k / 5);
-        if (this.destroyAt(sp, 5.5, time) > 0) {
-          hitObj = true;
-          b.pos.copy(sp);
-          break;
+      if (!b.isRemote) {
+        if (remoteJets) {
+          for (const rj of remoteJets.values()) {
+            if (!rj.alive) continue;
+            if (rj.position.distanceTo(b.pos) < 9.5) {
+              hitObj = true;
+              this.hitMarkerTimer = 0.28;
+              this.spawnCannonImpact(b.pos, false, time);
+              this.netHooks.onHitPlayer?.(rj.id, 16, 'cannon');
+              break;
+            }
+          }
+        }
+        if (!hitObj) {
+          for (let k = 1; k <= 5; k++) {
+            const sp = bPrev.clone().lerp(b.pos, k / 5);
+            if (this.destroyAt(sp, 5.5, time) > 0) {
+              hitObj = true;
+              b.pos.copy(sp);
+              break;
+            }
+          }
         }
       }
       if (hitObj) {
@@ -370,13 +504,16 @@ export class MissileSystem {
       if (hit || b.life <= 0) {
         if (hit) {
           this.spawnCannonImpact(b.pos, isWater, time);
-          if (!isWater) {
-            const hl = Math.hypot(b.vel.x, b.vel.z) || 1;
-            // Carve craters & trenches into mountains with cannon bursts!
-            this.world.deformTerrain(b.pos.x, b.pos.z, 18, 10.5, b.vel.x / hl, b.vel.z / hl);
+          if (!b.isRemote) {
+            if (!isWater) {
+              const hl = Math.hypot(b.vel.x, b.vel.z) || 1;
+              const dx = b.vel.x / hl;
+              const dz = b.vel.z / hl;
+              this.world.deformTerrain(b.pos.x, b.pos.z, 18, 10.5, dx, dz);
+              this.netHooks.onDeform?.(b.pos.x, b.pos.z, 18, 10.5, dx, dz);
+            }
+            this.destroyAt(b.pos, isWater ? 8.5 : 16, time);
           }
-          // Splash destruction for any trees, houses, boats or ships on/beside the blast!
-          this.destroyAt(b.pos, isWater ? 8.5 : 16, time);
         }
         this.scene.remove(b.mesh);
         this.bullets.splice(i, 1);
@@ -402,21 +539,43 @@ export class MissileSystem {
       m.pos.addScaledVector(m.vel, dt);
 
       let directHit = false;
-      for (let k = 1; k <= 6; k++) {
-        const sp = mPrev.clone().lerp(m.pos, k / 6);
-        if (this.destroyAt(sp, 5.0, time) > 0) {
-          directHit = true;
-          m.pos.copy(sp);
-          break;
+      let hitRemotePlayer = false;
+      if (!m.isRemote) {
+        if (remoteJets) {
+          for (const rj of remoteJets.values()) {
+            if (!rj.alive) continue;
+            if (rj.position.distanceTo(m.pos) < 19.0) {
+              directHit = true;
+              hitRemotePlayer = true;
+              this.hitMarkerTimer = 0.32;
+              this.netHooks.onHitPlayer?.(rj.id, 65, 'missile');
+              break;
+            }
+          }
+        }
+        if (!directHit) {
+          for (let k = 1; k <= 6; k++) {
+            const sp = mPrev.clone().lerp(m.pos, k / 6);
+            if (this.destroyAt(sp, 5.0, time) > 0) {
+              directHit = true;
+              m.pos.copy(sp);
+              break;
+            }
+          }
         }
       }
       if (directHit) {
         this.spawnImpact(m.pos, false, time);
-        const hl = Math.hypot(m.vel.x, m.vel.z) || 1;
-        if (m.pos.y < getTerrainHeight(m.pos.x, m.pos.z) + 22) {
-          this.world.deformTerrain(m.pos.x, m.pos.z, 46, 32, m.vel.x / hl, m.vel.z / hl);
+        if (!hitRemotePlayer) {
+          const hl = Math.hypot(m.vel.x, m.vel.z) || 1;
+          const dx = m.vel.x / hl;
+          const dz = m.vel.z / hl;
+          if (m.pos.y < getTerrainHeight(m.pos.x, m.pos.z) + 22) {
+            this.world.deformTerrain(m.pos.x, m.pos.z, 46, 32, dx, dz);
+            this.netHooks.onDeform?.(m.pos.x, m.pos.z, 46, 32, dx, dz);
+          }
+          this.destroyAt(m.pos, 46, time);
         }
-        this.destroyAt(m.pos, 46, time);
         this.scene.remove(m.mesh);
         this.missiles.splice(i, 1);
         continue;
@@ -468,9 +627,6 @@ export class MissileSystem {
         if (hit) {
           this.spawnImpact(m.pos, isWater, time);
           if (!isWater) {
-            const hl = Math.hypot(m.vel.x, m.vel.z) || 1;
-            // Blast massive holes & passes straight through mountains!
-            this.world.deformTerrain(m.pos.x, m.pos.z, 52, 38, m.vel.x / hl, m.vel.z / hl);
             this.burners.push({
               pos: new THREE.Vector3(m.pos.x, Math.max(WATER_LEVEL + 0.8, getTerrainHeight(m.pos.x, m.pos.z) + 1.0), m.pos.z),
               life: 8.5,
@@ -478,8 +634,16 @@ export class MissileSystem {
               big: true,
             });
           }
-          // Always blast nearby ships, boats, trees, houses & structures on BOTH water & land!
-          this.destroyAt(m.pos, 48, time);
+          if (!m.isRemote) {
+            if (!isWater) {
+              const hl = Math.hypot(m.vel.x, m.vel.z) || 1;
+              const dx = m.vel.x / hl;
+              const dz = m.vel.z / hl;
+              this.world.deformTerrain(m.pos.x, m.pos.z, 52, 38, dx, dz);
+              this.netHooks.onDeform?.(m.pos.x, m.pos.z, 52, 38, dx, dz);
+            }
+            this.destroyAt(m.pos, 48, time);
+          }
         }
         this.scene.remove(m.mesh);
         this.missiles.splice(i, 1);

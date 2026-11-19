@@ -27,6 +27,9 @@
   <!-- Brief destruction feedback toast -->
   <div id="kill-banner" class="kill-banner hidden"></div>
 
+  <!-- 3D projected remote pilot nameplates -->
+  <div id="remote-labels"></div>
+
   <!-- Top slim control bar -->
   <div id="hud-top-bar">
     <div class="top-controls">
@@ -51,10 +54,56 @@
     </div>
   </div>
 
-  <!-- Top-right buttons: VIEW / RENDER + SOUND -->
+  <!-- Top-right buttons: MULTIPLAYER + VIEW / RENDER + SOUND -->
   <div id="hud-top-right">
+    <button id="mp-btn" class="hud-btn" type="button">MULTIPLAYER</button>
     <button id="view-btn" class="hud-btn" type="button">VIEW / RENDER</button>
     <button id="sound-btn" class="hud-btn" type="button">SOUND: OFF</button>
+  </div>
+
+  <!-- Collapsible WebRTC P2P Multiplayer Panel -->
+  <div id="mp-panel" class="mp-panel hidden">
+    <div class="vp-header">
+      <span>MULTIPLAYER P2P</span>
+      <span id="mp-status-badge" class="mp-badge offline">OFFLINE</span>
+    </div>
+    <label class="mp-field">
+      <span>PILOT</span>
+      <input id="mp-name-input" class="mp-input" type="text" maxlength="12" value="ACE-1" placeholder="PILOT NAME" />
+    </label>
+    <label class="mp-field">
+      <span>SIGNAL</span>
+      <select id="mp-signal-select" class="vp-select">
+        <option value="auto" selected>AUTO (LOCAL / CLOUD)</option>
+        <option value="local">LOCAL (XAMPP PHP)</option>
+        <option value="cloud">CLOUD (INTERNET)</option>
+      </select>
+    </label>
+
+    <div id="mp-lobby-view">
+      <button id="mp-create-btn" class="mp-btn-primary" type="button">CREATE ROOM (HOST)</button>
+      <div class="vp-divider"></div>
+      <div class="mp-join-row">
+        <input id="mp-code-input" class="mp-input mp-code-input" type="text" maxlength="10" placeholder="ROOM CODE" />
+        <button id="mp-join-btn" class="mp-btn-secondary" type="button">JOIN</button>
+      </div>
+    </div>
+
+    <div id="mp-room-view" class="hidden">
+      <div class="mp-code-box">
+        <span class="mp-code-caption">ROOM CODE</span>
+        <span id="mp-room-code" class="mp-code-text">------</span>
+        <div class="mp-copy-row">
+          <button id="mp-copy-code" class="vp-reset-btn" type="button">COPY CODE</button>
+          <button id="mp-copy-link" class="vp-reset-btn" type="button">COPY LINK</button>
+        </div>
+      </div>
+      <div id="mp-transport-info" class="mp-transport-info">WEBRTC P2P</div>
+      <div id="mp-roster" class="mp-roster"></div>
+      <button id="mp-leave-btn" class="mp-btn-danger" type="button">LEAVE ROOM</button>
+    </div>
+
+    <div id="mp-msg" class="mp-msg"></div>
   </div>
 
   <!-- Collapsible Camera, Distance & Render Style panel -->
@@ -118,6 +167,7 @@
     <span id="dist-badge">FOV 80&deg; &middot; DIST 1.35x</span>
     <span class="sep">&middot;</span>
     <span id="destroyed-badge" class="destroyed-badge">DESTROYED: 0</span>
+    <span id="hp-badge" class="hp-badge hidden">&middot; HP 100</span>
   </div>
 
   <!-- Brief intro banner -->
@@ -133,6 +183,6 @@
       }
     }
   </script>
-  <script type="module" src="js/main.js?v=7"></script>
+  <script type="module" src="js/main.js?v=8"></script>
 </body>
 </html>

@@ -1,9 +1,10 @@
 import * as THREE from 'three';
-import { buildWorld, SUN_DIR } from './world.js?v=7';
-import { FighterJet } from './jet.js?v=7';
-import { MissileSystem } from './weapons.js?v=7';
-import { FighterCockpit } from './cockpit.js?v=7';
-import { JetSoundEngine } from './audio.js?v=7';
+import { buildWorld, SUN_DIR } from './world.js?v=8';
+import { FighterJet, RemoteJet } from './jet.js?v=8';
+import { MissileSystem } from './weapons.js?v=8';
+import { FighterCockpit } from './cockpit.js?v=8';
+import { JetSoundEngine } from './audio.js?v=8';
+import { MultiplayerManager } from './multiplayer.js?v=8';
 
 // 6 live-switchable rendering styles (V key or VIEW / RENDER panel)
 const RENDER_PRESETS = {
@@ -102,7 +103,28 @@ const hudBottomLeft = document.getElementById('hud-bottom-left');
 const camBadge = document.getElementById('cam-badge');
 const telemBadge = document.getElementById('telem-badge');
 const distBadge = document.getElementById('dist-badge');
+const hpBadge = document.getElementById('hp-badge');
 const startHint = document.getElementById('start-hint');
+const remoteLabelsEl = document.getElementById('remote-labels');
+
+// Multiplayer UI refs
+const mpBtn = document.getElementById('mp-btn');
+const mpPanel = document.getElementById('mp-panel');
+const mpStatusBadge = document.getElementById('mp-status-badge');
+const mpNameInput = document.getElementById('mp-name-input');
+const mpSignalSelect = document.getElementById('mp-signal-select');
+const mpLobbyView = document.getElementById('mp-lobby-view');
+const mpRoomView = document.getElementById('mp-room-view');
+const mpCreateBtn = document.getElementById('mp-create-btn');
+const mpCodeInput = document.getElementById('mp-code-input');
+const mpJoinBtn = document.getElementById('mp-join-btn');
+const mpRoomCode = document.getElementById('mp-room-code');
+const mpCopyCode = document.getElementById('mp-copy-code');
+const mpCopyLink = document.getElementById('mp-copy-link');
+const mpTransportInfo = document.getElementById('mp-transport-info');
+const mpRoster = document.getElementById('mp-roster');
+const mpLeaveBtn = document.getElementById('mp-leave-btn');
+const mpMsg = document.getElementById('mp-msg');
 
 // Renderer
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
@@ -325,10 +347,10 @@ function setCameraMode(idx) {
   camNextLabel.textContent = mode.nextHint;
 
   const isCockpit = mode.id === 'COCKPIT';
-  jet.setVisible(!isCockpit);
+  jet.setVisible(!isCockpit && jet.alive);
   cockpit.setVisible(isCockpit);
   hudBottomLeft.classList.toggle('hidden', isCockpit);
-  postMat.uniforms.uOutlineEnabled.value = isCockpit ? 0.0 : 1.0;
+  postMat.uniforms.uOutlineEnabled.value = (!isCockpit || remoteJets.size > 0) ? 1.0 : 0.0;
   sound.playSwitch();
 }
 
@@ -411,12 +433,29 @@ function syncViewUI() {
   scaleVal.textContent = `${viewSettings.objDist.toFixed(2)}x`;
   distBadge.textContent = `FOV ${Math.round(viewSettings.fov)}° · DIST ${viewSettings.camDist.toFixed(2)}x`;
 
-  jet.visual.scale.setScalar(0.74 / Math.sqrt(viewSettings.objDist));
+  const objScale = 0.74 / Math.sqrt(viewSettings.objDist);
+  jet.visual.scale.setScalar(objScale);
+  for (const rj of remoteJets.values()) {
+    rj.visual.scale.setScalar(objScale);
+  }
 }
 
 viewBtn.addEventListener('click', () => {
   const hidden = viewPanel.classList.toggle('hidden');
   viewBtn.classList.toggle('active', !hidden);
+  if (!hidden) {
+    mpPanel.classList.add('hidden');
+    mpBtn.classList.remove('active');
+  }
+});
+
+mpBtn.addEventListener('click', () => {
+  const hidden = mpPanel.classList.toggle('hidden');
+  mpBtn.classList.toggle('active', !hidden);
+  if (!hidden) {
+    viewPanel.classList.add('hidden');
+    viewBtn.classList.remove('active');
+  }
 });
 
 styleSelect.addEventListener('change', () => {
@@ -462,9 +501,283 @@ const rebuildTerrainBtn = document.getElementById('rebuild-terrain-btn');
 if (rebuildTerrainBtn) {
   rebuildTerrainBtn.addEventListener('click', () => {
     world.resetTerrain();
+    mp.sendEvent({ t: 'rst' });
     sound.playSwitch();
   });
 }
+
+// =========================================================================
+// WebRTC P2P Multiplayer Setup
+// =========================================================================
+const remoteJets = new Map();
+const remoteLabelEls = new Map();
+
+function ensureRemoteLabel(id, name, color) {
+  let rec = remoteLabelEls.get(id);
+  if (!rec) {
+    const el = document.createElement('div');
+    el.className = 'remote-tag hidden';
+    const nameEl = document.createElement('div');
+    const bar = document.createElement('div');
+    bar.className = 'remote-tag-bar';
+    const fillEl = document.createElement('div');
+    fillEl.className = 'remote-tag-fill';
+    fillEl.style.width = '100%';
+    bar.appendChild(fillEl);
+    el.append(nameEl, bar);
+    remoteLabelsEl.appendChild(el);
+    rec = { el, nameEl, fillEl };
+    remoteLabelEls.set(id, rec);
+  }
+  rec.nameEl.style.color = color || '#ffffff';
+  rec.nameEl.textContent = name || 'PILOT';
+  return rec;
+}
+
+function removeRemotePilot(id) {
+  const rj = remoteJets.get(id);
+  if (rj) {
+    rj.dispose();
+    remoteJets.delete(id);
+  }
+  const rec = remoteLabelEls.get(id);
+  if (rec) {
+    rec.el.remove();
+    remoteLabelEls.delete(id);
+  }
+}
+
+function spawnRemotePilot(id, name, color) {
+  if (remoteJets.has(id)) return remoteJets.get(id);
+  const rj = new RemoteJet(scene, id, name, color);
+  rj.visual.scale.setScalar(0.74 / Math.sqrt(viewSettings.objDist));
+  remoteJets.set(id, rj);
+  ensureRemoteLabel(id, name, color);
+  return rj;
+}
+
+const mp = new MultiplayerManager({
+  onStatusChange({ status, transport, roomCode, message }) {
+    mpStatusBadge.textContent = status;
+    mpStatusBadge.className = `mp-badge ${status.toLowerCase()}`;
+
+    const inRoom = status === 'HOSTING' || status === 'CONNECTED';
+    mpLobbyView.classList.toggle('hidden', inRoom);
+    mpRoomView.classList.toggle('hidden', !inRoom);
+    hpBadge.classList.toggle('hidden', !inRoom);
+    mpBtn.textContent = inRoom ? `P2P: ${roomCode}` : 'MULTIPLAYER';
+
+    if (inRoom) {
+      mpRoomCode.textContent = roomCode;
+      mpTransportInfo.textContent =
+        transport === 'php' ? 'WEBRTC P2P · LOCAL PHP SIGNALING' : 'WEBRTC P2P · CLOUD SIGNALING';
+    }
+    if (message !== undefined) {
+      mpMsg.textContent = message;
+    }
+  },
+  onRosterChange(list) {
+    mpRoster.innerHTML = '';
+    for (const item of list) {
+      const row = document.createElement('div');
+      row.className = 'mp-roster-item';
+
+      const left = document.createElement('span');
+      left.className = 'mp-roster-left';
+      const dot = document.createElement('span');
+      dot.className = 'mp-status-dot';
+      dot.style.background = item.color || '#ffffff';
+
+      const label = document.createElement('span');
+      const tags = [];
+      if (item.isHost) tags.push('HOST');
+      if (item.id === mp.localId) tags.push('YOU');
+      label.textContent = tags.length ? `${item.name} [${tags.join(',')}]` : item.name;
+      left.append(dot, label);
+
+      const ping = document.createElement('span');
+      ping.className = 'mp-roster-ping';
+      ping.textContent = item.id === mp.localId ? 'LOCAL' : `${item.ping || 0}ms`;
+
+      row.append(left, ping);
+      mpRoster.appendChild(row);
+    }
+  },
+  onPeerJoined(peer) {
+    spawnRemotePilot(peer.id, peer.name, peer.color);
+    weapons.killBannerText = `${peer.name} JOINED!`;
+    weapons.killBannerTimer = 2.0;
+    sound.playSwitch();
+  },
+  onPeerLeft(peerId) {
+    removeRemotePilot(peerId);
+  },
+  onRemoteState(peerId, st) {
+    let rj = remoteJets.get(peerId);
+    if (!rj) {
+      const rInfo = mp.roster.get(peerId);
+      rj = spawnRemotePilot(peerId, rInfo?.name || 'PILOT', rInfo?.color || '#36d6ff');
+    }
+    rj.applyNetworkState(st);
+  },
+  onSyncSnapshot(deforms, damages) {
+    for (const d of deforms) {
+      weapons.applyRemoteDeform(d.x, d.z, d.r, d.d, d.dx, d.dz);
+    }
+    for (const g of damages) {
+      weapons.applyRemoteDamage(g.x, g.y, g.z, g.r, g.w, clock.elapsedTime);
+    }
+  },
+  onRemoteEvent(ev) {
+    if (ev.t === 'gun') {
+      weapons.spawnRemoteCannon(ev.o, ev.d, ev.sp);
+      remoteJets.get(ev.from)?.triggerMuzzleFlash();
+    } else if (ev.t === 'msl') {
+      weapons.spawnRemoteMissile(ev.o, ev.d, ev.sp);
+    } else if (ev.t === 'def') {
+      weapons.applyRemoteDeform(ev.x, ev.z, ev.r, ev.d, ev.dx, ev.dz);
+    } else if (ev.t === 'dmg') {
+      weapons.applyRemoteDamage(ev.x, ev.y, ev.z, ev.r, ev.w, clock.elapsedTime);
+    } else if (ev.t === 'rst') {
+      world.resetTerrain();
+      weapons.killBannerText = 'MOUNTAINS RESTORED';
+      weapons.killBannerTimer = 1.6;
+    } else if (ev.t === 'hit') {
+      if (ev.target === mp.localId && jet.alive) {
+        jet.hp = Math.max(0, jet.hp - (ev.dmg || 20));
+        jet.damageCooldown = 6.0;
+        weapons.shake = Math.max(weapons.shake, 0.55);
+        sound.playImpact(false);
+        if (jet.hp <= 0) {
+          jet.alive = false;
+          jet.respawnTimer = 2.5;
+          jet.setVisible(false);
+          weapons.spawnJetExplosion(jet.position, clock.elapsedTime);
+          weapons.killBannerText = 'SHOT DOWN! RESPAWNING...';
+          weapons.killBannerTimer = 2.4;
+          mp.sendEvent({ t: 'down', id: mp.localId, killer: ev.from });
+        }
+      }
+    } else if (ev.t === 'down') {
+      const victim = remoteJets.get(ev.id);
+      if (victim) {
+        weapons.spawnJetExplosion(victim.position, clock.elapsedTime);
+        weapons.killBannerText = `${victim.name} SHOT DOWN!`;
+        weapons.killBannerTimer = 2.0;
+      }
+    }
+  },
+});
+
+weapons.setNetHooks({
+  getRemoteJets: () => remoteJets,
+  onCannon({ origin, dir, speed }) {
+    mp.sendEvent({
+      t: 'gun',
+      o: { x: origin.x, y: origin.y, z: origin.z },
+      d: { x: dir.x, y: dir.y, z: dir.z },
+      sp: speed,
+    });
+  },
+  onMissile({ origin, dir, speed }) {
+    mp.sendEvent({
+      t: 'msl',
+      o: { x: origin.x, y: origin.y, z: origin.z },
+      d: { x: dir.x, y: dir.y, z: dir.z },
+      sp: speed,
+    });
+  },
+  onDeform(x, z, r, d, dx, dz) {
+    mp.sendEvent({ t: 'def', x, z, r, d, dx, dz });
+  },
+  onDamage(x, y, z, r, w) {
+    mp.sendEvent({ t: 'dmg', x, y, z, r, w });
+  },
+  onHitPlayer(target, dmg, w) {
+    mp.sendEvent({ t: 'hit', target, dmg, w });
+  },
+});
+
+try {
+  const savedName = localStorage.getItem('sunsetStriker_pilotName');
+  if (savedName) mpNameInput.value = savedName;
+} catch (_) {}
+
+mpNameInput.addEventListener('change', () => {
+  try {
+    localStorage.setItem('sunsetStriker_pilotName', mpNameInput.value.trim().slice(0, 12));
+  } catch (_) {}
+});
+
+mpCreateBtn.addEventListener('click', async () => {
+  mpMsg.textContent = 'Creating room...';
+  try {
+    const code = await mp.createRoom({
+      name: mpNameInput.value,
+      transportPref: mpSignalSelect.value,
+    });
+    jet.respawn(0);
+    mpMsg.textContent = `Share code ${code} with friends!`;
+  } catch (err) {
+    mpMsg.textContent = err?.message || 'Could not create room';
+  }
+});
+
+async function joinFromUI() {
+  const code = mpCodeInput.value.trim().toUpperCase();
+  if (!code) {
+    mpMsg.textContent = 'Enter a room code first';
+    return;
+  }
+  mpMsg.textContent = `Joining ${code}...`;
+  try {
+    await mp.joinRoom({
+      code,
+      name: mpNameInput.value,
+      transportPref: mpSignalSelect.value,
+    });
+    const offset = 1 + Math.floor(Math.random() * 6);
+    jet.respawn(offset);
+  } catch (err) {
+    mpMsg.textContent = err?.message || 'Failed to join room';
+  }
+}
+
+mpJoinBtn.addEventListener('click', joinFromUI);
+mpCodeInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    joinFromUI();
+  }
+});
+
+mpLeaveBtn.addEventListener('click', () => {
+  mp.leaveRoom();
+  jet.hp = jet.maxHp;
+  jet.alive = true;
+  if (CAMERA_MODES[camModeIdx].id !== 'COCKPIT') jet.setVisible(true);
+});
+
+mpCopyCode.addEventListener('click', async () => {
+  if (!mp.roomCode) return;
+  try {
+    await navigator.clipboard.writeText(mp.roomCode);
+    mpMsg.textContent = `Copied code: ${mp.roomCode}`;
+  } catch (_) {
+    mpMsg.textContent = `Code: ${mp.roomCode}`;
+  }
+});
+
+mpCopyLink.addEventListener('click', async () => {
+  if (!mp.roomCode) return;
+  const url = `${window.location.origin}${window.location.pathname}?room=${mp.roomCode}`;
+  try {
+    await navigator.clipboard.writeText(url);
+    mpMsg.textContent = 'Invite link copied!';
+  } catch (_) {
+    mpMsg.textContent = url;
+  }
+});
 
 // Input state
 const input = {
@@ -492,8 +805,18 @@ window.addEventListener('mousemove', (e) => {
 });
 
 window.addEventListener('mousedown', (e) => {
-  if (e.target.closest('button') || e.target.closest('select') || e.target.closest('.clickable') || e.target.closest('#view-panel')) return;
+  if (
+    e.target.closest('button') ||
+    e.target.closest('select') ||
+    e.target.closest('input') ||
+    e.target.closest('.clickable') ||
+    e.target.closest('#view-panel') ||
+    e.target.closest('#mp-panel')
+  ) {
+    return;
+  }
   dismissIntro();
+  if (!jet.alive) return;
   if (e.button === 0) {
     leftDownAt = performance.now();
     input.boost = true;
@@ -509,7 +832,7 @@ window.addEventListener('mousedown', (e) => {
 window.addEventListener('mouseup', (e) => {
   if (e.button === 0) {
     input.boost = false;
-    if (performance.now() - leftDownAt < 230) {
+    if (jet.alive && performance.now() - leftDownAt < 230) {
       jet.triggerRoll(input.mouseX >= 0 ? 1 : -1);
     }
   } else if (e.button === 2) {
@@ -520,7 +843,7 @@ window.addEventListener('mouseup', (e) => {
 window.addEventListener(
   'wheel',
   (e) => {
-    if (e.target.closest('#view-panel')) return;
+    if (e.target.closest('#view-panel') || e.target.closest('#mp-panel')) return;
     const delta = Math.sign(e.deltaY) * 0.1;
     viewSettings.camDist = THREE.MathUtils.clamp(viewSettings.camDist + delta, 0.5, 2.6);
     syncViewUI();
@@ -531,6 +854,9 @@ window.addEventListener(
 window.addEventListener('contextmenu', (e) => e.preventDefault());
 
 window.addEventListener('keydown', (e) => {
+  const tag = document.activeElement?.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
   input.keys[e.code] = true;
   dismissIntro();
 
@@ -544,11 +870,12 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     setCameraMode(camModeIdx + 1);
   } else if (e.code === 'KeyF' || e.code === 'Enter') {
-    weapons.tryFireMissile(jet);
+    if (jet.alive) weapons.tryFireMissile(jet);
   } else if (e.code === 'KeyM') {
     toggleSound();
   } else if (e.code === 'KeyR') {
     world.resetTerrain();
+    mp.sendEvent({ t: 'rst' });
     sound.playSwitch();
   } else if (e.code === 'BracketRight' || e.code === 'Equal') {
     viewSettings.camDist = THREE.MathUtils.clamp(viewSettings.camDist + 0.12, 0.5, 2.6);
@@ -675,11 +1002,32 @@ function animate() {
   const modeId = CAMERA_MODES[camModeIdx].id;
   const isCockpit = modeId === 'COCKPIT';
 
-  jet.update(dt, input, isCockpit);
-
-  if (input.cannonFiring) {
-    weapons.tryFireCannon(jet);
+  if (jet.alive) {
+    jet.update(dt, input, isCockpit);
+    if (mp.isActive()) {
+      if (jet.damageCooldown > 0) {
+        jet.damageCooldown = Math.max(0, jet.damageCooldown - dt);
+      } else if (jet.hp < jet.maxHp) {
+        jet.hp = Math.min(jet.maxHp, jet.hp + 5 * dt);
+      }
+    }
+    if (input.cannonFiring) {
+      weapons.tryFireCannon(jet);
+    }
+  } else {
+    jet.updatePuffs(dt);
+    jet.respawnTimer -= dt;
+    if (jet.respawnTimer <= 0) {
+      jet.respawn(Math.floor(Math.random() * 8));
+      jet.setVisible(!isCockpit);
+    }
   }
+
+  for (const rj of remoteJets.values()) {
+    rj.update(dt, jet.position);
+  }
+  mp.sendLocalState(jet);
+
   weapons.update(dt, elapsed, jet);
 
   updateCamera(dt);
@@ -694,6 +1042,33 @@ function animate() {
   const altFt = Math.max(0, Math.round(jet.position.y * 3.6));
   telemBadge.textContent = `SPD ${knots} · ALT ${altFt}`;
   destroyedBadge.textContent = `DESTROYED: ${weapons.destroyed}`;
+  if (mp.isActive()) {
+    const hpRounded = Math.round(jet.hp);
+    hpBadge.textContent = `· HP ${hpRounded}`;
+    hpBadge.classList.toggle('low', hpRounded <= 35);
+  }
+
+  // Update 3D projected remote pilot nameplates
+  for (const [pid, rj] of remoteJets.entries()) {
+    const rec = remoteLabelEls.get(pid);
+    if (!rec) continue;
+    if (!rj.alive || modeId === 'TOP') {
+      rec.el.classList.add('hidden');
+      continue;
+    }
+    const labelPos = rj.position.clone().add(new THREE.Vector3(0, 4.2, 0));
+    const sp = projectToScreen(labelPos);
+    if (sp && sp.x > 16 && sp.x < window.innerWidth - 16 && sp.y > 24 && sp.y < window.innerHeight - 24) {
+      rec.el.classList.remove('hidden');
+      rec.el.style.left = `${sp.x}px`;
+      rec.el.style.top = `${sp.y}px`;
+      const distM = Math.round(jet.position.distanceTo(rj.position));
+      rec.nameEl.textContent = `${rj.name} ${distM}M`;
+      rec.fillEl.style.width = `${Math.max(0, Math.min(100, rj.hp))}%`;
+    } else {
+      rec.el.classList.add('hidden');
+    }
+  }
 
   if (weapons.killBannerTimer > 0) {
     killBanner.textContent = weapons.killBannerText;
@@ -734,7 +1109,7 @@ function animate() {
     lockBox.classList.add('hidden');
   }
 
-  window.__GAME__ = { jet, weapons, world, setCameraMode, selectRenderPreset, renderSettings };
+  window.__GAME__ = { jet, weapons, world, mp, remoteJets, setCameraMode, selectRenderPreset, renderSettings };
 
   // Pass 1: Render 3D scene
   camera.layers.set(0);
@@ -742,7 +1117,9 @@ function animate() {
   renderer.render(scene, camera);
 
   // Pass 2: Jet hull silhouette mask (Layer 1)
-  if (!isCockpit) {
+  const hasVisibleJets = (!isCockpit && jet.alive) || remoteJets.size > 0;
+  postMat.uniforms.uOutlineEnabled.value = hasVisibleJets ? 1.0 : 0.0;
+  if (hasVisibleJets) {
     camera.layers.set(1);
     scene.overrideMaterial = maskWhiteMat;
     renderer.setRenderTarget(jetMaskTarget);
@@ -759,8 +1136,20 @@ function animate() {
 
   // Pass 4: Cockpit 2D pixel-art overlay
   if (isCockpit) {
-    cockpit.render(dt, jet, weapons);
+    cockpit.render(dt, jet, weapons, remoteJets);
   }
+}
+
+// Auto-join if ?room=XXXXXX is present in URL
+const urlParams = new URLSearchParams(window.location.search);
+const autoRoom = urlParams.get('room');
+if (autoRoom && /^[a-zA-Z0-9]{4,10}$/.test(autoRoom)) {
+  mpPanel.classList.remove('hidden');
+  mpBtn.classList.add('active');
+  mpCodeInput.value = autoRoom.toUpperCase();
+  setTimeout(() => {
+    joinFromUI();
+  }, 400);
 }
 
 animate();
