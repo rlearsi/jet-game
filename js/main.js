@@ -1,12 +1,19 @@
 import * as THREE from 'three';
-import { buildWorld, SUN_DIR } from './world.js?v=10';
-import { FighterJet, RemoteJet, SHIP_CATALOG, SHIP_IDS } from './jet.js?v=10';
-import { MissileSystem } from './weapons.js?v=10';
-import { FighterCockpit } from './cockpit.js?v=10';
-import { JetSoundEngine } from './audio.js?v=10';
-import { MultiplayerManager } from './multiplayer.js?v=10';
+import {
+  buildWorld,
+  SUN_DIR,
+  TERRAIN_THEMES,
+  TERRAIN_DEFORM_MODES,
+  TERRAIN_CLOUD_MODES,
+  DEFAULT_TERRAIN_OPTIONS,
+} from './world.js?v=11';
+import { FighterJet, RemoteJet, SHIP_CATALOG, SHIP_IDS } from './jet.js?v=11';
+import { MissileSystem } from './weapons.js?v=11';
+import { FighterCockpit } from './cockpit.js?v=11';
+import { JetSoundEngine } from './audio.js?v=11';
+import { MultiplayerManager } from './multiplayer.js?v=11';
 
-// 6 live-switchable rendering styles (V key or VIEW / RENDER panel)
+// 6 live-switchable rendering styles (exclusively configurable inside Settings -> Render, plus V in flight)
 const RENDER_PRESETS = {
   crisp480: {
     id: 'crisp480',
@@ -31,7 +38,7 @@ const RENDER_PRESETS = {
   cleanHD: {
     id: 'cleanHD',
     shortLabel: 'CLEAN HD',
-    resHeight: 0, // native window height
+    resHeight: 0,
     filter: 'linear',
     dither: 0.0,
     levels: 255,
@@ -71,6 +78,63 @@ const RENDER_PRESETS = {
 };
 const PRESET_ORDER = ['crisp480', 'ghibli', 'cleanHD', 'comic', 'crt', 'pixel270'];
 
+const TERRAIN_THEME_LABELS = {
+  sunset: 'Pôr do Sol Clássico',
+  tropical: 'Alvorada Tropical',
+  volcanic: 'Crepúsculo Vulcânico',
+  alpine: 'Pico Alpino Nevado',
+};
+const TERRAIN_DEFORM_LABELS = {
+  normal: 'Deformação Normal',
+  deep: 'Crateras Profundas',
+  off: 'Indestrutível',
+};
+const TERRAIN_CLOUD_LABELS = {
+  full: 'Nuvens Densas',
+  light: 'Nuvens Leves',
+  clear: 'Céu Limpo',
+};
+
+const DEFAULT_AUDIO = {
+  enabled: false,
+  master: 0.65,
+  engine: 0.85,
+  sfx: 1.0,
+};
+
+const DEFAULT_BINDINGS = {
+  missile: 'KeyF',
+  cockpit: 'KeyE',
+  camera: 'Space',
+  afterburner: 'ShiftLeft',
+  mute: 'KeyM',
+  restoreTerrain: 'KeyR',
+  cycleStyle: 'KeyV',
+};
+
+const BINDING_META = [
+  { id: 'missile', label: 'MÍSSIL (FOX 2)' },
+  { id: 'cockpit', label: 'COCKPIT 2D' },
+  { id: 'camera', label: 'CICLAR CÂMERA' },
+  { id: 'afterburner', label: 'AFTERBURNER' },
+  { id: 'mute', label: 'SOM ON/OFF' },
+  { id: 'restoreTerrain', label: 'RESTAURAR MONTANHAS' },
+  { id: 'cycleStyle', label: 'ESTILO VISUAL' },
+];
+
+const DEFAULT_CONTROLS = {
+  invertY: false,
+  mouseSensitivity: 1.0,
+  bindings: { ...DEFAULT_BINDINGS },
+};
+
+const DEFAULT_VIEW = {
+  fov: 80,
+  camDist: 1.35,
+  objDist: 1.0,
+};
+
+// DOM References — Canvas & Flight HUD
 const canvas = document.getElementById('game-canvas');
 const cockpitCanvas = document.getElementById('cockpit-canvas');
 const aimReticle = document.getElementById('aim-reticle');
@@ -78,16 +142,132 @@ const hitMarker = document.getElementById('hit-marker');
 const lockBox = document.getElementById('lock-box');
 const lockLabel = document.getElementById('lock-label');
 const killBanner = document.getElementById('kill-banner');
-const destroyedBadge = document.getElementById('destroyed-badge');
+const remoteLabelsEl = document.getElementById('remote-labels');
+const pickupMarkersEl = document.getElementById('pickup-markers');
+const missileVignette = document.getElementById('missile-vignette');
+const missileAlertEl = document.getElementById('missile-alert');
+
+const hudTopBar = document.getElementById('hud-top-bar');
+const hudTopRight = document.getElementById('hud-top-right');
+const hudMpPill = document.getElementById('hud-mp-pill');
+const hudMpRoomLabel = document.getElementById('hud-mp-room-label');
+const hudMpCopyCode = document.getElementById('hud-mp-copy-code');
+const hudMpCopyLink = document.getElementById('hud-mp-copy-link');
+const hudMenuBtn = document.getElementById('hud-menu-btn');
+const hudEscHint = document.getElementById('hud-esc-hint');
+const hudKeyMissile = document.getElementById('hud-key-missile');
+const hudKeyCockpit = document.getElementById('hud-key-cockpit');
+const hudKeyCam = document.getElementById('hud-key-cam');
+
 const ammoPipsEl = document.getElementById('ammo-pips');
 const camNextLabel = document.getElementById('cam-next-label');
 const camSwitchBtn = document.getElementById('cam-switch-btn');
-const styleCycleBtn = document.getElementById('style-cycle-btn');
-const styleShortLabel = document.getElementById('style-short-label');
 const cockpitToggleBtn = document.getElementById('cockpit-toggle-btn');
-const soundBtn = document.getElementById('sound-btn');
-const viewBtn = document.getElementById('view-btn');
-const viewPanel = document.getElementById('view-panel');
+
+const objectiveHudEl = document.getElementById('objective-hud');
+const objTitleEl = document.getElementById('obj-title');
+const objCountEl = document.getElementById('obj-count');
+const objBarFillEl = document.getElementById('obj-bar-fill');
+
+const hudBottomLeft = document.getElementById('hud-bottom-left');
+const camBadge = document.getElementById('cam-badge');
+const telemBadge = document.getElementById('telem-badge');
+const distBadge = document.getElementById('dist-badge');
+const destroyedBadge = document.getElementById('destroyed-badge');
+const playerHpFill = document.getElementById('player-hp-fill');
+const playerHpText = document.getElementById('player-hp-text');
+
+// DOM References — Menu Overlay & Views
+const menuOverlay = document.getElementById('game-menu-overlay');
+const menuViews = {
+  main: document.getElementById('menu-view-main'),
+  mp: document.getElementById('menu-view-mp'),
+  controls: document.getElementById('menu-view-controls'),
+  settings: document.getElementById('menu-view-settings'),
+};
+const menuModeBadge = document.getElementById('menu-mode-badge');
+const menuBtnResume = document.getElementById('menu-btn-resume');
+const menuBtnSolo = document.getElementById('menu-btn-solo');
+const menuBtnMp = document.getElementById('menu-btn-mp');
+const menuBtnControls = document.getElementById('menu-btn-controls');
+const menuBtnSettings = document.getElementById('menu-btn-settings');
+const menuBtnQuit = document.getElementById('menu-btn-quit');
+
+const menuHangarBox = document.getElementById('menu-hangar-box');
+const menuHangarList = document.getElementById('menu-hangar-list');
+const menuTerrainChip = document.getElementById('menu-terrain-chip');
+
+const menuMatchStatusBox = document.getElementById('menu-match-status-box');
+const menuLockedShipCard = document.getElementById('menu-locked-ship-card');
+const menuMatchHp = document.getElementById('menu-match-hp');
+const menuMatchObj = document.getElementById('menu-match-obj');
+const menuMatchDestroyed = document.getElementById('menu-match-destroyed');
+const menuMatchTerrain = document.getElementById('menu-match-terrain');
+const menuPauseMpBox = document.getElementById('menu-pause-mp-box');
+const menuPauseRoomCode = document.getElementById('menu-pause-room-code');
+const menuPauseCopyCode = document.getElementById('menu-pause-copy-code');
+const menuPauseCopyLink = document.getElementById('menu-pause-copy-link');
+const menuPauseRoster = document.getElementById('menu-pause-roster');
+
+// Multiplayer Menu Refs
+const mpBackBtn = document.getElementById('mp-back-btn');
+const mpStatusBadge = document.getElementById('mp-status-badge');
+const mpHangarLockNote = document.getElementById('mp-hangar-lock-note');
+const mpHangarList = document.getElementById('mp-hangar-list');
+const mpNameInput = document.getElementById('mp-name-input');
+const mpSignalSelect = document.getElementById('mp-signal-select');
+const mpTerrainText = document.getElementById('mp-terrain-text');
+const mpEditTerrainBtn = document.getElementById('mp-edit-terrain-btn');
+const mpLobbyView = document.getElementById('mp-lobby-view');
+const mpRoomView = document.getElementById('mp-room-view');
+const mpCreateBtn = document.getElementById('mp-create-btn');
+const mpCodeInput = document.getElementById('mp-code-input');
+const mpJoinBtn = document.getElementById('mp-join-btn');
+const mpRoomCode = document.getElementById('mp-room-code');
+const mpCopyCode = document.getElementById('mp-copy-code');
+const mpCopyLink = document.getElementById('mp-copy-link');
+const mpTransportInfo = document.getElementById('mp-transport-info');
+const mpRoster = document.getElementById('mp-roster');
+const mpLaunchBtn = document.getElementById('mp-launch-btn');
+const mpLeaveBtn = document.getElementById('mp-leave-btn');
+const mpMsg = document.getElementById('mp-msg');
+
+// Controls Guide Refs
+const controlsBackBtn = document.getElementById('controls-back-btn');
+const controlsOpenSettingsBtn = document.getElementById('controls-open-settings-btn');
+const guideKeyAfterburner = document.getElementById('guide-key-afterburner');
+const guideKeyMissile = document.getElementById('guide-key-missile');
+const guideKeyCockpit = document.getElementById('guide-key-cockpit');
+const guideKeyCam = document.getElementById('guide-key-cam');
+const guideKeyMute = document.getElementById('guide-key-mute');
+const guideKeyRestore = document.getElementById('guide-key-restore');
+const guideKeyStyle = document.getElementById('guide-key-style');
+
+// Settings Refs
+const settingsBackBtn = document.getElementById('settings-back-btn');
+const settingsTabBtns = Array.from(document.querySelectorAll('.settings-tab'));
+const settingsTabPanels = {
+  audio: document.getElementById('settings-tab-audio'),
+  controls: document.getElementById('settings-tab-controls'),
+  render: document.getElementById('settings-tab-render'),
+  terrain: document.getElementById('settings-tab-terrain'),
+};
+
+const audioEnabledBtn = document.getElementById('audio-enabled-btn');
+const audioMasterSlider = document.getElementById('audio-master-slider');
+const audioMasterVal = document.getElementById('audio-master-val');
+const audioEngineSlider = document.getElementById('audio-engine-slider');
+const audioEngineVal = document.getElementById('audio-engine-val');
+const audioSfxSlider = document.getElementById('audio-sfx-slider');
+const audioSfxVal = document.getElementById('audio-sfx-val');
+const audioTestBtn = document.getElementById('audio-test-btn');
+
+const ctrlInvertYBtn = document.getElementById('ctrl-invert-y-btn');
+const ctrlSensSlider = document.getElementById('ctrl-sens-slider');
+const ctrlSensVal = document.getElementById('ctrl-sens-val');
+const ctrlBindingsList = document.getElementById('ctrl-bindings-list');
+const ctrlResetBtn = document.getElementById('ctrl-reset-btn');
+
 const vpResetBtn = document.getElementById('vp-reset');
 const styleSelect = document.getElementById('style-select');
 const resSelect = document.getElementById('res-select');
@@ -99,47 +279,16 @@ const distSlider = document.getElementById('dist-slider');
 const distVal = document.getElementById('dist-val');
 const scaleSlider = document.getElementById('scale-slider');
 const scaleVal = document.getElementById('scale-val');
-const hudBottomLeft = document.getElementById('hud-bottom-left');
-const camBadge = document.getElementById('cam-badge');
-const telemBadge = document.getElementById('telem-badge');
-const distBadge = document.getElementById('dist-badge');
-const playerHpFill = document.getElementById('player-hp-fill');
-const playerHpText = document.getElementById('player-hp-text');
-const startHint = document.getElementById('start-hint');
-const remoteLabelsEl = document.getElementById('remote-labels');
-const pickupMarkersEl = document.getElementById('pickup-markers');
-const missileVignette = document.getElementById('missile-vignette');
-const missileAlertEl = document.getElementById('missile-alert');
-const objectiveHudEl = document.getElementById('objective-hud');
-const objTitleEl = document.getElementById('obj-title');
-const objCountEl = document.getElementById('obj-count');
-const objBarFillEl = document.getElementById('obj-bar-fill');
 
-// Hangar UI refs
-const hangarBtn = document.getElementById('hangar-btn');
-const hangarPanel = document.getElementById('hangar-panel');
-const hangarList = document.getElementById('hangar-list');
+const terrainLockBanner = document.getElementById('terrain-lock-banner');
+const terrainThemeSelect = document.getElementById('terrain-theme-select');
+const terrainDeformSelect = document.getElementById('terrain-deform-select');
+const terrainCloudsSelect = document.getElementById('terrain-clouds-select');
+const rebuildTerrainBtn = document.getElementById('rebuild-terrain-btn');
 
-// Multiplayer UI refs
-const mpBtn = document.getElementById('mp-btn');
-const mpPanel = document.getElementById('mp-panel');
-const mpStatusBadge = document.getElementById('mp-status-badge');
-const mpNameInput = document.getElementById('mp-name-input');
-const mpSignalSelect = document.getElementById('mp-signal-select');
-const mpLobbyView = document.getElementById('mp-lobby-view');
-const mpRoomView = document.getElementById('mp-room-view');
-const mpCreateBtn = document.getElementById('mp-create-btn');
-const mpCodeInput = document.getElementById('mp-code-input');
-const mpJoinBtn = document.getElementById('mp-join-btn');
-const mpRoomCode = document.getElementById('mp-room-code');
-const mpCopyCode = document.getElementById('mp-copy-code');
-const mpCopyLink = document.getElementById('mp-copy-link');
-const mpTransportInfo = document.getElementById('mp-transport-info');
-const mpRoster = document.getElementById('mp-roster');
-const mpLeaveBtn = document.getElementById('mp-leave-btn');
-const mpMsg = document.getElementById('mp-msg');
-
-// Renderer
+// =========================================================================
+// Three.js Renderer, Post-Process & World Setup
+// =========================================================================
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
 renderer.setPixelRatio(1);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -153,22 +302,71 @@ const sunLight = new THREE.DirectionalLight(0xffe7b8, 1.45);
 sunLight.position.copy(SUN_DIR).multiplyScalar(600);
 scene.add(sunLight);
 
-// Camera & Render settings
-const DEFAULT_VIEW = {
-  fov: 80,
-  camDist: 1.35,
-  objDist: 1.0,
-};
-const viewSettings = { ...DEFAULT_VIEW };
+// Load persisted settings safely
+function readJsonStorage(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function writeJsonStorage(key, val) {
+  try {
+    localStorage.setItem(key, JSON.stringify(val));
+  } catch (_) {}
+}
 
 let savedStyleId = 'crisp480';
 try {
   const s = localStorage.getItem('sunsetStriker_renderStyle');
   if (s && RENDER_PRESETS[s]) savedStyleId = s;
-} catch (_) {
-  // ignore storage errors
-}
+} catch (_) {}
 const renderSettings = { ...RENDER_PRESETS[savedStyleId] };
+
+const savedView = readJsonStorage('sunsetStriker_viewSettings');
+const viewSettings = {
+  fov: Number.isFinite(Number(savedView?.fov)) ? THREE.MathUtils.clamp(Number(savedView.fov), 45, 110) : DEFAULT_VIEW.fov,
+  camDist: Number.isFinite(Number(savedView?.camDist)) ? THREE.MathUtils.clamp(Number(savedView.camDist), 0.5, 2.6) : DEFAULT_VIEW.camDist,
+  objDist: Number.isFinite(Number(savedView?.objDist)) ? THREE.MathUtils.clamp(Number(savedView.objDist), 0.5, 2.2) : DEFAULT_VIEW.objDist,
+};
+
+const savedAudio = readJsonStorage('sunsetStriker_audioSettings');
+const audioSettings = {
+  enabled: Boolean(savedAudio?.enabled),
+  master: Number.isFinite(Number(savedAudio?.master)) ? THREE.MathUtils.clamp(Number(savedAudio.master), 0, 1) : DEFAULT_AUDIO.master,
+  engine: Number.isFinite(Number(savedAudio?.engine)) ? THREE.MathUtils.clamp(Number(savedAudio.engine), 0, 1) : DEFAULT_AUDIO.engine,
+  sfx: Number.isFinite(Number(savedAudio?.sfx)) ? THREE.MathUtils.clamp(Number(savedAudio.sfx), 0, 1) : DEFAULT_AUDIO.sfx,
+};
+
+const savedControls = readJsonStorage('sunsetStriker_controls');
+const controlSettings = {
+  invertY: Boolean(savedControls?.invertY),
+  mouseSensitivity: Number.isFinite(Number(savedControls?.mouseSensitivity))
+    ? THREE.MathUtils.clamp(Number(savedControls.mouseSensitivity), 0.5, 1.8)
+    : DEFAULT_CONTROLS.mouseSensitivity,
+  bindings: { ...DEFAULT_BINDINGS },
+};
+if (savedControls?.bindings && typeof savedControls.bindings === 'object') {
+  for (const k of Object.keys(DEFAULT_BINDINGS)) {
+    if (typeof savedControls.bindings[k] === 'string' && savedControls.bindings[k].length > 0) {
+      controlSettings.bindings[k] = savedControls.bindings[k];
+    }
+  }
+}
+
+function sanitizeTerrainObj(src) {
+  const obj = src && typeof src === 'object' ? src : {};
+  return {
+    theme: TERRAIN_THEMES.includes(obj.theme) ? obj.theme : DEFAULT_TERRAIN_OPTIONS.theme,
+    deformMode: TERRAIN_DEFORM_MODES.includes(obj.deformMode) ? obj.deformMode : DEFAULT_TERRAIN_OPTIONS.deformMode,
+    clouds: TERRAIN_CLOUD_MODES.includes(obj.clouds) ? obj.clouds : DEFAULT_TERRAIN_OPTIONS.clouds,
+  };
+}
+
+let localSoloTerrain = sanitizeTerrainObj(readJsonStorage('sunsetStriker_terrainSettings'));
+let activeTerrain = { ...localSoloTerrain };
 
 const camera = new THREE.PerspectiveCamera(viewSettings.fov, window.innerWidth / window.innerHeight, 0.5, 3600);
 
@@ -195,7 +393,7 @@ const postMat = new THREE.ShaderMaterial({
     uOutlineEnabled: { value: 1.0 },
     uDither: { value: renderSettings.dither },
     uLevels: { value: renderSettings.levels },
-    uStyleMode: { value: renderSettings.styleMode }, // 0=Std, 1=Ghibli, 2=Comic Sobel, 3=CRT
+    uStyleMode: { value: renderSettings.styleMode },
   },
   vertexShader: `
     varying vec2 vUv;
@@ -244,7 +442,6 @@ const postMat = new THREE.ShaderMaterial({
       vec2 texel = 1.0 / uResolution;
       vec3 col = texture2D(tDiffuse, vUv).rgb;
 
-      // Mode 1: GHIBLI / ANIME HD (soft sunset highlight bloom + rich painterly vibrance, zero grain)
       if (uStyleMode > 0.5 && uStyleMode < 1.5) {
         vec3 blur = (
           texture2D(tDiffuse, vUv + vec2( texel.x * 2.5, 0.0)).rgb +
@@ -254,12 +451,10 @@ const postMat = new THREE.ShaderMaterial({
         ) * 0.25;
         vec3 bright = max(blur - vec3(0.72), vec3(0.0));
         col += bright * vec3(1.05, 0.90, 0.72) * 0.45;
-        // Gentle saturation lift
         float g = luma(col);
         col = mix(vec3(g), col, 1.14);
       }
 
-      // Mode 2: COMIC / INK (Moebius-style Sobel ink outlines across terrain, mountains, craters & clouds!)
       if (uStyleMode > 1.5 && uStyleMode < 2.5) {
         float tl = luma(texture2D(tDiffuse, vUv + vec2(-texel.x,  texel.y)).rgb);
         float t  = luma(texture2D(tDiffuse, vUv + vec2( 0.0,      texel.y)).rgb);
@@ -274,14 +469,12 @@ const postMat = new THREE.ShaderMaterial({
         float gy = -tl - 2.0 * t - tr + bl + 2.0 * b + br;
         float edge = sqrt(gx * gx + gy * gy);
 
-        // Clean flat comic color stepping
         float comicLevels = 16.0;
         col = floor(col * comicLevels + 0.5) / comicLevels;
         float ink = smoothstep(0.18, 0.38, edge);
         col = mix(col, vec3(0.13, 0.12, 0.21), ink * 0.85);
       }
 
-      // Optional Bayer 4x4 ordered dithering & color quantization (0% = completely smooth HD!)
       if (uDither > 0.01) {
         vec2 pix = floor(vUv * uResolution);
         float d = (bayer4(pix) - 0.5) * uDither;
@@ -289,7 +482,6 @@ const postMat = new THREE.ShaderMaterial({
         col = mix(col, quant, clamp(uDither * 1.15, 0.0, 1.0));
       }
 
-      // Mode 3: CRT ARCADE (soft horizontal scanlines + warm vignette)
       if (uStyleMode > 2.5) {
         float scan = 0.90 + 0.10 * sin(vUv.y * uResolution.y * 3.14159 * 2.0);
         vec2 vigUv = vUv * 2.0 - 1.0;
@@ -297,7 +489,6 @@ const postMat = new THREE.ShaderMaterial({
         col *= scan * vig;
       }
 
-      // Crisp fighter jet silhouette ink outline (adapts thickness cleanly to resolution!)
       if (uOutlineEnabled > 0.5) {
         float stepPx = max(1.0, floor(uResolution.y / 380.0));
         vec2 oStep = texel * stepPx;
@@ -319,7 +510,7 @@ const postMat = new THREE.ShaderMaterial({
 });
 postScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), postMat));
 
-// Build world, jet (with saved ship selection), weapons, cockpit, sound
+// Build world, jet, weapons, cockpit, sound
 let savedShipId = 'striker';
 try {
   const sh = localStorage.getItem('sunsetStriker_shipId');
@@ -328,6 +519,9 @@ try {
 
 const world = buildWorld(scene);
 const sound = new JetSoundEngine();
+sound.setVolumes({ master: audioSettings.master, engine: audioSettings.engine, sfx: audioSettings.sfx });
+sound.setPaused(true);
+
 const jet = new FighterJet(scene, savedShipId);
 const weapons = new MissileSystem(scene, sound, world);
 weapons.setShipStats(jet.stats);
@@ -337,6 +531,21 @@ jet.hullGroup.traverse((obj) => {
   if (obj.isMesh) obj.layers.enable(1);
 });
 
+// =========================================================================
+// Game State & Menu Machine
+// =========================================================================
+let gameState = 'menu'; // 'menu' | 'playing'
+let gameMode = 'menu'; // 'menu' | 'solo' | 'multiplayer'
+let menuOpen = true;
+let activeMenuView = 'main'; // 'main' | 'mp' | 'controls' | 'settings'
+let settingsReturnView = 'main';
+let activeSettingsTab = 'audio'; // 'audio' | 'controls' | 'render' | 'terrain'
+let rebindingAction = null;
+let showcaseOrbitAngle = 0.25;
+
+// =========================================================================
+// Ammo pips, Ship Cards & Hangar Locks
+// =========================================================================
 const ammoPipEls = [];
 function rebuildAmmoPips() {
   ammoPipsEl.innerHTML = '';
@@ -350,38 +559,69 @@ function rebuildAmmoPips() {
 }
 rebuildAmmoPips();
 
-function renderHangarCards() {
-  hangarList.innerHTML = '';
-  for (const id of SHIP_IDS) {
-    const spec = SHIP_CATALOG[id];
-    const card = document.createElement('button');
-    card.type = 'button';
-    card.className = 'ship-card' + (jet.shipId === id ? ' selected' : '');
+function isShipLocked() {
+  if (gameState === 'playing') return true;
+  if (mp.status === 'CONNECTING') return true;
+  if (mp.role === 'guest' && mp.isActive()) return true;
+  return false;
+}
 
-    const spdPct = Math.round((spec.abSpeed / 120) * 100);
-    const agiPct = Math.round((spec.turnRate / 1.65) * 100);
-    const hpPct = Math.round((spec.maxHp / 150) * 100);
-    const mslPct = Math.round((spec.maxMissiles / 8) * 100);
+function createShipCardEl(id, locked) {
+  const spec = SHIP_CATALOG[id];
+  const card = document.createElement('button');
+  card.type = 'button';
+  card.className = 'ship-card' + (jet.shipId === id ? ' selected' : '') + (locked ? ' locked' : '');
+  card.disabled = locked;
 
-    card.innerHTML = `
-      <div class="ship-card-head">
-        <span class="ship-card-name"><span class="ship-swatch" style="background:${spec.palette.base};border-color:${spec.palette.accent}"></span>${spec.name}</span>
-        <span class="ship-card-role">${spec.role}</span>
-      </div>
-      <div class="ship-stats">
-        <div class="ship-stat-row"><span>SPD</span><div class="ship-stat-bar"><div class="ship-stat-fill" style="width:${spdPct}%"></div></div></div>
-        <div class="ship-stat-row"><span>AGI</span><div class="ship-stat-bar"><div class="ship-stat-fill" style="width:${agiPct}%"></div></div></div>
-        <div class="ship-stat-row"><span>HP</span><div class="ship-stat-bar"><div class="ship-stat-fill" style="width:${hpPct}%;background:#4cff88"></div></div></div>
-        <div class="ship-stat-row"><span>MSL</span><div class="ship-stat-bar"><div class="ship-stat-fill" style="width:${mslPct}%;background:#ffb842"></div></div></div>
-      </div>
-    `;
-    card.addEventListener('click', () => selectShip(id));
-    hangarList.appendChild(card);
+  const spdPct = Math.round((spec.abSpeed / 120) * 100);
+  const agiPct = Math.round((spec.turnRate / 1.65) * 100);
+  const hpPct = Math.round((spec.maxHp / 150) * 100);
+  const mslPct = Math.round((spec.maxMissiles / 8) * 100);
+
+  card.innerHTML = `
+    <div class="ship-card-head">
+      <span class="ship-card-name"><span class="ship-swatch" style="background:${spec.palette.base};border-color:${spec.palette.accent}"></span>${spec.name}</span>
+      <span class="ship-card-role">${spec.role}</span>
+    </div>
+    <div class="ship-stats">
+      <div class="ship-stat-row"><span>SPD</span><div class="ship-stat-bar"><div class="ship-stat-fill" style="width:${spdPct}%"></div></div></div>
+      <div class="ship-stat-row"><span>AGI</span><div class="ship-stat-bar"><div class="ship-stat-fill" style="width:${agiPct}%"></div></div></div>
+      <div class="ship-stat-row"><span>HP</span><div class="ship-stat-bar"><div class="ship-stat-fill" style="width:${hpPct}%;background:#4cff88"></div></div></div>
+      <div class="ship-stat-row"><span>MSL</span><div class="ship-stat-bar"><div class="ship-stat-fill" style="width:${mslPct}%;background:#ffb842"></div></div></div>
+    </div>
+  `;
+  return card;
+}
+
+function renderAllHangars() {
+  const locked = isShipLocked();
+  for (const container of [menuHangarList, mpHangarList]) {
+    if (!container) continue;
+    container.innerHTML = '';
+    for (const id of SHIP_IDS) {
+      const card = createShipCardEl(id, locked);
+      card.addEventListener('click', () => selectShip(id));
+      container.appendChild(card);
+    }
+  }
+  if (mpHangarLockNote) {
+    mpHangarLockNote.textContent = locked ? '🔒 BLOQUEADO' : 'SELECIONE';
+    mpHangarLockNote.className = 'mp-badge ' + (locked ? 'offline' : 'connecting');
+  }
+  if (menuLockedShipCard) {
+    menuLockedShipCard.innerHTML = '';
+    menuLockedShipCard.appendChild(createShipCardEl(jet.shipId, true));
   }
 }
 
 function selectShip(shipId) {
-  if (!SHIP_CATALOG[shipId]) return;
+  if (!SHIP_CATALOG[shipId]) return false;
+  if (isShipLocked()) {
+    weapons.killBannerText = 'NAVE BLOQUEADA APÓS INICIAR!';
+    weapons.killBannerTimer = 1.6;
+    sound.playEmpty();
+    return false;
+  }
   jet.setShip(shipId);
   jet.visual.scale.setScalar(0.74 / Math.sqrt(viewSettings.objDist));
   weapons.setShipStats(jet.stats);
@@ -390,13 +630,260 @@ function selectShip(shipId) {
   try {
     localStorage.setItem('sunsetStriker_shipId', shipId);
   } catch (_) {}
-  renderHangarCards();
-  weapons.killBannerText = `${jet.stats.name} EQUIPPED`;
-  weapons.killBannerTimer = 1.5;
+  renderAllHangars();
   sound.playSwitch();
+  return true;
 }
 
-// 3 Camera Modes
+// =========================================================================
+// Terrain Settings & Multiplayer Host Inheritance
+// =========================================================================
+function isTerrainLocked() {
+  return gameMode === 'multiplayer' || mp.isActive() || mp.status === 'CONNECTING';
+}
+
+function formatTerrainSummary(opts) {
+  const tLabel = TERRAIN_THEME_LABELS[opts.theme] || opts.theme;
+  const dLabel = TERRAIN_DEFORM_LABELS[opts.deformMode] || opts.deformMode;
+  const cLabel = TERRAIN_CLOUD_LABELS[opts.clouds] || opts.clouds;
+  return `${tLabel} · ${dLabel} · ${cLabel}`;
+}
+
+function applyTerrainSettings(opts, persistSolo = true) {
+  const clean = sanitizeTerrainObj(opts);
+  activeTerrain = world.applyTerrainOptions(clean);
+  if (persistSolo) {
+    localSoloTerrain = { ...clean };
+    writeJsonStorage('sunsetStriker_terrainSettings', localSoloTerrain);
+  }
+  syncTerrainUI();
+}
+
+function syncTerrainUI() {
+  const locked = isTerrainLocked();
+  terrainThemeSelect.value = activeTerrain.theme;
+  terrainDeformSelect.value = activeTerrain.deformMode;
+  terrainCloudsSelect.value = activeTerrain.clouds;
+
+  terrainThemeSelect.disabled = locked;
+  terrainDeformSelect.disabled = locked;
+  terrainCloudsSelect.disabled = locked;
+  rebuildTerrainBtn.disabled = locked;
+  if (mpEditTerrainBtn) mpEditTerrainBtn.disabled = locked;
+
+  if (locked) {
+    terrainLockBanner.classList.remove('hidden');
+    terrainLockBanner.textContent = mp.role === 'guest'
+      ? '🔒 Herdado do Host (opções de terreno bloqueadas no Multiplayer)'
+      : '🔒 Opções de terreno bloqueadas durante sala/partida Multiplayer';
+  } else {
+    terrainLockBanner.classList.add('hidden');
+  }
+
+  const summary = formatTerrainSummary(activeTerrain);
+  if (menuTerrainChip) {
+    menuTerrainChip.textContent = `TERRENO: ${summary}`;
+  }
+  if (mpTerrainText) {
+    mpTerrainText.textContent = mp.role === 'guest' && mp.isActive()
+      ? `🔒 Herdado do Host: ${summary}`
+      : summary;
+  }
+  if (menuMatchTerrain) {
+    menuMatchTerrain.textContent = locked
+      ? `TERRENO: 🔒 ${summary} (Host)`
+      : `TERRENO: ${summary}`;
+  }
+}
+
+terrainThemeSelect.addEventListener('change', () => {
+  if (isTerrainLocked()) return;
+  applyTerrainSettings({ ...activeTerrain, theme: terrainThemeSelect.value }, true);
+  sound.playSwitch();
+});
+
+terrainDeformSelect.addEventListener('change', () => {
+  if (isTerrainLocked()) return;
+  applyTerrainSettings({ ...activeTerrain, deformMode: terrainDeformSelect.value }, true);
+  sound.playSwitch();
+});
+
+terrainCloudsSelect.addEventListener('change', () => {
+  if (isTerrainLocked()) return;
+  applyTerrainSettings({ ...activeTerrain, clouds: terrainCloudsSelect.value }, true);
+  sound.playSwitch();
+});
+
+rebuildTerrainBtn.addEventListener('click', () => {
+  if (isTerrainLocked()) {
+    syncTerrainUI();
+    sound.playEmpty();
+    return;
+  }
+  world.resetTerrain();
+  sound.playSwitch();
+});
+
+// =========================================================================
+// Audio Settings & Controls Settings UI
+// =========================================================================
+function syncAudioUI() {
+  audioEnabledBtn.textContent = audioSettings.enabled ? 'SOM: LIGADO' : 'SOM: DESLIGADO';
+  audioEnabledBtn.classList.toggle('active', audioSettings.enabled);
+  audioMasterSlider.value = String(Math.round(audioSettings.master * 100));
+  audioMasterVal.textContent = `${Math.round(audioSettings.master * 100)}%`;
+  audioEngineSlider.value = String(Math.round(audioSettings.engine * 100));
+  audioEngineVal.textContent = `${Math.round(audioSettings.engine * 100)}%`;
+  audioSfxSlider.value = String(Math.round(audioSettings.sfx * 100));
+  audioSfxVal.textContent = `${Math.round(audioSettings.sfx * 100)}%`;
+}
+
+function saveAudioSettings() {
+  writeJsonStorage('sunsetStriker_audioSettings', audioSettings);
+}
+
+function setAudioEnabled(on) {
+  audioSettings.enabled = Boolean(on);
+  sound.setEnabled(audioSettings.enabled);
+  sound.setPaused(menuOpen || gameState !== 'playing');
+  saveAudioSettings();
+  syncAudioUI();
+}
+
+function toggleSound() {
+  setAudioEnabled(!audioSettings.enabled);
+}
+
+audioEnabledBtn.addEventListener('click', () => {
+  setAudioEnabled(!audioSettings.enabled);
+  if (audioSettings.enabled) sound.playSwitch();
+});
+
+audioMasterSlider.addEventListener('input', () => {
+  audioSettings.master = Number(audioMasterSlider.value) / 100;
+  sound.setVolumes({ master: audioSettings.master });
+  saveAudioSettings();
+  syncAudioUI();
+});
+
+audioEngineSlider.addEventListener('input', () => {
+  audioSettings.engine = Number(audioEngineSlider.value) / 100;
+  sound.setVolumes({ engine: audioSettings.engine });
+  saveAudioSettings();
+  syncAudioUI();
+});
+
+audioSfxSlider.addEventListener('input', () => {
+  audioSettings.sfx = Number(audioSfxSlider.value) / 100;
+  sound.setVolumes({ sfx: audioSettings.sfx });
+  saveAudioSettings();
+  syncAudioUI();
+});
+
+audioTestBtn.addEventListener('click', () => {
+  audioSettings.enabled = true;
+  sound.setVolumes({ master: audioSettings.master, engine: audioSettings.engine, sfx: audioSettings.sfx });
+  sound.playTestTone();
+  saveAudioSettings();
+  syncAudioUI();
+});
+
+function formatKeyLabel(code) {
+  if (!code) return '-';
+  if (code === 'Space') return 'SPACE';
+  if (code === 'ShiftLeft' || code === 'ShiftRight') return 'SHIFT';
+  if (code === 'ControlLeft' || code === 'ControlRight') return 'CTRL';
+  if (code === 'AltLeft' || code === 'AltRight') return 'ALT';
+  if (code === 'Enter' || code === 'NumpadEnter') return 'ENTER';
+  if (code.startsWith('Key')) return code.slice(3);
+  if (code.startsWith('Digit')) return code.slice(5);
+  if (code === 'ArrowUp') return '↑';
+  if (code === 'ArrowDown') return '↓';
+  if (code === 'ArrowLeft') return '←';
+  if (code === 'ArrowRight') return '→';
+  return code.toUpperCase();
+}
+
+function saveControlSettings() {
+  writeJsonStorage('sunsetStriker_controls', controlSettings);
+}
+
+function renderBindingsList() {
+  ctrlBindingsList.innerHTML = '';
+  for (const meta of BINDING_META) {
+    const row = document.createElement('div');
+    row.className = 'ctrl-bind-row';
+
+    const lbl = document.createElement('span');
+    lbl.textContent = meta.label;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    const listening = rebindingAction === meta.id;
+    btn.className = 'ctrl-bind-btn' + (listening ? ' listening' : '');
+    btn.textContent = listening ? 'TECLA...' : formatKeyLabel(controlSettings.bindings[meta.id]);
+    btn.addEventListener('click', () => {
+      rebindingAction = listening ? null : meta.id;
+      renderBindingsList();
+    });
+
+    row.append(lbl, btn);
+    ctrlBindingsList.appendChild(row);
+  }
+}
+
+function syncControlsUI() {
+  ctrlInvertYBtn.textContent = controlSettings.invertY ? 'SIM' : 'NÃO';
+  ctrlInvertYBtn.classList.toggle('active', controlSettings.invertY);
+  ctrlSensSlider.value = controlSettings.mouseSensitivity.toFixed(2);
+  ctrlSensVal.textContent = `${controlSettings.mouseSensitivity.toFixed(2)}x`;
+
+  const b = controlSettings.bindings;
+  if (hudKeyMissile) hudKeyMissile.textContent = formatKeyLabel(b.missile);
+  if (hudKeyCockpit) hudKeyCockpit.textContent = formatKeyLabel(b.cockpit);
+  if (hudKeyCam) hudKeyCam.textContent = formatKeyLabel(b.camera);
+
+  if (guideKeyAfterburner) guideKeyAfterburner.textContent = formatKeyLabel(b.afterburner);
+  if (guideKeyMissile) guideKeyMissile.textContent = formatKeyLabel(b.missile);
+  if (guideKeyCockpit) guideKeyCockpit.textContent = formatKeyLabel(b.cockpit);
+  if (guideKeyCam) guideKeyCam.textContent = formatKeyLabel(b.camera);
+  if (guideKeyMute) guideKeyMute.textContent = formatKeyLabel(b.mute);
+  if (guideKeyRestore) guideKeyRestore.textContent = formatKeyLabel(b.restoreTerrain);
+  if (guideKeyStyle) guideKeyStyle.textContent = formatKeyLabel(b.cycleStyle);
+
+  input.sensitivity = controlSettings.mouseSensitivity;
+  input.invertY = controlSettings.invertY;
+  input.afterburnerKey = b.afterburner;
+
+  renderBindingsList();
+}
+
+ctrlInvertYBtn.addEventListener('click', () => {
+  controlSettings.invertY = !controlSettings.invertY;
+  saveControlSettings();
+  syncControlsUI();
+  sound.playSwitch();
+});
+
+ctrlSensSlider.addEventListener('input', () => {
+  controlSettings.mouseSensitivity = Number(ctrlSensSlider.value);
+  saveControlSettings();
+  syncControlsUI();
+});
+
+ctrlResetBtn.addEventListener('click', () => {
+  rebindingAction = null;
+  controlSettings.invertY = DEFAULT_CONTROLS.invertY;
+  controlSettings.mouseSensitivity = DEFAULT_CONTROLS.mouseSensitivity;
+  controlSettings.bindings = { ...DEFAULT_BINDINGS };
+  saveControlSettings();
+  syncControlsUI();
+  sound.playSwitch();
+});
+
+// =========================================================================
+// 3 Camera Modes & Exclusive Render Settings (Settings -> Render)
+// =========================================================================
 const CAMERA_MODES = [
   { id: 'CHASE', label: 'CHASE VIEW', nextHint: 'COCKPIT' },
   { id: 'COCKPIT', label: 'COCKPIT VIEW', nextHint: 'TOP VIEW' },
@@ -418,11 +905,12 @@ function setCameraMode(idx) {
   camNextLabel.textContent = mode.nextHint;
 
   const isCockpit = mode.id === 'COCKPIT';
-  jet.setVisible(!isCockpit && jet.alive);
-  cockpit.setVisible(isCockpit);
-  hudBottomLeft.classList.toggle('hidden', isCockpit);
-  postMat.uniforms.uOutlineEnabled.value = (!isCockpit || remoteJets.size > 0) ? 1.0 : 0.0;
-  sound.playSwitch();
+  const showCockpit = isCockpit && gameState === 'playing' && !menuOpen;
+  jet.setVisible((!isCockpit || gameState !== 'playing' || menuOpen) && jet.alive);
+  cockpit.setVisible(showCockpit);
+  hudBottomLeft.classList.toggle('hidden', isCockpit || gameState !== 'playing' || menuOpen);
+  postMat.uniforms.uOutlineEnabled.value = (!showCockpit || remoteJets.size > 0) ? 1.0 : 0.0;
+  if (gameState === 'playing' && !menuOpen) sound.playSwitch();
 }
 
 function toggleCockpit() {
@@ -455,7 +943,6 @@ function applyRenderSettings() {
 
   canvas.style.imageRendering = renderSettings.filter === 'linear' ? 'auto' : 'pixelated';
 
-  // Keep pixel-art cockpit crisp at 270p internal height scaled to aspect
   const cpH = 270;
   const cpW = Math.max(360, Math.round(cpH * (w / h)));
   cockpitCanvas.width = cpW;
@@ -468,12 +955,10 @@ function applyRenderSettings() {
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
 
-  // Sync UI
   styleSelect.value = renderSettings.id;
   resSelect.value = String(renderSettings.resHeight);
   ditherSlider.value = renderSettings.dither.toFixed(2);
   ditherVal.textContent = `${Math.round(renderSettings.dither * 100)}%`;
-  styleShortLabel.textContent = renderSettings.shortLabel;
 }
 
 function selectRenderPreset(presetId) {
@@ -482,11 +967,9 @@ function selectRenderPreset(presetId) {
   Object.assign(renderSettings, p);
   try {
     localStorage.setItem('sunsetStriker_renderStyle', presetId);
-  } catch (_) {
-    // ignore
-  }
+  } catch (_) {}
   applyRenderSettings();
-  sound.playSwitch();
+  if (gameState === 'playing' || menuOpen) sound.playSwitch();
 }
 
 function cycleRenderPreset() {
@@ -509,41 +992,8 @@ function syncViewUI() {
   for (const rj of remoteJets.values()) {
     rj.visual.scale.setScalar(objScale);
   }
+  writeJsonStorage('sunsetStriker_viewSettings', viewSettings);
 }
-
-viewBtn.addEventListener('click', () => {
-  const hidden = viewPanel.classList.toggle('hidden');
-  viewBtn.classList.toggle('active', !hidden);
-  if (!hidden) {
-    mpPanel.classList.add('hidden');
-    mpBtn.classList.remove('active');
-    hangarPanel.classList.add('hidden');
-    hangarBtn.classList.remove('active');
-  }
-});
-
-mpBtn.addEventListener('click', () => {
-  const hidden = mpPanel.classList.toggle('hidden');
-  mpBtn.classList.toggle('active', !hidden);
-  if (!hidden) {
-    viewPanel.classList.add('hidden');
-    viewBtn.classList.remove('active');
-    hangarPanel.classList.add('hidden');
-    hangarBtn.classList.remove('active');
-  }
-});
-
-hangarBtn.addEventListener('click', () => {
-  const hidden = hangarPanel.classList.toggle('hidden');
-  hangarBtn.classList.toggle('active', !hidden);
-  if (!hidden) {
-    viewPanel.classList.add('hidden');
-    viewBtn.classList.remove('active');
-    mpPanel.classList.add('hidden');
-    mpBtn.classList.remove('active');
-    renderHangarCards();
-  }
-});
 
 styleSelect.addEventListener('change', () => {
   selectRenderPreset(styleSelect.value);
@@ -583,15 +1033,6 @@ vpResetBtn.addEventListener('click', () => {
   selectRenderPreset('crisp480');
   syncViewUI();
 });
-
-const rebuildTerrainBtn = document.getElementById('rebuild-terrain-btn');
-if (rebuildTerrainBtn) {
-  rebuildTerrainBtn.addEventListener('click', () => {
-    world.resetTerrain();
-    mp.sendEvent({ t: 'rst' });
-    sound.playSwitch();
-  });
-}
 
 // =========================================================================
 // WebRTC P2P Multiplayer Setup
@@ -634,6 +1075,12 @@ function removeRemotePilot(id) {
   }
 }
 
+function clearAllRemotePilots() {
+  for (const id of Array.from(remoteJets.keys())) {
+    removeRemotePilot(id);
+  }
+}
+
 function spawnRemotePilot(id, name, color, shipId = 'striker') {
   if (remoteJets.has(id)) return remoteJets.get(id);
   const rj = new RemoteJet(scene, id, name, color, shipId);
@@ -641,6 +1088,35 @@ function spawnRemotePilot(id, name, color, shipId = 'striker') {
   remoteJets.set(id, rj);
   ensureRemoteLabel(id, name, color);
   return rj;
+}
+
+function renderRosterInto(targetEl, list) {
+  if (!targetEl) return;
+  targetEl.innerHTML = '';
+  for (const item of list) {
+    const row = document.createElement('div');
+    row.className = 'mp-roster-item';
+
+    const left = document.createElement('span');
+    left.className = 'mp-roster-left';
+    const dot = document.createElement('span');
+    dot.className = 'mp-status-dot';
+    dot.style.background = item.color || '#ffffff';
+
+    const label = document.createElement('span');
+    const tags = [];
+    if (item.isHost) tags.push('HOST');
+    if (item.id === mp.localId) tags.push('VOCÊ');
+    label.textContent = tags.length ? `${item.name} [${tags.join(',')}]` : item.name;
+    left.append(dot, label);
+
+    const ping = document.createElement('span');
+    ping.className = 'mp-roster-ping';
+    ping.textContent = item.id === mp.localId ? 'LOCAL' : `${item.ping || 0}ms`;
+
+    row.append(left, ping);
+    targetEl.appendChild(row);
+  }
 }
 
 const mp = new MultiplayerManager({
@@ -651,49 +1127,41 @@ const mp = new MultiplayerManager({
     const inRoom = status === 'HOSTING' || status === 'CONNECTED';
     mpLobbyView.classList.toggle('hidden', inRoom);
     mpRoomView.classList.toggle('hidden', !inRoom);
-    mpBtn.textContent = inRoom ? `P2P: ${roomCode}` : 'MULTIPLAYER';
 
     if (inRoom) {
       mpRoomCode.textContent = roomCode;
+      if (menuPauseRoomCode) menuPauseRoomCode.textContent = roomCode;
       mpTransportInfo.textContent =
-        transport === 'php' ? 'WEBRTC P2P · LOCAL PHP SIGNALING' : 'WEBRTC P2P · CLOUD SIGNALING';
+        transport === 'php' ? 'WEBRTC P2P · SIGNALING LOCAL PHP' : 'WEBRTC P2P · SIGNALING CLOUD';
     }
     if (message !== undefined) {
       mpMsg.textContent = message;
     }
+    renderAllHangars();
+    syncTerrainUI();
+    syncHudVisibility();
   },
   onRosterChange(list) {
-    mpRoster.innerHTML = '';
-    for (const item of list) {
-      const row = document.createElement('div');
-      row.className = 'mp-roster-item';
-
-      const left = document.createElement('span');
-      left.className = 'mp-roster-left';
-      const dot = document.createElement('span');
-      dot.className = 'mp-status-dot';
-      dot.style.background = item.color || '#ffffff';
-
-      const label = document.createElement('span');
-      const tags = [];
-      if (item.isHost) tags.push('HOST');
-      if (item.id === mp.localId) tags.push('YOU');
-      label.textContent = tags.length ? `${item.name} [${tags.join(',')}]` : item.name;
-      left.append(dot, label);
-
-      const ping = document.createElement('span');
-      ping.className = 'mp-roster-ping';
-      ping.textContent = item.id === mp.localId ? 'LOCAL' : `${item.ping || 0}ms`;
-
-      row.append(left, ping);
-      mpRoster.appendChild(row);
+    renderRosterInto(mpRoster, list);
+    renderRosterInto(menuPauseRoster, list);
+    if (hudMpRoomLabel && mp.isActive()) {
+      hudMpRoomLabel.textContent = `SALA: ${mp.roomCode} · ${list.length}P`;
+    }
+  },
+  onTerrainConfig(cfg) {
+    world.resetTerrain();
+    applyTerrainSettings(cfg, false);
+    if (mpMsg) {
+      mpMsg.textContent = `Terreno herdado do Host: ${formatTerrainSummary(activeTerrain)}`;
     }
   },
   onPeerJoined(peer) {
     spawnRemotePilot(peer.id, peer.name, peer.color, peer.ship || 'striker');
-    weapons.killBannerText = `${peer.name} JOINED!`;
-    weapons.killBannerTimer = 2.0;
-    sound.playSwitch();
+    if (gameState === 'playing') {
+      weapons.killBannerText = `${peer.name} ENTROU!`;
+      weapons.killBannerTimer = 2.0;
+      sound.playSwitch();
+    }
   },
   onPeerLeft(peerId) {
     removeRemotePilot(peerId);
@@ -736,7 +1204,7 @@ const mp = new MultiplayerManager({
       weapons.killBannerText = 'MOUNTAINS RESTORED';
       weapons.killBannerTimer = 1.6;
     } else if (ev.t === 'hit') {
-      if (ev.target === mp.localId && jet.alive) {
+      if (gameState === 'playing' && ev.target === mp.localId && jet.alive) {
         jet.hp = Math.max(0, jet.hp - (ev.dmg || 20));
         jet.damageCooldown = 6.0;
         weapons.shake = Math.max(weapons.shake, 0.55);
@@ -749,8 +1217,10 @@ const mp = new MultiplayerManager({
       const victim = remoteJets.get(ev.id);
       if (victim) {
         weapons.spawnJetExplosion(victim.position, clock.elapsedTime);
-        weapons.killBannerText = `${victim.name} SHOT DOWN!`;
-        weapons.killBannerTimer = 2.0;
+        if (gameState === 'playing') {
+          weapons.killBannerText = `${victim.name} ABATIDO!`;
+          weapons.killBannerTimer = 2.0;
+        }
       }
     }
   },
@@ -849,6 +1319,271 @@ weapons.setNetHooks({
   },
 });
 
+// =========================================================================
+// Menu Navigation, Match Lifecycle & ESC Pause Flow
+// =========================================================================
+function setSettingsTab(tab) {
+  if (!settingsTabPanels[tab]) return;
+  activeSettingsTab = tab;
+  for (const btn of settingsTabBtns) {
+    btn.classList.toggle('active', btn.dataset.tab === tab);
+  }
+  for (const [k, el] of Object.entries(settingsTabPanels)) {
+    el.classList.toggle('hidden', k !== tab);
+  }
+  if (tab === 'terrain') syncTerrainUI();
+}
+
+function setMenuView(view) {
+  if (!menuViews[view]) return;
+  rebindingAction = null;
+  activeMenuView = view;
+  for (const [k, el] of Object.entries(menuViews)) {
+    el.classList.toggle('hidden', k !== view);
+  }
+  syncMenuUI();
+}
+
+function syncHudVisibility() {
+  const inFlight = gameState === 'playing' && !menuOpen;
+  const isCockpit = CAMERA_MODES[camModeIdx].id === 'COCKPIT';
+
+  hudTopBar.classList.toggle('hidden', !inFlight);
+  hudTopRight.classList.toggle('hidden', !inFlight);
+  objectiveHudEl.classList.toggle('hidden', !inFlight);
+  hudBottomLeft.classList.toggle('hidden', !inFlight || isCockpit);
+  remoteLabelsEl.classList.toggle('hidden', !inFlight);
+  pickupMarkersEl.classList.toggle('hidden', !inFlight);
+
+  const showMpPill = inFlight && gameMode === 'multiplayer' && mp.isActive();
+  hudMpPill.classList.toggle('hidden', !showMpPill);
+  if (showMpPill) {
+    hudMpRoomLabel.textContent = `SALA: ${mp.roomCode} · ${mp.roster.size}P`;
+  }
+
+  if (!inFlight) {
+    aimReticle.classList.add('hidden');
+    lockBox.classList.add('hidden');
+    killBanner.classList.add('hidden');
+    missileAlertEl.classList.add('hidden');
+    missileVignette.classList.add('hidden');
+    cockpit.setVisible(false);
+    jet.setVisible(jet.alive);
+  } else {
+    cockpit.setVisible(isCockpit);
+    jet.setVisible(!isCockpit && jet.alive);
+  }
+  postMat.uniforms.uOutlineEnabled.value = (!inFlight || !isCockpit || remoteJets.size > 0) ? 1.0 : 0.0;
+}
+
+function syncMenuUI() {
+  const isPlaying = gameState === 'playing';
+  menuOverlay.classList.toggle('hidden', !menuOpen);
+
+  // Main menu vs ESC Pause menu: Solo & Multiplayer disabled during match (Req 4)
+  menuBtnResume.classList.toggle('hidden', !isPlaying);
+  menuBtnQuit.classList.toggle('hidden', !isPlaying);
+  menuBtnSolo.disabled = isPlaying;
+  menuBtnMp.disabled = isPlaying;
+
+  // Hangar available ONLY before match starts (Req 2)
+  menuHangarBox.classList.toggle('hidden', isPlaying);
+  menuMatchStatusBox.classList.toggle('hidden', !isPlaying);
+
+  if (isPlaying) {
+    menuModeBadge.textContent =
+      gameMode === 'multiplayer' ? `PAUSADO · MULTIPLAYER (${mp.roomCode || '---'})` : 'PAUSADO · SOLO';
+    menuMatchHp.textContent = `${Math.round(jet.hp)} / ${Math.round(jet.maxHp)}`;
+    menuMatchObj.textContent = `${Math.min(objective.goal, objective.shipsDestroyed)} / ${objective.goal}`;
+    menuMatchDestroyed.textContent = String(weapons.destroyed);
+    menuPauseMpBox.classList.toggle('hidden', gameMode !== 'multiplayer' || !mp.isActive());
+    if (menuPauseRoomCode && mp.roomCode) {
+      menuPauseRoomCode.textContent = mp.roomCode;
+    }
+    renderRosterInto(menuPauseRoster, Array.from(mp.roster.values()));
+  } else {
+    menuModeBadge.textContent = 'MENU PRINCIPAL';
+  }
+
+  renderAllHangars();
+  syncTerrainUI();
+  syncAudioUI();
+  syncControlsUI();
+  syncHudVisibility();
+}
+
+function clearInputs() {
+  input.boost = false;
+  input.cannonFiring = false;
+  input.keys = {};
+}
+
+function snapCameraToJet() {
+  const fwd = jet.getForwardDirection();
+  const totalDistScale = viewSettings.camDist * viewSettings.objDist;
+  camPosSmooth.copy(jet.position).addScaledVector(fwd, -20.5 * totalDistScale).add(new THREE.Vector3(0, 7.4 * totalDistScale, 0));
+  camLookSmooth.copy(jet.position).addScaledVector(fwd, 34 * viewSettings.objDist).add(new THREE.Vector3(0, -1.6 * viewSettings.objDist, 0));
+  camRollSmooth = 0;
+}
+
+function startSoloMatch() {
+  if (gameState === 'playing') return;
+  if (mp.isActive()) mp.leaveRoom();
+  clearAllRemotePilots();
+  applyTerrainSettings(localSoloTerrain, false);
+  world.resetTerrain();
+  world.respawnSunkShips();
+
+  gameMode = 'solo';
+  gameState = 'playing';
+  menuOpen = false;
+  clearInputs();
+
+  jet.respawn(0);
+  weapons.setShipStats(jet.stats);
+  weapons.resetAmmo();
+  weapons.destroyed = 0;
+  resetObjective();
+  snapCameraToJet();
+
+  if (audioSettings.enabled) sound.setEnabled(true);
+  sound.setPaused(false);
+  sound.playSwitch();
+  syncMenuUI();
+}
+
+function startMultiplayerMatch() {
+  if (gameState === 'playing') return;
+  if (!mp.isActive()) {
+    mpMsg.textContent = 'Crie ou entre em uma sala primeiro!';
+    return;
+  }
+
+  gameMode = 'multiplayer';
+  gameState = 'playing';
+  menuOpen = false;
+  clearInputs();
+
+  const spawnIdx = mp.role === 'host' ? 0 : 1 + Math.floor(Math.random() * 6);
+  jet.respawn(spawnIdx);
+  weapons.setShipStats(jet.stats);
+  weapons.resetAmmo();
+  weapons.destroyed = 0;
+  resetObjective();
+  snapCameraToJet();
+
+  if (audioSettings.enabled) sound.setEnabled(true);
+  sound.setPaused(false);
+  sound.playSwitch();
+  syncMenuUI();
+}
+
+function openPauseMenu() {
+  if (gameState !== 'playing') return;
+  menuOpen = true;
+  rebindingAction = null;
+  clearInputs();
+  sound.setPaused(true);
+  setMenuView('main');
+}
+
+function closeMenuToPlay() {
+  if (gameState !== 'playing') return;
+  menuOpen = false;
+  rebindingAction = null;
+  clearInputs();
+  sound.setPaused(false);
+  syncMenuUI();
+  sound.playSwitch();
+}
+
+function returnToMainMenu() {
+  if (mp.isActive() || mp.status === 'CONNECTING') {
+    mp.leaveRoom();
+  }
+  clearAllRemotePilots();
+  world.resetTerrain();
+  world.respawnSunkShips();
+  applyTerrainSettings(localSoloTerrain, false);
+
+  gameState = 'menu';
+  gameMode = 'menu';
+  menuOpen = true;
+  rebindingAction = null;
+  clearInputs();
+  resetObjective();
+  jet.respawn(0);
+  weapons.resetAmmo();
+  sound.setPaused(true);
+  setMenuView('main');
+  sound.playSwitch();
+}
+
+// Menu Button Wiring
+menuBtnResume.addEventListener('click', closeMenuToPlay);
+menuBtnSolo.addEventListener('click', startSoloMatch);
+menuBtnMp.addEventListener('click', () => {
+  if (gameState === 'playing') return;
+  setMenuView('mp');
+  sound.playSwitch();
+});
+menuBtnControls.addEventListener('click', () => {
+  setMenuView('controls');
+  sound.playSwitch();
+});
+menuBtnSettings.addEventListener('click', () => {
+  settingsReturnView = 'main';
+  setMenuView('settings');
+  sound.playSwitch();
+});
+menuBtnQuit.addEventListener('click', returnToMainMenu);
+
+mpBackBtn.addEventListener('click', () => {
+  if (mp.isActive() || mp.status === 'CONNECTING') {
+    mp.leaveRoom();
+  }
+  setMenuView('main');
+  sound.playSwitch();
+});
+
+mpEditTerrainBtn.addEventListener('click', () => {
+  if (isTerrainLocked()) return;
+  settingsReturnView = 'mp';
+  setSettingsTab('terrain');
+  setMenuView('settings');
+  sound.playSwitch();
+});
+
+mpLaunchBtn.addEventListener('click', startMultiplayerMatch);
+
+controlsBackBtn.addEventListener('click', () => {
+  setMenuView('main');
+  sound.playSwitch();
+});
+
+controlsOpenSettingsBtn.addEventListener('click', () => {
+  settingsReturnView = 'main';
+  setSettingsTab('controls');
+  setMenuView('settings');
+  sound.playSwitch();
+});
+
+settingsBackBtn.addEventListener('click', () => {
+  setMenuView(settingsReturnView === 'mp' && gameState === 'menu' ? 'mp' : 'main');
+  sound.playSwitch();
+});
+
+for (const btn of settingsTabBtns) {
+  btn.addEventListener('click', () => {
+    setSettingsTab(btn.dataset.tab);
+    sound.playSwitch();
+  });
+}
+
+hudMenuBtn.addEventListener('click', openPauseMenu);
+hudEscHint.addEventListener('click', openPauseMenu);
+
+// Multiplayer Room Creation / Joining / Copying
 try {
   const savedName = localStorage.getItem('sunsetStriker_pilotName');
   if (savedName) mpNameInput.value = savedName;
@@ -861,27 +1596,28 @@ mpNameInput.addEventListener('change', () => {
 });
 
 mpCreateBtn.addEventListener('click', async () => {
-  mpMsg.textContent = 'Creating room...';
+  mpMsg.textContent = 'Criando sala...';
   try {
+    world.resetTerrain();
     const code = await mp.createRoom({
       name: mpNameInput.value,
       transportPref: mpSignalSelect.value,
       ship: jet.shipId,
+      terrainConfig: { ...localSoloTerrain },
     });
-    jet.respawn(0);
-    mpMsg.textContent = `Share code ${code} with friends!`;
+    mpMsg.textContent = `Sala ${code} pronta! Compartilhe e clique em INICIAR PARTIDA.`;
   } catch (err) {
-    mpMsg.textContent = err?.message || 'Could not create room';
+    mpMsg.textContent = err?.message || 'Não foi possível criar a sala';
   }
 });
 
 async function joinFromUI() {
   const code = mpCodeInput.value.trim().toUpperCase();
   if (!code) {
-    mpMsg.textContent = 'Enter a room code first';
+    mpMsg.textContent = 'Digite o código da sala primeiro';
     return;
   }
-  mpMsg.textContent = `Joining ${code}...`;
+  mpMsg.textContent = `Conectando em ${code}...`;
   try {
     await mp.joinRoom({
       code,
@@ -889,10 +1625,8 @@ async function joinFromUI() {
       transportPref: mpSignalSelect.value,
       ship: jet.shipId,
     });
-    const offset = 1 + Math.floor(Math.random() * 6);
-    jet.respawn(offset);
   } catch (err) {
-    mpMsg.textContent = err?.message || 'Failed to join room';
+    mpMsg.textContent = err?.message || 'Falha ao entrar na sala';
   }
 }
 
@@ -906,70 +1640,83 @@ mpCodeInput.addEventListener('keydown', (e) => {
 
 mpLeaveBtn.addEventListener('click', () => {
   mp.leaveRoom();
-  jet.hp = jet.maxHp;
-  jet.alive = true;
-  if (CAMERA_MODES[camModeIdx].id !== 'COCKPIT') jet.setVisible(true);
+  clearAllRemotePilots();
+  world.resetTerrain();
+  applyTerrainSettings(localSoloTerrain, false);
+  mpMsg.textContent = 'Você saiu da sala.';
 });
 
-mpCopyCode.addEventListener('click', async () => {
+async function copyRoomCode() {
   if (!mp.roomCode) return;
   try {
     await navigator.clipboard.writeText(mp.roomCode);
-    mpMsg.textContent = `Copied code: ${mp.roomCode}`;
+    mpMsg.textContent = `Código copiado: ${mp.roomCode}`;
+    if (gameState === 'playing') {
+      weapons.killBannerText = `CÓDIGO COPIADO: ${mp.roomCode}`;
+      weapons.killBannerTimer = 1.6;
+    }
   } catch (_) {
-    mpMsg.textContent = `Code: ${mp.roomCode}`;
+    mpMsg.textContent = `Código: ${mp.roomCode}`;
   }
-});
+}
 
-mpCopyLink.addEventListener('click', async () => {
+async function copyRoomLink() {
   if (!mp.roomCode) return;
   const url = `${window.location.origin}${window.location.pathname}?room=${mp.roomCode}`;
   try {
     await navigator.clipboard.writeText(url);
-    mpMsg.textContent = 'Invite link copied!';
+    mpMsg.textContent = 'Link de convite copiado!';
+    if (gameState === 'playing') {
+      weapons.killBannerText = 'LINK DE CONVITE COPIADO!';
+      weapons.killBannerTimer = 1.6;
+    }
   } catch (_) {
     mpMsg.textContent = url;
   }
-});
+}
 
-// Input state
+mpCopyCode.addEventListener('click', copyRoomCode);
+mpCopyLink.addEventListener('click', copyRoomLink);
+menuPauseCopyCode.addEventListener('click', copyRoomCode);
+menuPauseCopyLink.addEventListener('click', copyRoomLink);
+hudMpCopyCode.addEventListener('click', copyRoomCode);
+hudMpCopyLink.addEventListener('click', copyRoomLink);
+
+// =========================================================================
+// Input State & Event Listeners
+// =========================================================================
 const input = {
   mouseX: 0,
   mouseY: 0,
   boost: false,
   cannonFiring: false,
   keys: {},
+  sensitivity: controlSettings.mouseSensitivity,
+  invertY: controlSettings.invertY,
+  afterburnerKey: controlSettings.bindings.afterburner,
 };
 
 let leftDownAt = 0;
-let interacted = false;
-
-function dismissIntro() {
-  if (!interacted) {
-    interacted = true;
-    startHint.classList.add('hidden');
-  }
-}
 
 window.addEventListener('mousemove', (e) => {
+  if (menuOpen || gameState !== 'playing') return;
   input.mouseX = (e.clientX / window.innerWidth) * 2 - 1;
   input.mouseY = (e.clientY / window.innerHeight) * 2 - 1;
-  if (Math.hypot(input.mouseX, input.mouseY) > 0.16) dismissIntro();
 });
 
 window.addEventListener('mousedown', (e) => {
+  if (menuOpen || gameState !== 'playing') return;
   if (
     e.target.closest('button') ||
     e.target.closest('select') ||
     e.target.closest('input') ||
     e.target.closest('.clickable') ||
-    e.target.closest('#view-panel') ||
-    e.target.closest('#mp-panel') ||
-    e.target.closest('#hangar-panel')
+    e.target.closest('#game-menu-overlay') ||
+    e.target.closest('#hud-top-right') ||
+    e.target.closest('#hud-top-bar')
   ) {
     return;
   }
-  dismissIntro();
   if (!jet.alive) return;
   if (e.button === 0) {
     leftDownAt = performance.now();
@@ -986,7 +1733,7 @@ window.addEventListener('mousedown', (e) => {
 window.addEventListener('mouseup', (e) => {
   if (e.button === 0) {
     input.boost = false;
-    if (jet.alive && performance.now() - leftDownAt < 230) {
+    if (!menuOpen && gameState === 'playing' && jet.alive && performance.now() - leftDownAt < 230) {
       jet.triggerRoll(input.mouseX >= 0 ? 1 : -1);
     }
   } else if (e.button === 2) {
@@ -997,7 +1744,8 @@ window.addEventListener('mouseup', (e) => {
 window.addEventListener(
   'wheel',
   (e) => {
-    if (e.target.closest('#view-panel') || e.target.closest('#mp-panel') || e.target.closest('#hangar-panel')) return;
+    if (menuOpen || gameState !== 'playing') return;
+    if (e.target.closest('#game-menu-overlay')) return;
     const delta = Math.sign(e.deltaY) * 0.1;
     viewSettings.camDist = THREE.MathUtils.clamp(viewSettings.camDist + delta, 0.5, 2.6);
     syncViewUI();
@@ -1008,29 +1756,83 @@ window.addEventListener(
 window.addEventListener('contextmenu', (e) => e.preventDefault());
 
 window.addEventListener('keydown', (e) => {
+  // 1. Keybind capture in Settings -> Controls
+  if (rebindingAction) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.code === 'Escape') {
+      rebindingAction = null;
+      renderBindingsList();
+      return;
+    }
+    controlSettings.bindings[rebindingAction] = e.code;
+    rebindingAction = null;
+    saveControlSettings();
+    syncControlsUI();
+    sound.playSwitch();
+    return;
+  }
+
+  // 2. ESC key always navigates / toggles Pause Menu (even over select/input)
+  if (e.code === 'Escape') {
+    e.preventDefault();
+    if (gameState === 'menu') {
+      if (activeMenuView === 'mp') {
+        if (mp.isActive() || mp.status === 'CONNECTING') mp.leaveRoom();
+        setMenuView('main');
+      } else if (activeMenuView === 'settings') {
+        setMenuView(settingsReturnView === 'mp' ? 'mp' : 'main');
+      } else if (activeMenuView !== 'main') {
+        setMenuView('main');
+      }
+      sound.playSwitch();
+    } else {
+      if (!menuOpen) {
+        openPauseMenu();
+        sound.playSwitch();
+      } else if (activeMenuView !== 'main') {
+        setMenuView('main');
+        sound.playSwitch();
+      } else {
+        closeMenuToPlay();
+      }
+    }
+    return;
+  }
+
   const tag = document.activeElement?.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
 
-  input.keys[e.code] = true;
-  dismissIntro();
+  // 3. Block all flight controls & shortcuts when menu is open or not playing
+  if (menuOpen || gameState !== 'playing') return;
 
-  if (e.code === 'KeyE') {
+  input.keys[e.code] = true;
+  const b = controlSettings.bindings;
+
+  if (e.code === b.cockpit) {
     e.preventDefault();
     toggleCockpit();
-  } else if (e.code === 'KeyV') {
+  } else if (e.code === b.cycleStyle) {
     e.preventDefault();
     cycleRenderPreset();
-  } else if (e.code === 'Space' || e.code === 'KeyC') {
+  } else if (e.code === b.camera || e.code === 'KeyC') {
     e.preventDefault();
     setCameraMode(camModeIdx + 1);
-  } else if (e.code === 'KeyF' || e.code === 'Enter') {
+  } else if (e.code === b.missile || e.code === 'Enter') {
     if (jet.alive) weapons.tryFireMissile(jet);
-  } else if (e.code === 'KeyM') {
+  } else if (e.code === b.mute) {
     toggleSound();
-  } else if (e.code === 'KeyR') {
-    world.resetTerrain();
-    mp.sendEvent({ t: 'rst' });
-    sound.playSwitch();
+  } else if (e.code === b.restoreTerrain) {
+    if (isTerrainLocked()) {
+      weapons.killBannerText = 'TERRENO BLOQUEADO NO MULTIPLAYER';
+      weapons.killBannerTimer = 1.8;
+      sound.playEmpty();
+    } else {
+      world.resetTerrain();
+      sound.playSwitch();
+      weapons.killBannerText = 'MONTANHAS RESTAURADAS';
+      weapons.killBannerTimer = 1.6;
+    }
   } else if (e.code === 'BracketRight' || e.code === 'Equal') {
     viewSettings.camDist = THREE.MathUtils.clamp(viewSettings.camDist + 0.12, 0.5, 2.6);
     syncViewUI();
@@ -1044,20 +1846,68 @@ window.addEventListener('keyup', (e) => {
   input.keys[e.code] = false;
 });
 
-function toggleSound() {
-  const on = sound.toggle();
-  soundBtn.textContent = on ? 'SOUND: ON' : 'SOUND: OFF';
-}
-
-soundBtn.addEventListener('click', toggleSound);
-camSwitchBtn.addEventListener('click', () => setCameraMode(camModeIdx + 1));
-styleCycleBtn.addEventListener('click', cycleRenderPreset);
-cockpitToggleBtn.addEventListener('click', toggleCockpit);
+camSwitchBtn.addEventListener('click', () => {
+  if (!menuOpen && gameState === 'playing') setCameraMode(camModeIdx + 1);
+});
+cockpitToggleBtn.addEventListener('click', () => {
+  if (!menuOpen && gameState === 'playing') toggleCockpit();
+});
 
 window.addEventListener('resize', applyRenderSettings);
+
+// Initial startup configuration (starts in Main Menu with live 3D showcase)
 applyRenderSettings();
 syncViewUI();
+applyTerrainSettings(localSoloTerrain, false);
 setCameraMode(0);
+setSettingsTab('audio');
+setMenuView('main');
+syncMenuUI();
+
+// =========================================================================
+// Camera, Showcase Autopilot & Main Render Loop
+// =========================================================================
+function updateShowcaseFlight(dt) {
+  showcaseOrbitAngle += dt * 0.16;
+  const radius = 185;
+  const cx = Math.cos(showcaseOrbitAngle) * radius;
+  const cz = Math.sin(showcaseOrbitAngle) * radius + 20;
+  const cy = 112 + Math.sin(showcaseOrbitAngle * 2.0) * 6;
+
+  jet.position.set(cx, cy, cz);
+  jet.yaw = -showcaseOrbitAngle;
+  jet.pitch = -0.02 + Math.cos(showcaseOrbitAngle * 2.0) * 0.03;
+  jet.bank = 0.24;
+  jet.afterburner = false;
+  jet.throttle = 0.65;
+
+  jet.group.position.copy(jet.position);
+  jet.group.rotation.order = 'YXZ';
+  jet.group.rotation.y = jet.yaw;
+  jet.group.rotation.x = jet.pitch;
+  jet.visual.rotation.z = jet.bank;
+  jet.group.updateMatrixWorld(true);
+
+  const flicker = 0.85 + Math.random() * 0.3;
+  jet.flameL.scale.set(0.8, 0.8, 0.72 * flicker);
+  jet.flameR.scale.set(0.8, 0.8, 0.72 * flicker);
+  jet.updatePuffs(dt);
+
+  const fwd = jet.getForwardDirection();
+  const right = new THREE.Vector3(-fwd.z, 0, fwd.x).normalize();
+  const desiredPos = jet.position
+    .clone()
+    .addScaledVector(fwd, -16.5 * viewSettings.objDist)
+    .addScaledVector(right, 8.5 * viewSettings.objDist)
+    .add(new THREE.Vector3(0, 5.2 * viewSettings.objDist, 0));
+  const desiredLook = jet.position.clone().addScaledVector(fwd, 12 * viewSettings.objDist);
+
+  camera.fov = THREE.MathUtils.lerp(camera.fov, viewSettings.fov, 1 - Math.exp(-5.0 * dt));
+  camera.updateProjectionMatrix();
+  camera.up.set(0, 1, 0);
+  camera.position.copy(desiredPos);
+  camera.lookAt(desiredLook);
+}
 
 function updateCamera(dt) {
   const mode = CAMERA_MODES[camModeIdx].id;
@@ -1073,7 +1923,8 @@ function updateCamera(dt) {
     targetFov = THREE.MathUtils.clamp(targetFov, 45, 118);
   }
 
-  camera.fov = THREE.MathUtils.lerp(camera.fov, targetFov, 1 - Math.exp(-6.0 * dt));
+  const lerpFactor = dt > 0 ? 1 - Math.exp(-6.0 * dt) : 1.0;
+  camera.fov = THREE.MathUtils.lerp(camera.fov, targetFov, lerpFactor);
   camera.updateProjectionMatrix();
 
   const totalDistScale = viewSettings.camDist * viewSettings.objDist;
@@ -1092,9 +1943,15 @@ function updateCamera(dt) {
       .addScaledVector(fwd, 34 * viewSettings.objDist)
       .add(new THREE.Vector3(0, -1.6 * viewSettings.objDist, 0));
 
-    camPosSmooth.lerp(desiredPos, 1 - Math.exp(-8.5 * dt));
-    camLookSmooth.lerp(desiredLook, 1 - Math.exp(-10.5 * dt));
-    camRollSmooth = THREE.MathUtils.lerp(camRollSmooth, jet.bank * 0.34, 1 - Math.exp(-5.0 * dt));
+    if (dt > 0) {
+      camPosSmooth.lerp(desiredPos, 1 - Math.exp(-8.5 * dt));
+      camLookSmooth.lerp(desiredLook, 1 - Math.exp(-10.5 * dt));
+      camRollSmooth = THREE.MathUtils.lerp(camRollSmooth, jet.bank * 0.34, 1 - Math.exp(-5.0 * dt));
+    } else {
+      camPosSmooth.copy(desiredPos);
+      camLookSmooth.copy(desiredLook);
+      camRollSmooth = jet.bank * 0.34;
+    }
 
     camera.position.copy(camPosSmooth);
     const rightAxis = new THREE.Vector3(Math.cos(jet.yaw), 0, -Math.sin(jet.yaw));
@@ -1122,18 +1979,25 @@ function updateCamera(dt) {
       .add(new THREE.Vector3(0, 82 * totalDistScale, 0));
     const desiredLook = jet.position.clone().addScaledVector(horizFwd, 20 * viewSettings.objDist);
 
-    camPosSmooth.lerp(desiredPos, 1 - Math.exp(-6.0 * dt));
-    camLookSmooth.lerp(desiredLook, 1 - Math.exp(-9.0 * dt));
+    if (dt > 0) {
+      camPosSmooth.lerp(desiredPos, 1 - Math.exp(-6.0 * dt));
+      camLookSmooth.lerp(desiredLook, 1 - Math.exp(-9.0 * dt));
+    } else {
+      camPosSmooth.copy(desiredPos);
+      camLookSmooth.copy(desiredLook);
+    }
 
     camera.up.set(0, 1, 0);
     camera.position.copy(camPosSmooth);
     camera.lookAt(camLookSmooth);
   }
 
-  const shakeMag = weapons.shake * 0.5 + (jet.afterburner && mode === 'CHASE' ? 0.07 : 0);
-  if (shakeMag > 0.005) {
-    camera.position.x += (Math.random() - 0.5) * shakeMag;
-    camera.position.y += (Math.random() - 0.5) * shakeMag;
+  if (dt > 0) {
+    const shakeMag = weapons.shake * 0.5 + (jet.afterburner && mode === 'CHASE' ? 0.07 : 0);
+    if (shakeMag > 0.005) {
+      camera.position.x += (Math.random() - 0.5) * shakeMag;
+      camera.position.y += (Math.random() - 0.5) * shakeMag;
+    }
   }
 }
 
@@ -1149,85 +2013,8 @@ function projectToScreen(worldPos) {
   };
 }
 
-function animate() {
-  requestAnimationFrame(animate);
-  const dt = Math.min(0.05, clock.getDelta());
-  const elapsed = clock.elapsedTime;
+function updatePlayingHUD(elapsed) {
   const modeId = CAMERA_MODES[camModeIdx].id;
-  const isCockpit = modeId === 'COCKPIT';
-
-  if (jet.alive) {
-    jet.update(dt, input, isCockpit);
-
-    // Fatal obstacle collision check (mountains, terrain, ocean, trees, structures, ships, balloons, or other jets)
-    if (jet.spawnProtection <= 0) {
-      for (const rj of remoteJets.values()) {
-        if (!rj.alive) continue;
-        if (jet.position.distanceTo(rj.position) < 7.5) {
-          mp.sendEvent({ t: 'hit', target: rj.id, dmg: 200, w: 'collision' });
-          killLocalJet(`COLISÃO ${rj.name}`, rj.id);
-          break;
-        }
-      }
-      if (jet.alive) {
-        const col = world.checkObstacleCollision(jet.position, 2.6);
-        if (col && col.hit) {
-          if (col.type === 'mountain') {
-            world.deformTerrain(jet.position.x, jet.position.z, 22, 12, 0, 0);
-            mp.sendEvent({ t: 'def', x: jet.position.x, z: jet.position.z, r: 22, d: 12, dx: 0, dz: 0 });
-          }
-          killLocalJet(col.reason);
-        }
-      }
-    }
-
-    if (jet.alive) {
-      if (input.cannonFiring) {
-        weapons.tryFireCannon(jet);
-      }
-
-      // Collect dynamic dropped pickups (Pink-cross full heal from balloons; Sea-skim full missiles from ships/enemies)
-      const picked = world.collectPickup(jet.position, (p) => {
-        if (p.type === 'health') return jet.hp < jet.maxHp;
-        if (p.type === 'missile') return weapons.ammo < weapons.maxAmmo;
-        return false;
-      });
-      if (picked) {
-        if (picked.type === 'health') {
-          jet.hp = jet.maxHp;
-          weapons.killBannerText = 'VIDA 100% RECUPERADA! (CRUZ ROSA)';
-        } else {
-          weapons.resetAmmo();
-          weapons.killBannerText = 'TODOS OS MÍSSEIS RECARREGADOS!';
-        }
-        weapons.killBannerTimer = 1.8;
-        sound.playPickup(picked.type);
-        weapons.spawnPickupBurst(picked, picked.type === 'health');
-        mp.sendEvent({ t: 'pk', id: picked.id });
-      }
-    }
-  } else {
-    jet.updatePuffs(dt);
-    jet.respawnTimer -= dt;
-    if (jet.respawnTimer <= 0) {
-      jet.respawn(Math.floor(Math.random() * 8));
-      weapons.resetAmmo();
-      if (!mp.isActive()) world.respawnSunkShips();
-      jet.setVisible(!isCockpit);
-    }
-  }
-
-  for (const rj of remoteJets.values()) {
-    rj.update(dt, jet.position);
-  }
-  mp.sendLocalState(jet);
-
-  weapons.update(dt, elapsed, jet);
-
-  updateCamera(dt);
-  world.update(elapsed, camera.position, dt);
-
-  sound.updateJet(jet.throttle, jet.afterburner, isCockpit);
 
   for (let i = 0; i < ammoPipEls.length; i++) {
     ammoPipEls[i].classList.toggle('ready', i < weapons.ammo);
@@ -1237,7 +2024,6 @@ function animate() {
   telemBadge.textContent = `SPD ${knots} · ALT ${altFt}`;
   destroyedBadge.textContent = `DESTROYED: ${weapons.destroyed}`;
 
-  // Update Local Player HP bar
   const hpCur = Math.round(jet.hp);
   const hpMax = Math.round(jet.maxHp);
   const hpPct = Math.max(0, Math.min(100, (hpCur / Math.max(1, hpMax)) * 100));
@@ -1246,7 +2032,6 @@ function animate() {
   playerHpText.textContent = `${hpCur}/${hpMax}`;
   playerHpText.style.color = hpPct <= 30 ? '#ff5a44' : hpPct <= 60 ? '#ffd066' : '#88ffa8';
 
-  // Update incoming homing missile alert banner + red screen border vignette
   if (weapons.incomingMissile) {
     const distM = Math.round(weapons.incomingMissile.dist);
     missileAlertEl.textContent = `⚠ MISSILE ALERT · ${distM}M — CLICK ROLL / TURN TO EVADE!`;
@@ -1257,7 +2042,6 @@ function animate() {
     missileVignette.classList.add('hidden');
   }
 
-  // Update 3D projected remote pilot nameplates + health bars
   for (const [pid, rj] of remoteJets.entries()) {
     const rec = remoteLabelEls.get(pid);
     if (!rec) continue;
@@ -1281,7 +2065,6 @@ function animate() {
     }
   }
 
-  // Project waypoint markers for closest dropped pickups (pink-cross medkits & sea-skim missile crates)
   pickupMarkersEl.innerHTML = '';
   if (modeId !== 'TOP') {
     const allPickups = world.getPickups();
@@ -1351,6 +2134,112 @@ function animate() {
   } else {
     lockBox.classList.add('hidden');
   }
+}
+
+const NEUTRAL_INPUT = {
+  mouseX: 0,
+  mouseY: 0,
+  boost: false,
+  keys: {},
+  sensitivity: 1.0,
+  invertY: false,
+  afterburnerKey: 'ShiftLeft',
+};
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(0.05, clock.getDelta());
+  const elapsed = clock.elapsedTime;
+  const modeId = CAMERA_MODES[camModeIdx].id;
+  const isCockpit = modeId === 'COCKPIT';
+
+  if (gameState === 'menu') {
+    sound.setPaused(true);
+    updateShowcaseFlight(dt);
+    world.update(elapsed, camera.position, dt);
+    jet.setVisible(true);
+  } else if (menuOpen && gameMode === 'solo') {
+    sound.setPaused(true);
+    updateCamera(0);
+    world.update(elapsed, camera.position, 0);
+  } else {
+    const activeInput = menuOpen ? NEUTRAL_INPUT : input;
+    const showCockpitLive = isCockpit && !menuOpen;
+    sound.setPaused(menuOpen);
+
+    if (jet.alive) {
+      jet.update(dt, activeInput, showCockpitLive);
+
+      if (jet.spawnProtection <= 0) {
+        for (const rj of remoteJets.values()) {
+          if (!rj.alive) continue;
+          if (jet.position.distanceTo(rj.position) < 7.5) {
+            mp.sendEvent({ t: 'hit', target: rj.id, dmg: 200, w: 'collision' });
+            killLocalJet(`COLISÃO ${rj.name}`, rj.id);
+            break;
+          }
+        }
+        if (jet.alive) {
+          const col = world.checkObstacleCollision(jet.position, 2.6);
+          if (col && col.hit) {
+            if (col.type === 'mountain') {
+              if (world.deformTerrain(jet.position.x, jet.position.z, 22, 12, 0, 0)) {
+                mp.sendEvent({ t: 'def', x: jet.position.x, z: jet.position.z, r: 22, d: 12, dx: 0, dz: 0 });
+              }
+            }
+            killLocalJet(col.reason);
+          }
+        }
+      }
+
+      if (jet.alive) {
+        if (!menuOpen && input.cannonFiring) {
+          weapons.tryFireCannon(jet);
+        }
+
+        const picked = world.collectPickup(jet.position, (p) => {
+          if (p.type === 'health') return jet.hp < jet.maxHp;
+          if (p.type === 'missile') return weapons.ammo < weapons.maxAmmo;
+          return false;
+        });
+        if (picked) {
+          if (picked.type === 'health') {
+            jet.hp = jet.maxHp;
+            weapons.killBannerText = 'VIDA 100% RECUPERADA! (CRUZ ROSA)';
+          } else {
+            weapons.resetAmmo();
+            weapons.killBannerText = 'TODOS OS MÍSSEIS RECARREGADOS!';
+          }
+          weapons.killBannerTimer = 1.8;
+          sound.playPickup(picked.type);
+          weapons.spawnPickupBurst(picked, picked.type === 'health');
+          mp.sendEvent({ t: 'pk', id: picked.id });
+        }
+      }
+    } else {
+      jet.updatePuffs(dt);
+      jet.respawnTimer -= dt;
+      if (jet.respawnTimer <= 0) {
+        jet.respawn(Math.floor(Math.random() * 8));
+        weapons.resetAmmo();
+        if (!mp.isActive()) world.respawnSunkShips();
+        jet.setVisible(!showCockpitLive);
+      }
+    }
+
+    for (const rj of remoteJets.values()) {
+      rj.update(dt, jet.position);
+    }
+    mp.sendLocalState(jet);
+    weapons.update(dt, elapsed, jet);
+    updateCamera(dt);
+    world.update(elapsed, camera.position, dt);
+
+    if (!menuOpen) {
+      sound.updateJet(jet.throttle, jet.afterburner, showCockpitLive);
+      updatePlayingHUD(elapsed);
+    }
+  }
 
   window.__GAME__ = {
     jet,
@@ -1359,10 +2248,21 @@ function animate() {
     mp,
     remoteJets,
     objective,
+    renderSettings,
+    controlSettings,
+    audioSettings,
+    get state() {
+      return { gameState, gameMode, menuOpen, activeMenuView, activeSettingsTab, activeTerrain };
+    },
     setCameraMode,
     selectRenderPreset,
-    renderSettings,
     selectShip,
+    startSoloMatch,
+    startMultiplayerMatch,
+    openPauseMenu,
+    closeMenuToPlay,
+    returnToMainMenu,
+    applyTerrainSettings,
     testIncomingMissile: () => weapons.spawnTestThreat(jet),
   };
 
@@ -1372,7 +2272,8 @@ function animate() {
   renderer.render(scene, camera);
 
   // Pass 2: Jet hull silhouette mask (Layer 1)
-  const hasVisibleJets = (!isCockpit && jet.alive) || remoteJets.size > 0;
+  const renderCockpitOverlay = gameState === 'playing' && !menuOpen && isCockpit;
+  const hasVisibleJets = (!renderCockpitOverlay && jet.alive) || remoteJets.size > 0;
   postMat.uniforms.uOutlineEnabled.value = hasVisibleJets ? 1.0 : 0.0;
   if (hasVisibleJets) {
     camera.layers.set(1);
@@ -1389,22 +2290,19 @@ function animate() {
   renderer.setRenderTarget(null);
   renderer.render(postScene, postCam);
 
-  // Pass 4: Cockpit 2D pixel-art overlay
-  if (isCockpit) {
+  // Pass 4: Cockpit 2D pixel-art overlay (only while actively flying in Cockpit view)
+  if (renderCockpitOverlay) {
     cockpit.render(dt, jet, weapons, remoteJets, world.getPickups(), world.getShips());
   }
 }
 
-// Auto-join if ?room=XXXXXX is present in URL
+// Auto-open Multiplayer Lobby (pre-match hangar) if ?room=XXXXXX is present in URL
 const urlParams = new URLSearchParams(window.location.search);
 const autoRoom = urlParams.get('room');
 if (autoRoom && /^[a-zA-Z0-9]{4,10}$/.test(autoRoom)) {
-  mpPanel.classList.remove('hidden');
-  mpBtn.classList.add('active');
   mpCodeInput.value = autoRoom.toUpperCase();
-  setTimeout(() => {
-    joinFromUI();
-  }, 400);
+  mpMsg.textContent = 'Escolha sua nave à esquerda e clique em ENTRAR NA SALA.';
+  setMenuView('mp');
 }
 
 animate();

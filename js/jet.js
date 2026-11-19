@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { getTerrainHeight, WATER_LEVEL, SUN_DIR } from './world.js?v=10';
+import { getTerrainHeight, WATER_LEVEL, SUN_DIR } from './world.js?v=11';
 
 export const SHIP_IDS = ['striker', 'viper', 'phantom', 'hornet', 'starfire', 'sakura'];
 
@@ -1185,18 +1185,22 @@ export class FighterJet {
   }
 
   update(dt, input, isCockpit) {
-    let steerX = input.mouseX;
-    let steerY = input.mouseY;
+    const sens = input.sensitivity ?? 1.0;
+    const ySign = input.invertY ? -1 : 1;
+    let steerX = THREE.MathUtils.clamp((input.mouseX || 0) * sens, -1, 1);
+    let steerY = THREE.MathUtils.clamp((input.mouseY || 0) * sens * ySign, -1, 1);
     const dead = 0.04;
     if (Math.abs(steerX) < dead) steerX = 0;
     if (Math.abs(steerY) < dead) steerY = 0;
 
-    if (input.keys.KeyA || input.keys.ArrowLeft) steerX = -0.85;
-    if (input.keys.KeyD || input.keys.ArrowRight) steerX = 0.85;
-    if (input.keys.KeyW || input.keys.ArrowUp) steerY = -0.7;
-    if (input.keys.KeyS || input.keys.ArrowDown) steerY = 0.7;
+    const keys = input.keys || {};
+    if (keys.KeyA || keys.ArrowLeft) steerX = -0.85;
+    if (keys.KeyD || keys.ArrowRight) steerX = 0.85;
+    if (keys.KeyW || keys.ArrowUp) steerY = -0.7 * ySign;
+    if (keys.KeyS || keys.ArrowDown) steerY = 0.7 * ySign;
 
-    this.afterburner = input.boost || input.keys.ShiftLeft || input.keys.ShiftRight;
+    const abKey = input.afterburnerKey || 'ShiftLeft';
+    this.afterburner = Boolean(input.boost || keys[abKey] || (abKey === 'ShiftLeft' && keys.ShiftRight));
 
     const targetThrottle = this.afterburner ? 1.0 : 0.64;
     this.throttle = THREE.MathUtils.lerp(this.throttle, targetThrottle, 1 - Math.exp(-5.0 * dt));

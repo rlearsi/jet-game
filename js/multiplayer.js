@@ -56,6 +56,18 @@ function loadPeerJS() {
   return peerJsLoadingPromise;
 }
 
+function sanitizeTerrainConfig(cfg) {
+  const validThemes = ['sunset', 'tropical', 'volcanic', 'alpine'];
+  const validDeform = ['normal', 'deep', 'off'];
+  const validClouds = ['full', 'light', 'clear'];
+  const src = cfg && typeof cfg === 'object' ? cfg : {};
+  return {
+    theme: validThemes.includes(src.theme) ? src.theme : 'sunset',
+    deformMode: validDeform.includes(src.deformMode) ? src.deformMode : 'normal',
+    clouds: validClouds.includes(src.clouds) ? src.clouds : 'full',
+  };
+}
+
 export class MultiplayerManager {
   constructor(callbacks = {}) {
     this.cb = callbacks;
@@ -74,6 +86,7 @@ export class MultiplayerManager {
     // Roster entries keyed by id -> { id, name, color, isHost, ping, colorIndex }
     this.roster = new Map();
 
+    this.hostTerrainConfig = null;
     this.deformHistory = [];
     this.damageHistory = [];
 
@@ -125,13 +138,14 @@ export class MultiplayerManager {
     return 'peerjs';
   }
 
-  async createRoom({ name = 'HOST', transportPref = 'auto', ship = 'striker' } = {}) {
+  async createRoom({ name = 'HOST', transportPref = 'auto', ship = 'striker', terrainConfig = null } = {}) {
     this.leaveRoom();
     this.localName = (name || 'HOST').trim().slice(0, 12) || 'HOST';
     this.localShip = ship || 'striker';
     this.localId = makePeerId();
     this.localColor = PILOT_COLORS[0];
     this.role = 'host';
+    this.hostTerrainConfig = sanitizeTerrainConfig(terrainConfig);
     this.deformHistory = [];
     this.damageHistory = [];
 
@@ -716,19 +730,21 @@ export class MultiplayerManager {
       ping: 0,
     });
 
-    // Send welcome + assigned color + full roster + world craters/damage sync snapshot
+    // Send welcome + assigned color + host terrain config + full roster + world craters/damage sync snapshot
     this.sendViaSession(session, 'events', {
       t: 'welcome',
       assignedId: session.id,
       color: session.color,
       colorIndex: session.colorIndex,
       hostId: this.localId,
+      terrainConfig: this.hostTerrainConfig,
       roster: Array.from(this.roster.values()),
     });
 
     if (this.deformHistory.length || this.damageHistory.length) {
       this.sendViaSession(session, 'events', {
         t: 'sync',
+        terrainConfig: this.hostTerrainConfig,
         deforms: this.deformHistory,
         damages: this.damageHistory,
       });
@@ -811,6 +827,10 @@ export class MultiplayerManager {
 
     if (msg.t === 'welcome' && this.role === 'guest') {
       this.localColor = msg.color || this.localColor;
+      if (msg.terrainConfig) {
+        this.hostTerrainConfig = sanitizeTerrainConfig(msg.terrainConfig);
+        this.cb.onTerrainConfig?.(this.hostTerrainConfig);
+      }
       this.syncRosterFromList(msg.roster || []);
       return;
     }
@@ -821,6 +841,10 @@ export class MultiplayerManager {
     }
 
     if (msg.t === 'sync' && this.role === 'guest') {
+      if (msg.terrainConfig && !this.hostTerrainConfig) {
+        this.hostTerrainConfig = sanitizeTerrainConfig(msg.terrainConfig);
+        this.cb.onTerrainConfig?.(this.hostTerrainConfig);
+      }
       this.cb.onSyncSnapshot?.(msg.deforms || [], msg.damages || []);
       return;
     }
@@ -853,12 +877,12 @@ export class MultiplayerManager {
 
     // Gameplay events: record history on host & relay to other guests
     if (this.role === 'host') {
+      if (msg.t === 'rst') {
+        // Guests cannot reset or alter terrain in multiplayer mode
+        return;
+      }
       if (msg.t === 'def') this.recordDeform(msg);
       else if (msg.t === 'dmg') this.recordDamage(msg);
-      else if (msg.t === 'rst') {
-        this.deformHistory.length = 0;
-        this.damageHistory.length = 0;
-      }
       this.broadcast('events', msg, fromPeerId);
     }
 
@@ -1028,6 +1052,7 @@ export class MultiplayerManager {
       }
     }
     this.roster.clear();
+    this.hostTerrainConfig = null;
     this.deformHistory = [];
     this.damageHistory = [];
     this.role = null;

@@ -4,7 +4,14 @@ export class JetSoundEngine {
     this.initialized = false;
     this.ctx = null;
     this.master = null;
+    this.engineBus = null;
+    this.sfxBus = null;
     this.noiseBuffer = null;
+
+    this.masterVolume = 0.65;
+    this.engineVolume = 0.85;
+    this.sfxVolume = 1.0;
+    this.paused = true;
 
     this.jetFilter = null;
     this.jetGain = null;
@@ -24,6 +31,14 @@ export class JetSoundEngine {
     this.master = this.ctx.createGain();
     this.master.gain.value = 0.0;
     this.master.connect(this.ctx.destination);
+
+    this.engineBus = this.ctx.createGain();
+    this.engineBus.gain.value = this.paused ? 0.0 : this.engineVolume;
+    this.engineBus.connect(this.master);
+
+    this.sfxBus = this.ctx.createGain();
+    this.sfxBus.gain.value = this.sfxVolume;
+    this.sfxBus.connect(this.master);
 
     // 2s white noise buffer
     const len = this.ctx.sampleRate * 2;
@@ -48,7 +63,7 @@ export class JetSoundEngine {
 
     jetNoise.connect(this.jetFilter);
     this.jetFilter.connect(this.jetGain);
-    this.jetGain.connect(this.master);
+    this.jetGain.connect(this.engineBus);
     jetNoise.start();
 
     // Afterburner low roar
@@ -65,7 +80,7 @@ export class JetSoundEngine {
 
     abNoise.connect(this.abFilter);
     this.abFilter.connect(this.abGain);
-    this.abGain.connect(this.master);
+    this.abGain.connect(this.engineBus);
     abNoise.start();
 
     // High turbine whine
@@ -77,26 +92,64 @@ export class JetSoundEngine {
     this.turbineGain.gain.value = 0.015;
 
     this.turbineOsc.connect(this.turbineGain);
-    this.turbineGain.connect(this.master);
+    this.turbineGain.connect(this.engineBus);
     this.turbineOsc.start();
 
     this.initialized = true;
+    this.applyGains();
   }
 
-  toggle() {
-    if (!this.initialized) this.init();
-    this.enabled = !this.enabled;
-    if (this.ctx && this.ctx.state === 'suspended') {
+  applyGains() {
+    if (!this.initialized || !this.ctx || !this.master) return;
+    const now = this.ctx.currentTime;
+    const masterTarget = this.enabled ? this.masterVolume * 0.85 : 0.0;
+    const engineTarget = this.paused ? 0.0 : this.engineVolume;
+    const sfxTarget = this.sfxVolume;
+
+    this.master.gain.setTargetAtTime(masterTarget, now, 0.06);
+    if (this.engineBus) {
+      this.engineBus.gain.setTargetAtTime(engineTarget, now, 0.08);
+    }
+    if (this.sfxBus) {
+      this.sfxBus.gain.setTargetAtTime(sfxTarget, now, 0.05);
+    }
+  }
+
+  setEnabled(on) {
+    const next = Boolean(on);
+    if (next && !this.initialized) this.init();
+    this.enabled = next;
+    if (this.enabled && this.ctx && this.ctx.state === 'suspended') {
       this.ctx.resume();
     }
-    if (this.master && this.ctx) {
-      this.master.gain.setTargetAtTime(this.enabled ? 0.55 : 0.0, this.ctx.currentTime, 0.08);
-    }
+    this.applyGains();
     return this.enabled;
   }
 
+  toggle() {
+    return this.setEnabled(!this.enabled);
+  }
+
+  setVolumes({ master, engine, sfx } = {}) {
+    const clamp01 = (v) => Math.max(0, Math.min(1, Number(v)));
+    if (master !== undefined && Number.isFinite(Number(master))) this.masterVolume = clamp01(master);
+    if (engine !== undefined && Number.isFinite(Number(engine))) this.engineVolume = clamp01(engine);
+    if (sfx !== undefined && Number.isFinite(Number(sfx))) this.sfxVolume = clamp01(sfx);
+    this.applyGains();
+  }
+
+  setPaused(paused) {
+    this.paused = Boolean(paused);
+    this.applyGains();
+  }
+
+  playTestTone() {
+    this.setEnabled(true);
+    this.playPickup('health');
+  }
+
   updateJet(throttle, afterburner, inCockpit) {
-    if (!this.initialized || !this.enabled || !this.ctx) return;
+    if (!this.initialized || !this.enabled || this.paused || !this.ctx) return;
     const now = this.ctx.currentTime;
     const muffle = inCockpit ? 0.68 : 1.0;
 
@@ -125,7 +178,7 @@ export class JetSoundEngine {
     oscGain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
 
     osc.connect(oscGain);
-    oscGain.connect(this.master);
+    oscGain.connect(this.sfxBus);
     osc.start(now);
     osc.stop(now + 0.065);
 
@@ -143,7 +196,7 @@ export class JetSoundEngine {
 
     src.connect(filter);
     filter.connect(nGain);
-    nGain.connect(this.master);
+    nGain.connect(this.sfxBus);
     src.start(now);
     src.stop(now + 0.05);
   }
@@ -169,7 +222,7 @@ export class JetSoundEngine {
 
     src.connect(filter);
     filter.connect(gain);
-    gain.connect(this.master);
+    gain.connect(this.sfxBus);
     src.start(now);
     src.stop(now + 0.48);
 
@@ -184,7 +237,7 @@ export class JetSoundEngine {
     og.gain.exponentialRampToValueAtTime(0.001, now + 0.11);
 
     osc.connect(og);
-    og.connect(this.master);
+    og.connect(this.sfxBus);
     osc.start(now);
     osc.stop(now + 0.12);
   }
@@ -209,7 +262,7 @@ export class JetSoundEngine {
 
     src.connect(filter);
     filter.connect(gain);
-    gain.connect(this.master);
+    gain.connect(this.sfxBus);
     src.start(now);
     src.stop(now + dur + 0.06);
   }
@@ -232,7 +285,7 @@ export class JetSoundEngine {
 
     src.connect(filter);
     filter.connect(gain);
-    gain.connect(this.master);
+    gain.connect(this.sfxBus);
     src.start(now);
     src.stop(now + 0.22);
   }
@@ -250,7 +303,7 @@ export class JetSoundEngine {
     g.gain.exponentialRampToValueAtTime(0.001, now + 0.055);
 
     osc.connect(g);
-    g.connect(this.master);
+    g.connect(this.sfxBus);
     osc.start(now);
     osc.stop(now + 0.06);
   }
@@ -274,7 +327,7 @@ export class JetSoundEngine {
     filter.type = 'bandpass';
     filter.frequency.value = 1400;
     filter.Q.value = 1.8;
-    filter.connect(this.master);
+    filter.connect(this.sfxBus);
 
     const gain = this.ctx.createGain();
     gain.gain.setValueAtTime(0.001, now);
@@ -313,7 +366,7 @@ export class JetSoundEngine {
       g.gain.exponentialRampToValueAtTime(0.001, start + 0.14);
 
       osc.connect(g);
-      g.connect(this.master);
+      g.connect(this.sfxBus);
       osc.start(start);
       osc.stop(start + 0.15);
     });
@@ -331,7 +384,7 @@ export class JetSoundEngine {
     g.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
 
     osc.connect(g);
-    g.connect(this.master);
+    g.connect(this.sfxBus);
     osc.start(now);
     osc.stop(now + 0.045);
   }

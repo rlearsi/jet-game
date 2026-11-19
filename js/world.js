@@ -4,6 +4,15 @@ export const WORLD_SIZE = 2800;
 export const WATER_LEVEL = 0.0;
 export const SUN_DIR = new THREE.Vector3(-0.62, 0.34, -0.71).normalize();
 
+export const TERRAIN_THEMES = ['sunset', 'tropical', 'volcanic', 'alpine'];
+export const TERRAIN_DEFORM_MODES = ['normal', 'deep', 'off'];
+export const TERRAIN_CLOUD_MODES = ['full', 'light', 'clear'];
+export const DEFAULT_TERRAIN_OPTIONS = {
+  theme: 'sunset',
+  deformMode: 'normal',
+  clouds: 'full',
+};
+
 // Live deformable terrain grid state (shared so flight collision, missiles, radar & water stay in sync!)
 const TERRAIN_SEGS = 280;
 const TERRAIN_STRIDE = TERRAIN_SEGS + 1;
@@ -217,6 +226,8 @@ function buildHeightTexture() {
 
 export function buildWorld(scene) {
   const rand = mulberry32(90210);
+  const terrainOptions = { ...DEFAULT_TERRAIN_OPTIONS };
+  let deformScale = 1.0;
 
   // Initialize live deformable heightmap arrays first so buildHeightTexture & objects align cleanly
   liveHeights = new Float32Array(TERRAIN_STRIDE * TERRAIN_STRIDE);
@@ -259,6 +270,7 @@ export function buildWorld(scene) {
     uniforms: {
       uSunDir: { value: SUN_DIR.clone() },
       uTime: { value: 0 },
+      uTerrainTheme: { value: 0.0 },
     },
     vertexShader: `
       varying vec3 vDir;
@@ -270,6 +282,7 @@ export function buildWorld(scene) {
     fragmentShader: `
       uniform vec3 uSunDir;
       uniform float uTime;
+      uniform float uTerrainTheme;
       varying vec3 vDir;
 
       float hash(vec2 p) {
@@ -302,6 +315,25 @@ export function buildWorld(scene) {
         vec3 cPeach   = vec3(0.93, 0.63, 0.58);
         vec3 cMauve   = vec3(0.74, 0.58, 0.69);
         vec3 cZenith  = vec3(0.56, 0.48, 0.68);
+        if (uTerrainTheme > 0.5 && uTerrainTheme < 1.5) {
+          cCream   = vec3(0.99, 0.94, 0.78);
+          cApricot = vec3(0.99, 0.82, 0.52);
+          cPeach   = vec3(0.58, 0.85, 0.84);
+          cMauve   = vec3(0.32, 0.70, 0.86);
+          cZenith  = vec3(0.18, 0.50, 0.78);
+        } else if (uTerrainTheme >= 1.5 && uTerrainTheme < 2.5) {
+          cCream   = vec3(0.96, 0.52, 0.24);
+          cApricot = vec3(0.84, 0.31, 0.20);
+          cPeach   = vec3(0.58, 0.21, 0.26);
+          cMauve   = vec3(0.34, 0.16, 0.28);
+          cZenith  = vec3(0.16, 0.11, 0.22);
+        } else if (uTerrainTheme >= 2.5) {
+          cCream   = vec3(0.95, 0.88, 0.92);
+          cApricot = vec3(0.88, 0.74, 0.84);
+          cPeach   = vec3(0.66, 0.68, 0.84);
+          cMauve   = vec3(0.44, 0.54, 0.78);
+          cZenith  = vec3(0.26, 0.38, 0.64);
+        }
 
         vec3 col = mix(cCream, cApricot, smoothstep(0.0, 0.10, h));
         col = mix(col, cPeach, smoothstep(0.08, 0.28, h));
@@ -309,7 +341,10 @@ export function buildWorld(scene) {
         col = mix(col, cZenith, smoothstep(0.48, 0.86, h));
 
         float sunDot = max(dot(d, normalize(uSunDir)), 0.0);
-        col += vec3(1.0, 0.88, 0.64) * pow(sunDot, 7.0) * 0.32;
+        vec3 sunGlowCol = uTerrainTheme >= 1.5 && uTerrainTheme < 2.5
+          ? vec3(1.0, 0.55, 0.22)
+          : vec3(1.0, 0.88, 0.64);
+        col += sunGlowCol * pow(sunDot, 7.0) * 0.32;
         col = mix(col, vec3(1.0, 0.97, 0.86), smoothstep(0.992, 0.996, sunDot));
 
         if (d.y > 0.015) {
@@ -324,8 +359,23 @@ export function buildWorld(scene) {
           float fade = smoothstep(0.02, 0.13, d.y) * (1.0 - smoothstep(0.68, 0.95, d.y));
 
           float highlight = smoothstep(0.53, 0.68, n1 + sunDot * 0.18);
-          vec3 streakShade = mix(vec3(0.78, 0.56, 0.66), vec3(0.99, 0.79, 0.64), highlight);
+          vec3 streakLow = vec3(0.78, 0.56, 0.66);
+          vec3 streakHigh = vec3(0.99, 0.79, 0.64);
           vec3 streakBright = vec3(1.0, 0.90, 0.74);
+          if (uTerrainTheme > 0.5 && uTerrainTheme < 1.5) {
+            streakLow = vec3(0.76, 0.86, 0.92);
+            streakHigh = vec3(1.0, 0.94, 0.78);
+            streakBright = vec3(1.0, 0.97, 0.86);
+          } else if (uTerrainTheme >= 1.5 && uTerrainTheme < 2.5) {
+            streakLow = vec3(0.42, 0.20, 0.26);
+            streakHigh = vec3(0.92, 0.44, 0.24);
+            streakBright = vec3(1.0, 0.68, 0.36);
+          } else if (uTerrainTheme >= 2.5) {
+            streakLow = vec3(0.64, 0.68, 0.82);
+            streakHigh = vec3(0.96, 0.84, 0.88);
+            streakBright = vec3(0.99, 0.94, 0.97);
+          }
+          vec3 streakShade = mix(streakLow, streakHigh, highlight);
           vec3 streakCol = mix(streakShade, streakBright, smoothstep(0.62, 0.78, n1) * 0.65);
 
           col = mix(col, streakCol, bandMask * fade * 0.86);
@@ -360,6 +410,7 @@ export function buildWorld(scene) {
       uClouds: { value: cloudShadowUniforms },
       uTime: { value: 0 },
       uTerrainGrain: { value: 0.35 },
+      uTerrainTheme: { value: 0.0 },
     },
     vertexShader: `
       attribute float aScorch;
@@ -380,6 +431,7 @@ export function buildWorld(scene) {
       uniform vec4 uClouds[${MAX_CLOUDS}];
       uniform float uTime;
       uniform float uTerrainGrain;
+      uniform float uTerrainTheme;
       varying vec3 vWorldPos;
       varying vec3 vNormal;
       varying float vScorch;
@@ -452,6 +504,35 @@ export function buildWorld(scene) {
         vec3 colAsh         = vec3(0.46, 0.42, 0.50);
         vec3 colLava        = vec3(1.00, 0.46, 0.14);
 
+        if (uTerrainTheme > 0.5 && uTerrainTheme < 1.5) {
+          colSandLight  = vec3(0.96, 0.91, 0.68);
+          colSandShade  = vec3(0.86, 0.80, 0.56);
+          colGreenLight = vec3(0.24, 0.74, 0.38);
+          colGreenDark  = vec3(0.12, 0.50, 0.26);
+          colMeadow     = vec3(0.54, 0.82, 0.34);
+          colGoldLeaf   = vec3(0.94, 0.80, 0.26);
+        } else if (uTerrainTheme >= 1.5 && uTerrainTheme < 2.5) {
+          colSandLight  = vec3(0.42, 0.34, 0.36);
+          colSandShade  = vec3(0.28, 0.22, 0.26);
+          colGreenLight = vec3(0.44, 0.32, 0.22);
+          colGreenDark  = vec3(0.28, 0.20, 0.18);
+          colMeadow     = vec3(0.50, 0.34, 0.22);
+          colGoldLeaf   = vec3(0.76, 0.42, 0.16);
+          colOrangeLeaf = vec3(0.78, 0.30, 0.14);
+          colRedLeaf    = vec3(0.64, 0.18, 0.14);
+          colRockLight  = vec3(0.52, 0.42, 0.44);
+          colRockDark   = vec3(0.26, 0.20, 0.28);
+        } else if (uTerrainTheme >= 2.5) {
+          colSandLight  = vec3(0.72, 0.75, 0.78);
+          colSandShade  = vec3(0.56, 0.60, 0.66);
+          colGreenLight = vec3(0.24, 0.50, 0.38);
+          colGreenDark  = vec3(0.14, 0.34, 0.28);
+          colMeadow     = vec3(0.46, 0.62, 0.48);
+          colRockLight  = vec3(0.70, 0.74, 0.80);
+          colRockDark   = vec3(0.38, 0.44, 0.56);
+          colSnow       = vec3(0.96, 0.98, 1.00);
+        }
+
         // 1. Coastal sandy beaches & dunes
         vec3 baseCol = mix(colSandShade, colSandLight, step(0.42, stipple * 0.6 + fineCluster * 0.4));
 
@@ -513,9 +594,16 @@ export function buildWorld(scene) {
           baseCol = mix(baseCol, rock, smoothstep(0.2, 0.7, rockMask));
         }
 
-        // 6. Snow-capped Alpine summits (excluding volcanic & canyon zones)
+        // 6. Snow-capped Alpine summits (excluding volcanic & canyon zones unless Alpine theme)
         float snowLine = 112.0 + (biomeA - 0.5) * 22.0 - slope * 24.0;
-        float snowMask = smoothstep(snowLine, snowLine + 16.0, h) * (1.0 - volcanoMask * 0.9) * (1.0 - canyonMask);
+        float snowZoneMask = (1.0 - volcanoMask * 0.9) * (1.0 - canyonMask);
+        if (uTerrainTheme >= 2.5) {
+          snowLine = 26.0 + (biomeA - 0.5) * 14.0 - slope * 14.0;
+          snowZoneMask = 1.0;
+        } else if (uTerrainTheme >= 1.5) {
+          snowLine = 152.0 + (biomeA - 0.5) * 18.0 - slope * 20.0;
+        }
+        float snowMask = smoothstep(snowLine, snowLine + 16.0, h) * snowZoneMask;
         baseCol = mix(baseCol, colSnow, snowMask);
 
         // 7. Blasted craters & excavated mountain holes (charred fractured rock + glowing embers!)
@@ -530,11 +618,25 @@ export function buildWorld(scene) {
           }
         }
 
-        // Stepped sunset cel-lighting with lavender-purple shadows
+        // Stepped sunset cel-lighting with theme shadows
         float ndl = dot(N, normalize(uSunDir));
         float lit = smoothstep(-0.18, 0.08, ndl) * 0.5 + smoothstep(0.18, 0.45, ndl) * 0.5;
         vec3 shadowTint = vec3(0.56, 0.52, 0.68);
         vec3 sunTint    = vec3(1.06, 0.99, 0.90);
+        vec3 fogCol     = vec3(0.94, 0.83, 0.72);
+        if (uTerrainTheme > 0.5 && uTerrainTheme < 1.5) {
+          shadowTint = vec3(0.54, 0.60, 0.72);
+          sunTint    = vec3(1.10, 1.05, 0.94);
+          fogCol     = vec3(0.92, 0.89, 0.78);
+        } else if (uTerrainTheme >= 1.5 && uTerrainTheme < 2.5) {
+          shadowTint = vec3(0.38, 0.26, 0.36);
+          sunTint    = vec3(1.12, 0.86, 0.74);
+          fogCol     = vec3(0.56, 0.32, 0.28);
+        } else if (uTerrainTheme >= 2.5) {
+          shadowTint = vec3(0.48, 0.56, 0.78);
+          sunTint    = vec3(1.04, 1.02, 1.06);
+          fogCol     = vec3(0.84, 0.86, 0.95);
+        }
         vec3 col = baseCol * mix(shadowTint, sunTint, lit);
 
         // Cloud shadows on terrain
@@ -547,10 +649,9 @@ export function buildWorld(scene) {
         }
         col = mix(col, col * vec3(0.58, 0.56, 0.74), cloudDark * 0.65);
 
-        // Warm creamy-peach atmospheric horizon fog (pushed back for epic long vistas!)
+        // Atmospheric horizon fog (pushed back for epic long vistas!)
         float dist = length(uCamPos - vWorldPos);
         float fog = smoothstep(420.0, 1850.0, dist);
-        vec3 fogCol = vec3(0.94, 0.83, 0.72);
         col = mix(col, fogCol, fog);
 
         gl_FragColor = vec4(col, 1.0);
@@ -573,6 +674,7 @@ export function buildWorld(scene) {
       uWorldSize: { value: WORLD_SIZE },
       uClouds: { value: cloudShadowUniforms },
       uRipples: { value: rippleUniforms },
+      uTerrainTheme: { value: 0.0 },
     },
     vertexShader: `
       varying vec3 vWorldPos;
@@ -590,6 +692,7 @@ export function buildWorld(scene) {
       uniform float uWorldSize;
       uniform vec4 uClouds[${MAX_CLOUDS}];
       uniform vec4 uRipples[${MAX_RIPPLES}];
+      uniform float uTerrainTheme;
       varying vec3 vWorldPos;
 
       float hash(vec2 p) {
@@ -622,6 +725,27 @@ export function buildWorld(scene) {
         vec3 cShallow = vec3(0.35, 0.76, 0.77);
         vec3 cMid     = vec3(0.18, 0.51, 0.65);
         vec3 cDeep    = vec3(0.20, 0.35, 0.54);
+        vec3 fogCol   = vec3(0.94, 0.83, 0.72);
+        if (uTerrainTheme > 0.5 && uTerrainTheme < 1.5) {
+          cCoral   = vec3(0.36, 0.95, 0.86);
+          cShallow = vec3(0.22, 0.86, 0.84);
+          cMid     = vec3(0.10, 0.64, 0.78);
+          cDeep    = vec3(0.10, 0.42, 0.68);
+          fogCol   = vec3(0.92, 0.89, 0.78);
+        } else if (uTerrainTheme >= 1.5 && uTerrainTheme < 2.5) {
+          cFoam    = vec3(0.88, 0.74, 0.66);
+          cCoral   = vec3(0.46, 0.30, 0.34);
+          cShallow = vec3(0.34, 0.22, 0.32);
+          cMid     = vec3(0.18, 0.15, 0.28);
+          cDeep    = vec3(0.10, 0.09, 0.20);
+          fogCol   = vec3(0.56, 0.32, 0.28);
+        } else if (uTerrainTheme >= 2.5) {
+          cCoral   = vec3(0.54, 0.82, 0.88);
+          cShallow = vec3(0.36, 0.68, 0.80);
+          cMid     = vec3(0.18, 0.44, 0.66);
+          cDeep    = vec3(0.14, 0.28, 0.50);
+          fogCol   = vec3(0.84, 0.86, 0.95);
+        }
 
         // Coral reef shoal tint in shallow turquoise lagoons
         float reefN = noise(p * 0.035);
@@ -680,7 +804,6 @@ export function buildWorld(scene) {
         }
 
         float fog = smoothstep(450.0, 1920.0, distCam);
-        vec3 fogCol = vec3(0.94, 0.83, 0.72);
         col = mix(col, fogCol, fog);
 
         gl_FragColor = vec4(col, 1.0);
@@ -1065,6 +1188,7 @@ export function buildWorld(scene) {
     uniforms: {
       uSunDir: { value: SUN_DIR.clone() },
       uCamPos: { value: new THREE.Vector3() },
+      uTerrainTheme: { value: 0.0 },
     },
     vertexShader: `
       varying vec3 vNormal;
@@ -1079,6 +1203,7 @@ export function buildWorld(scene) {
     fragmentShader: `
       uniform vec3 uSunDir;
       uniform vec3 uCamPos;
+      uniform float uTerrainTheme;
       varying vec3 vNormal;
       varying vec3 vWorldPos;
 
@@ -1100,6 +1225,23 @@ export function buildWorld(scene) {
         vec3 cCream    = vec3(0.99, 0.96, 0.93);
         vec3 cPink     = vec3(0.93, 0.78, 0.79);
         vec3 cLavender = vec3(0.56, 0.51, 0.66);
+        vec3 fogCol    = vec3(0.94, 0.83, 0.72);
+        if (uTerrainTheme > 0.5 && uTerrainTheme < 1.5) {
+          cCream    = vec3(1.00, 0.99, 0.96);
+          cPink     = vec3(0.96, 0.92, 0.84);
+          cLavender = vec3(0.68, 0.74, 0.84);
+          fogCol    = vec3(0.92, 0.89, 0.78);
+        } else if (uTerrainTheme >= 1.5 && uTerrainTheme < 2.5) {
+          cCream    = vec3(0.84, 0.62, 0.52);
+          cPink     = vec3(0.58, 0.36, 0.38);
+          cLavender = vec3(0.32, 0.22, 0.30);
+          fogCol    = vec3(0.56, 0.32, 0.28);
+        } else if (uTerrainTheme >= 2.5) {
+          cCream    = vec3(0.98, 0.98, 1.00);
+          cPink     = vec3(0.86, 0.86, 0.94);
+          cLavender = vec3(0.54, 0.60, 0.78);
+          fogCol    = vec3(0.84, 0.86, 0.95);
+        }
 
         float d = bayer2(floor(gl_FragCoord.xy));
         vec3 col;
@@ -1115,7 +1257,7 @@ export function buildWorld(scene) {
 
         float dist = length(uCamPos - vWorldPos);
         float fog = smoothstep(580.0, 2050.0, dist);
-        col = mix(col, vec3(0.94, 0.83, 0.72), fog);
+        col = mix(col, fogCol, fog);
 
         gl_FragColor = vec4(col, 1.0);
       }
@@ -1263,13 +1405,17 @@ export function buildWorld(scene) {
   // Real-time terrain deformation: carves craters, trenches & holes right through mountains!
   // Updates local vertex heights, local normals (fast 60fps), scorch shader mask, and ocean heightTex!
   function deformTerrain(wx, wz, radius, depth, dirX = 0, dirZ = 0) {
+    if (deformScale <= 0.001) return false;
+    const effRadius = deformScale > 1.0 ? radius * 1.15 : radius;
+    const effDepth = depth * deformScale;
+
     // Push excavation slightly inward along projectile direction so shooting mountain walls bites deep!
-    const cxWorld = wx + dirX * radius * 0.25;
-    const czWorld = wz + dirZ * radius * 0.25;
+    const cxWorld = wx + dirX * effRadius * 0.25;
+    const czWorld = wz + dirZ * effRadius * 0.25;
 
     const gxCenter = ((cxWorld / WORLD_SIZE) + 0.5) * TERRAIN_SEGS;
     const gzCenter = ((czWorld / WORLD_SIZE) + 0.5) * TERRAIN_SEGS;
-    const cellRadius = Math.ceil(radius / CELL_SIZE) + 1;
+    const cellRadius = Math.ceil(effRadius / CELL_SIZE) + 1;
 
     const ixMin = Math.max(1, Math.floor(gxCenter - cellRadius));
     const ixMax = Math.min(TERRAIN_SEGS - 1, Math.ceil(gxCenter + cellRadius));
@@ -1279,7 +1425,7 @@ export function buildWorld(scene) {
     if (ixMin > ixMax || izMin > izMax) return false;
 
     let changed = false;
-    const rSq = radius * radius;
+    const rSq = effRadius * effRadius;
 
     for (let iz = izMin; iz <= izMax; iz++) {
       const vz = ((iz / TERRAIN_SEGS) - 0.5) * WORLD_SIZE;
@@ -1291,10 +1437,10 @@ export function buildWorld(scene) {
         const dSq = dx * dx + dz * dz;
         if (dSq >= rSq) continue;
 
-        const t = Math.sqrt(dSq) / radius;
+        const t = Math.sqrt(dSq) / effRadius;
         const idx = row + ix;
         const cragVar = 0.84 + 0.32 * hash2(ix * 1.7, iz * 2.3);
-        const carve = Math.pow(1.0 - t * t, 1.35) * depth * cragVar;
+        const carve = Math.pow(1.0 - t * t, 1.35) * effDepth * cragVar;
 
         const newH = Math.max(-34.0, liveHeights[idx] - carve);
         if (newH < liveHeights[idx] - 0.01) {
@@ -1338,10 +1484,10 @@ export function buildWorld(scene) {
     // Update ocean heightTex patch locally so deep holes below sea level flood with foam & turquoise water!
     const tSize = heightTexObj.size;
     const tData = heightTexObj.data;
-    const txMin = Math.max(0, Math.floor((((cxWorld - radius - CELL_SIZE) / WORLD_SIZE) + 0.5) * (tSize - 1)));
-    const txMax = Math.min(tSize - 1, Math.ceil((((cxWorld + radius + CELL_SIZE) / WORLD_SIZE) + 0.5) * (tSize - 1)));
-    const tzMin = Math.max(0, Math.floor((((czWorld - radius - CELL_SIZE) / WORLD_SIZE) + 0.5) * (tSize - 1)));
-    const tzMax = Math.min(tSize - 1, Math.ceil((((czWorld + radius + CELL_SIZE) / WORLD_SIZE) + 0.5) * (tSize - 1)));
+    const txMin = Math.max(0, Math.floor((((cxWorld - effRadius - CELL_SIZE) / WORLD_SIZE) + 0.5) * (tSize - 1)));
+    const txMax = Math.min(tSize - 1, Math.ceil((((cxWorld + effRadius + CELL_SIZE) / WORLD_SIZE) + 0.5) * (tSize - 1)));
+    const tzMin = Math.max(0, Math.floor((((czWorld - effRadius - CELL_SIZE) / WORLD_SIZE) + 0.5) * (tSize - 1)));
+    const tzMax = Math.min(tSize - 1, Math.ceil((((czWorld + effRadius + CELL_SIZE) / WORLD_SIZE) + 0.5) * (tSize - 1)));
 
     for (let tz = tzMin; tz <= tzMax; tz++) {
       const z = ((tz / (tSize - 1)) - 0.5) * WORLD_SIZE;
@@ -1625,10 +1771,57 @@ export function buildWorld(scene) {
     return null;
   }
 
+  function applyCloudDensity(mode) {
+    if (mode === 'clear') {
+      cloudGroup.visible = false;
+      for (let i = 0; i < MAX_CLOUDS; i++) {
+        cloudShadowUniforms[i].set(99999, 99999, 1, 0);
+      }
+      return;
+    }
+    cloudGroup.visible = true;
+    const light = mode === 'light';
+    for (let i = 0; i < clouds.length; i++) {
+      const c = clouds[i];
+      const vis = !light || (i % 2 === 0);
+      c.mesh.visible = vis;
+      if (!vis && c.shadowIndex >= 0) {
+        cloudShadowUniforms[c.shadowIndex].set(99999, 99999, 1, 0);
+      }
+    }
+  }
+
+  function applyTerrainOptions(opts = {}) {
+    const theme = TERRAIN_THEMES.includes(opts.theme) ? opts.theme : DEFAULT_TERRAIN_OPTIONS.theme;
+    const deformMode = TERRAIN_DEFORM_MODES.includes(opts.deformMode) ? opts.deformMode : DEFAULT_TERRAIN_OPTIONS.deformMode;
+    const cloudsMode = TERRAIN_CLOUD_MODES.includes(opts.clouds) ? opts.clouds : DEFAULT_TERRAIN_OPTIONS.clouds;
+
+    terrainOptions.theme = theme;
+    terrainOptions.deformMode = deformMode;
+    terrainOptions.clouds = cloudsMode;
+
+    const themeIdx = TERRAIN_THEMES.indexOf(theme);
+    skyMat.uniforms.uTerrainTheme.value = themeIdx;
+    terrainMat.uniforms.uTerrainTheme.value = themeIdx;
+    waterMat.uniforms.uTerrainTheme.value = themeIdx;
+    cloudMat.uniforms.uTerrainTheme.value = themeIdx;
+
+    deformScale = deformMode === 'off' ? 0.0 : deformMode === 'deep' ? 1.5 : 1.0;
+    applyCloudDensity(cloudsMode);
+
+    return { ...terrainOptions };
+  }
+
+  function getTerrainOptions() {
+    return { ...terrainOptions };
+  }
+
   return {
     damage,
     deformTerrain,
     resetTerrain,
+    applyTerrainOptions,
+    getTerrainOptions,
     findLockTarget,
     getPickups,
     spawnDroppedPickup,
@@ -1656,7 +1849,7 @@ export function buildWorld(scene) {
       for (const c of clouds) {
         c.mesh.position.x += c.speed * dt;
         if (c.mesh.position.x > 1250) c.mesh.position.x = -1250;
-        if (c.shadowIndex >= 0) {
+        if (c.shadowIndex >= 0 && cloudGroup.visible && c.mesh.visible) {
           const offX = -SUN_DIR.x * (c.mesh.position.y * 0.25);
           const offZ = -SUN_DIR.z * (c.mesh.position.y * 0.25);
           cloudShadowUniforms[c.shadowIndex].set(

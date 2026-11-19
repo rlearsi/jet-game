@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="pt-BR">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Sunset Striker — Pixel-Art Fighter Jet</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=11" />
 </head>
 <body>
   <canvas id="game-canvas"></canvas>
@@ -13,7 +13,7 @@
   <canvas id="cockpit-canvas" width="480" height="270"></canvas>
 
   <!-- World-projected 3D boresight aim reticle & hitmarker (CHASE view) -->
-  <div id="aim-reticle">
+  <div id="aim-reticle" class="hidden">
     <div class="aim-ring"></div>
     <div class="aim-dot"></div>
     <div id="hit-marker" class="hit-marker"></div>
@@ -28,49 +28,49 @@
   <div id="kill-banner" class="kill-banner hidden"></div>
 
   <!-- 3D projected remote pilot nameplates -->
-  <div id="remote-labels"></div>
+  <div id="remote-labels" class="hidden"></div>
 
   <!-- Closest health / missile supply waypoints -->
-  <div id="pickup-markers"></div>
+  <div id="pickup-markers" class="hidden"></div>
 
   <!-- Incoming homing missile alert overlay -->
   <div id="missile-vignette" class="missile-vignette hidden"></div>
   <div id="missile-alert" class="missile-alert hidden">&#9888; MISSILE ALERT &middot; EVADE!</div>
 
-  <!-- Top slim control bar -->
-  <div id="hud-top-bar">
+  <!-- Top slim control bar (gameplay only; render options live exclusively in Settings) -->
+  <div id="hud-top-bar" class="hidden">
     <div class="top-controls">
-      <span><b>MOUSE</b> STEER, CLIMB, DIVE</span>
+      <span><b>MOUSE</b> STEER</span>
       <span class="sep">&middot;</span>
-      <span><b>CLICK</b> ROLL</span>
+      <span><b>CLICK</b> ROLL / <b>HOLD</b> AB</span>
       <span class="sep">&middot;</span>
-      <span><b>HOLD</b> AFTERBURNER</span>
-      <span class="sep">&middot;</span>
-      <span><b>RIGHT CLICK</b> CANNON</span>
+      <span><b>R-CLICK</b> CANNON</span>
       <span class="sep">&middot;</span>
       <span>
-        <b>F</b> MISSILES
+        <b id="hud-key-missile">F</b> MISSILES
         <span id="ammo-pips" class="ammo-pips"></span>
       </span>
       <span class="sep">&middot;</span>
-      <span id="cockpit-toggle-btn" class="clickable"><b>E</b> COCKPIT</span>
+      <span id="cockpit-toggle-btn" class="clickable"><b id="hud-key-cockpit">E</b> COCKPIT</span>
       <span class="sep">&middot;</span>
-      <span id="cam-switch-btn" class="clickable"><b>SPACE</b> <span id="cam-next-label">TOP VIEW</span></span>
+      <span id="cam-switch-btn" class="clickable"><b id="hud-key-cam">SPACE</b> <span id="cam-next-label">TOP VIEW</span></span>
       <span class="sep">&middot;</span>
-      <span id="style-cycle-btn" class="clickable"><b>V</b> <span id="style-short-label">CRISP 480P</span></span>
+      <span id="hud-esc-hint" class="clickable"><b>ESC</b> MENU</span>
     </div>
   </div>
 
-  <!-- Top-right buttons: HANGAR + MULTIPLAYER + VIEW / RENDER + SOUND -->
-  <div id="hud-top-right">
-    <button id="hangar-btn" class="hud-btn" type="button">HANGAR (6)</button>
-    <button id="mp-btn" class="hud-btn" type="button">MULTIPLAYER</button>
-    <button id="view-btn" class="hud-btn" type="button">VIEW / RENDER</button>
-    <button id="sound-btn" class="hud-btn" type="button">SOUND: OFF</button>
+  <!-- Top-right gameplay pill (Multiplayer room code + Menu button) -->
+  <div id="hud-top-right" class="hidden">
+    <div id="hud-mp-pill" class="hud-mp-pill hidden">
+      <span id="hud-mp-room-label">SALA: ------</span>
+      <button id="hud-mp-copy-code" class="hud-mini-btn" type="button">COPIAR</button>
+      <button id="hud-mp-copy-link" class="hud-mini-btn" type="button">LINK</button>
+    </div>
+    <button id="hud-menu-btn" class="hud-btn" type="button">MENU (ESC)</button>
   </div>
 
   <!-- Mission Objective Tracker (Destroy 20 Ships; resets to 0 on death) -->
-  <div id="objective-hud" class="objective-hud">
+  <div id="objective-hud" class="objective-hud hidden">
     <div id="obj-title" class="obj-title">OBJETIVO: DESTRUIR NAVIOS</div>
     <div class="obj-row">
       <span id="obj-count" class="obj-count">0 / 20</span>
@@ -78,114 +78,8 @@
     </div>
   </div>
 
-  <!-- Collapsible Hangar: 6 Fighter Jet Varieties -->
-  <div id="hangar-panel" class="hangar-panel hidden">
-    <div class="vp-header">
-      <span>HANGAR (6 JETS)</span>
-      <span class="mp-badge connecting">SELECT</span>
-    </div>
-    <div id="hangar-list" class="hangar-list"></div>
-  </div>
-
-  <!-- Collapsible WebRTC P2P Multiplayer Panel -->
-  <div id="mp-panel" class="mp-panel hidden">
-    <div class="vp-header">
-      <span>MULTIPLAYER P2P</span>
-      <span id="mp-status-badge" class="mp-badge offline">OFFLINE</span>
-    </div>
-    <label class="mp-field">
-      <span>PILOT</span>
-      <input id="mp-name-input" class="mp-input" type="text" maxlength="12" value="ACE-1" placeholder="PILOT NAME" />
-    </label>
-    <label class="mp-field">
-      <span>SIGNAL</span>
-      <select id="mp-signal-select" class="vp-select">
-        <option value="auto" selected>AUTO (LOCAL / CLOUD)</option>
-        <option value="local">LOCAL (XAMPP PHP)</option>
-        <option value="cloud">CLOUD (INTERNET)</option>
-      </select>
-    </label>
-
-    <div id="mp-lobby-view">
-      <button id="mp-create-btn" class="mp-btn-primary" type="button">CREATE ROOM (HOST)</button>
-      <div class="vp-divider"></div>
-      <div class="mp-join-row">
-        <input id="mp-code-input" class="mp-input mp-code-input" type="text" maxlength="10" placeholder="ROOM CODE" />
-        <button id="mp-join-btn" class="mp-btn-secondary" type="button">JOIN</button>
-      </div>
-    </div>
-
-    <div id="mp-room-view" class="hidden">
-      <div class="mp-code-box">
-        <span class="mp-code-caption">ROOM CODE</span>
-        <span id="mp-room-code" class="mp-code-text">------</span>
-        <div class="mp-copy-row">
-          <button id="mp-copy-code" class="vp-reset-btn" type="button">COPY CODE</button>
-          <button id="mp-copy-link" class="vp-reset-btn" type="button">COPY LINK</button>
-        </div>
-      </div>
-      <div id="mp-transport-info" class="mp-transport-info">WEBRTC P2P</div>
-      <div id="mp-roster" class="mp-roster"></div>
-      <button id="mp-leave-btn" class="mp-btn-danger" type="button">LEAVE ROOM</button>
-    </div>
-
-    <div id="mp-msg" class="mp-msg"></div>
-  </div>
-
-  <!-- Collapsible Camera, Distance & Render Style panel -->
-  <div id="view-panel" class="view-panel hidden">
-    <div class="vp-header">
-      <span>CAMERA &amp; RENDER</span>
-      <button id="vp-reset" class="vp-reset-btn" type="button">RESET</button>
-    </div>
-    <label class="vp-row">
-      <span>STYLE</span>
-      <select id="style-select" class="vp-select">
-        <option value="crisp480">CRISP 480P (CLEAN)</option>
-        <option value="ghibli">GHIBLI / ANIME HD</option>
-        <option value="cleanHD">CLEAN NATIVE HD</option>
-        <option value="comic">COMIC / INK SOBEL</option>
-        <option value="crt">CRT ARCADE 360P</option>
-        <option value="pixel270">RETRO PIXEL 270P</option>
-      </select>
-    </label>
-    <label class="vp-row">
-      <span>RES</span>
-      <select id="res-select" class="vp-select">
-        <option value="270">270p (Retro)</option>
-        <option value="360">360p (Arcade)</option>
-        <option value="480" selected>480p (Crisp)</option>
-        <option value="720">720p (HD)</option>
-        <option value="0">NATIVE HD</option>
-      </select>
-    </label>
-    <label class="vp-row">
-      <span>DITHER</span>
-      <input id="dither-slider" type="range" min="0" max="1" step="0.05" value="0.25" />
-      <span id="dither-val" class="vp-val">25%</span>
-    </label>
-    <div class="vp-divider"></div>
-    <label class="vp-row">
-      <span>FOV</span>
-      <input id="fov-slider" type="range" min="45" max="110" step="1" value="80" />
-      <span id="fov-val" class="vp-val">80&deg;</span>
-    </label>
-    <label class="vp-row">
-      <span>CAM DIST</span>
-      <input id="dist-slider" type="range" min="0.5" max="2.6" step="0.05" value="1.35" />
-      <span id="dist-val" class="vp-val">1.35x</span>
-    </label>
-    <label class="vp-row">
-      <span>OBJ DIST</span>
-      <input id="scale-slider" type="range" min="0.5" max="2.2" step="0.05" value="1.00" />
-      <span id="scale-val" class="vp-val">1.00x</span>
-    </label>
-    <div class="vp-tip">V: CYCLE STYLE &middot; SCROLL / [ ]: DIST</div>
-    <button id="rebuild-terrain-btn" class="vp-reset-btn" style="width:100%;margin-top:6px;padding:4px 6px;" type="button">RESTORE MOUNTAINS (R)</button>
-  </div>
-
   <!-- Subtle camera & destruction telemetry badge (bottom-left) -->
-  <div id="hud-bottom-left">
+  <div id="hud-bottom-left" class="hidden">
     <span id="cam-badge">CHASE VIEW</span>
     <span class="sep">&middot;</span>
     <span id="telem-badge">SPD 580 &middot; ALT 340</span>
@@ -201,10 +95,340 @@
     </span>
   </div>
 
-  <!-- Brief intro banner -->
-  <div id="start-hint">
-    <div class="hint-title">SUNSET STRIKER</div>
-    <div class="hint-sub">RIGHT CLICK CANNON &middot; F MISSILES &middot; E COCKPIT &middot; SPACE CAMERA &middot; SCROLL DISTANCE</div>
+  <!-- Main Menu & ESC Pause Overlay -->
+  <div id="game-menu-overlay" class="menu-overlay">
+    <div class="menu-shell">
+
+      <!-- VIEW 1: MAIN / ESC MENU -->
+      <div id="menu-view-main" class="menu-view">
+        <div class="menu-header">
+          <div class="menu-brand">
+            <div class="menu-title">SUNSET STRIKER</div>
+            <div class="menu-subtitle">COMBATE AÉREO NO ARQUIPÉLAGO AO PÔR DO SOL</div>
+          </div>
+          <span id="menu-mode-badge" class="menu-badge">MENU PRINCIPAL</span>
+        </div>
+
+        <div class="menu-grid-2">
+          <div class="menu-actions-col">
+            <button id="menu-btn-resume" class="menu-btn menu-btn-accent hidden" type="button">&#9654; CONTINUAR (ESC)</button>
+            <button id="menu-btn-solo" class="menu-btn menu-btn-primary" type="button">INICIAR SOLO</button>
+            <button id="menu-btn-mp" class="menu-btn menu-btn-primary" type="button">MULTIPLAYER</button>
+            <button id="menu-btn-controls" class="menu-btn" type="button">CONTROLES</button>
+            <button id="menu-btn-settings" class="menu-btn" type="button">CONFIGURAÇÕES</button>
+            <button id="menu-btn-quit" class="menu-btn menu-btn-danger hidden" type="button">ENCERRAR PARTIDA</button>
+          </div>
+
+          <div class="menu-side-col">
+            <!-- Hangar visible only before match starts -->
+            <div id="menu-hangar-box" class="menu-card-box">
+              <div class="vp-header">
+                <span>HANGAR &mdash; ESCOLHA SUA NAVE (6)</span>
+                <span class="mp-badge connecting">PRÉ-VOO</span>
+              </div>
+              <div id="menu-hangar-list" class="hangar-list"></div>
+              <div id="menu-terrain-chip" class="menu-terrain-chip">TERRENO: Pôr do Sol Clássico &middot; Normal</div>
+            </div>
+
+            <!-- Match Status visible when paused via ESC -->
+            <div id="menu-match-status-box" class="menu-card-box hidden">
+              <div class="vp-header">
+                <span>STATUS DA PARTIDA</span>
+                <span class="mp-badge offline">&#128274; NAVE BLOQUEADA NA PARTIDA</span>
+              </div>
+              <div id="menu-locked-ship-card" class="locked-ship-summary"></div>
+              <div class="match-stats-grid">
+                <div class="match-stat-item"><span>VIDA</span><strong id="menu-match-hp">100 / 100</strong></div>
+                <div class="match-stat-item"><span>OBJETIVO</span><strong id="menu-match-obj">0 / 20</strong></div>
+                <div class="match-stat-item"><span>ABATES</span><strong id="menu-match-destroyed">0</strong></div>
+              </div>
+              <div id="menu-match-terrain" class="menu-terrain-chip">TERRENO: Pôr do Sol Clássico</div>
+
+              <div id="menu-pause-mp-box" class="menu-pause-mp hidden">
+                <div class="vp-divider"></div>
+                <div class="menu-pause-mp-head">
+                  <span>SALA P2P: <strong id="menu-pause-room-code">------</strong></span>
+                  <div class="mp-copy-row">
+                    <button id="menu-pause-copy-code" class="vp-reset-btn" type="button">COPIAR CÓDIGO</button>
+                    <button id="menu-pause-copy-link" class="vp-reset-btn" type="button">COPIAR LINK</button>
+                  </div>
+                </div>
+                <div id="menu-pause-roster" class="mp-roster"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- VIEW 2: MULTIPLAYER LOBBY & HANGAR (PRE-MATCH ONLY) -->
+      <div id="menu-view-mp" class="menu-view hidden">
+        <div class="menu-header">
+          <div class="menu-header-left">
+            <button id="mp-back-btn" class="vp-reset-btn" type="button">&larr; VOLTAR</button>
+            <span class="menu-view-title">MULTIPLAYER P2P</span>
+          </div>
+          <span id="mp-status-badge" class="mp-badge offline">OFFLINE</span>
+        </div>
+
+        <div class="menu-grid-2">
+          <div class="menu-card-box">
+            <div class="vp-header">
+              <span>1. ESCOLHA SUA NAVE (ANTES DA PARTIDA)</span>
+              <span id="mp-hangar-lock-note" class="mp-badge connecting">LIVRE</span>
+            </div>
+            <div id="mp-hangar-list" class="hangar-list"></div>
+          </div>
+
+          <div class="menu-card-box mp-col-right">
+            <div class="vp-header">
+              <span>2. SALA &amp; CONEXÃO WEBRTC</span>
+            </div>
+
+            <label class="mp-field">
+              <span>PILOTO</span>
+              <input id="mp-name-input" class="mp-input" type="text" maxlength="12" value="ACE-1" placeholder="NOME DO PILOTO" />
+            </label>
+            <label class="mp-field">
+              <span>SINAL</span>
+              <select id="mp-signal-select" class="vp-select">
+                <option value="auto" selected>AUTO (LOCAL / CLOUD)</option>
+                <option value="local">LOCAL (XAMPP PHP)</option>
+                <option value="cloud">CLOUD (INTERNET)</option>
+              </select>
+            </label>
+
+            <div id="mp-terrain-summary" class="mp-terrain-box">
+              <div class="mp-terrain-info">
+                <span class="mp-terrain-label">TERRENO DA SALA</span>
+                <span id="mp-terrain-text" class="mp-terrain-value">Pôr do Sol &middot; Deformação Normal &middot; Nuvens Densas</span>
+              </div>
+              <button id="mp-edit-terrain-btn" class="vp-reset-btn" type="button">TERRENO</button>
+            </div>
+
+            <div id="mp-lobby-view">
+              <button id="mp-create-btn" class="mp-btn-primary" type="button">CRIAR SALA (HOST)</button>
+              <div class="vp-divider"></div>
+              <div class="mp-join-row">
+                <input id="mp-code-input" class="mp-input mp-code-input" type="text" maxlength="10" placeholder="CÓDIGO DA SALA" />
+                <button id="mp-join-btn" class="mp-btn-secondary" type="button">ENTRAR NA SALA</button>
+              </div>
+            </div>
+
+            <div id="mp-room-view" class="hidden">
+              <div class="mp-code-box">
+                <span class="mp-code-caption">CÓDIGO DA SALA</span>
+                <span id="mp-room-code" class="mp-code-text">------</span>
+                <div class="mp-copy-row">
+                  <button id="mp-copy-code" class="vp-reset-btn" type="button">COPIAR CÓDIGO</button>
+                  <button id="mp-copy-link" class="vp-reset-btn" type="button">COPIAR LINK</button>
+                </div>
+              </div>
+              <div id="mp-transport-info" class="mp-transport-info">WEBRTC P2P</div>
+              <div id="mp-roster" class="mp-roster"></div>
+              <button id="mp-launch-btn" class="menu-btn menu-btn-accent mp-launch-btn" type="button">&#9654; INICIAR PARTIDA (DECOLAR)</button>
+              <button id="mp-leave-btn" class="mp-btn-danger" type="button">CANCELAR / SAIR DA SALA</button>
+            </div>
+
+            <div id="mp-msg" class="mp-msg"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- VIEW 3: CONTROLS GUIDE -->
+      <div id="menu-view-controls" class="menu-view hidden">
+        <div class="menu-header">
+          <div class="menu-header-left">
+            <button id="controls-back-btn" class="vp-reset-btn" type="button">&larr; VOLTAR</button>
+            <span class="menu-view-title">CONTROLES &amp; COMO JOGAR</span>
+          </div>
+          <button id="controls-open-settings-btn" class="vp-reset-btn" type="button">PERSONALIZAR CONTROLES &rarr;</button>
+        </div>
+
+        <div class="controls-guide-grid">
+          <div class="guide-card">
+            <div class="guide-card-title">VOO &amp; MANOBRAS</div>
+            <div class="guide-row"><kbd>MOUSE / WASD / SETAS</kbd><span>Inclinar, subir, mergulhar e fazer curvas</span></div>
+            <div class="guide-row"><kbd>CLIQUE ESQ. (RÁPIDO)</kbd><span>Barrel Roll (quebra trava de míssil inimigo)</span></div>
+            <div class="guide-row"><kbd>SEGURAR ESQ. / <span id="guide-key-afterburner">SHIFT</span></kbd><span>Afterburner (velocidade máxima)</span></div>
+          </div>
+
+          <div class="guide-card">
+            <div class="guide-card-title">COMBATE &amp; ARMAS</div>
+            <div class="guide-row"><kbd>BOTÃO DIREITO</kbd><span>Canhão automático (cava montanhas e destrói alvos)</span></div>
+            <div class="guide-row"><kbd><span id="guide-key-missile">F</span> / ENTER / BOTÃO MEIO</kbd><span>Lançar míssil teleguiado (FOX 2)</span></div>
+            <div class="guide-row"><kbd>TRAVA (LOCK-ON)</kbd><span>Aponte para navios, balões, torres, faróis ou jatos</span></div>
+          </div>
+
+          <div class="guide-card">
+            <div class="guide-card-title">CÂMERA &amp; ATALHOS</div>
+            <div class="guide-row"><kbd id="guide-key-cockpit">E</kbd><span>Alternar visão Cockpit 2D com radar</span></div>
+            <div class="guide-row"><kbd><span id="guide-key-cam">SPACE</span> / C</kbd><span>Ciclar câmeras (Chase &rarr; Cockpit &rarr; Top)</span></div>
+            <div class="guide-row"><kbd>SCROLL / [ ]</kbd><span>Ajustar distância da câmera</span></div>
+            <div class="guide-row"><kbd id="guide-key-mute">M</kbd><span>Ligar / desligar som rapidamente</span></div>
+            <div class="guide-row"><kbd id="guide-key-restore">R</kbd><span>Restaurar montanhas (apenas Solo)</span></div>
+            <div class="guide-row"><kbd id="guide-key-style">V</kbd><span>Ciclar estilo visual</span></div>
+            <div class="guide-row"><kbd>ESC</kbd><span>Abrir / fechar menu da partida</span></div>
+          </div>
+
+          <div class="guide-card">
+            <div class="guide-card-title">MISSÃO &amp; SOBREVIVÊNCIA</div>
+            <div class="guide-row"><kbd>OBJETIVO</kbd><span>Destrua <b>20 navios</b>; morrer zera o placar para 0/20</span></div>
+            <div class="guide-row"><kbd>COLISÃO FATAL</kbd><span>Montanhas, mar, árvores, prédios, navios e balões explodem o jato</span></div>
+            <div class="guide-row"><kbd>BALÕES RAROS</kbd><span>3 balões no céu derrubam caixa <b>Cruz Rosa (+100% Vida)</b></span></div>
+            <div class="guide-row"><kbd>MÍSSEIS NO MAR</kbd><span>Navios e solo dropam caixas de míssil — voe rente ao mar para recarregar</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- VIEW 4: SETTINGS (AUDIO, CONTROLS, RENDER EXCLUSIVE, TERRAIN) -->
+      <div id="menu-view-settings" class="menu-view hidden">
+        <div class="menu-header">
+          <div class="menu-header-left">
+            <button id="settings-back-btn" class="vp-reset-btn" type="button">&larr; VOLTAR</button>
+            <span class="menu-view-title">CONFIGURAÇÕES</span>
+          </div>
+          <div class="settings-tabs">
+            <button class="settings-tab active" data-tab="audio" type="button">SOM</button>
+            <button class="settings-tab" data-tab="controls" type="button">CONTROLES</button>
+            <button class="settings-tab" data-tab="render" type="button">RENDER</button>
+            <button class="settings-tab" data-tab="terrain" type="button">TERRENO</button>
+          </div>
+        </div>
+
+        <div class="settings-body">
+          <!-- TAB 1: AUDIO -->
+          <div id="settings-tab-audio" class="settings-tab-panel">
+            <div class="settings-row">
+              <span>ÁUDIO DO JOGO</span>
+              <button id="audio-enabled-btn" class="vp-reset-btn settings-toggle-btn" type="button">SOM: DESLIGADO</button>
+            </div>
+            <label class="vp-row settings-vp-row">
+              <span>GERAL</span>
+              <input id="audio-master-slider" type="range" min="0" max="100" step="5" value="65" />
+              <span id="audio-master-val" class="vp-val">65%</span>
+            </label>
+            <label class="vp-row settings-vp-row">
+              <span>MOTOR</span>
+              <input id="audio-engine-slider" type="range" min="0" max="100" step="5" value="85" />
+              <span id="audio-engine-val" class="vp-val">85%</span>
+            </label>
+            <label class="vp-row settings-vp-row">
+              <span>EFEITOS</span>
+              <input id="audio-sfx-slider" type="range" min="0" max="100" step="5" value="100" />
+              <span id="audio-sfx-val" class="vp-val">100%</span>
+            </label>
+            <div class="settings-footer-actions">
+              <button id="audio-test-btn" class="mp-btn-secondary" type="button">TESTAR SOM</button>
+            </div>
+          </div>
+
+          <!-- TAB 2: CONTROLS -->
+          <div id="settings-tab-controls" class="settings-tab-panel hidden">
+            <div class="settings-row">
+              <span>INVERTER EIXO Y (PITCH)</span>
+              <button id="ctrl-invert-y-btn" class="vp-reset-btn settings-toggle-btn" type="button">NÃO</button>
+            </div>
+            <label class="vp-row settings-vp-row">
+              <span>SENSIBILIDADE</span>
+              <input id="ctrl-sens-slider" type="range" min="0.5" max="1.8" step="0.05" value="1.00" />
+              <span id="ctrl-sens-val" class="vp-val">1.00x</span>
+            </label>
+            <div class="vp-divider"></div>
+            <div class="settings-sub-title">TECLAS DE ATALHO (CLIQUE PARA REMAPEAR)</div>
+            <div id="ctrl-bindings-list" class="ctrl-bindings-list"></div>
+            <div class="settings-footer-actions">
+              <button id="ctrl-reset-btn" class="vp-reset-btn" type="button">RESTAURAR PADRÕES</button>
+            </div>
+          </div>
+
+          <!-- TAB 3: RENDER (EXCLUSIVE LOCATION FOR RENDER OPTIONS) -->
+          <div id="settings-tab-render" class="settings-tab-panel hidden">
+            <div class="settings-sub-header">
+              <span>ESTILO VISUAL, RESOLUÇÃO &amp; CÂMERA</span>
+              <button id="vp-reset" class="vp-reset-btn" type="button">RESTAURAR PADRÃO</button>
+            </div>
+            <label class="vp-row settings-vp-row">
+              <span>ESTILO</span>
+              <select id="style-select" class="vp-select">
+                <option value="crisp480">CRISP 480P (CLEAN)</option>
+                <option value="ghibli">GHIBLI / ANIME HD</option>
+                <option value="cleanHD">CLEAN NATIVE HD</option>
+                <option value="comic">COMIC / INK SOBEL</option>
+                <option value="crt">CRT ARCADE 360P</option>
+                <option value="pixel270">RETRO PIXEL 270P</option>
+              </select>
+            </label>
+            <label class="vp-row settings-vp-row">
+              <span>RESOLUÇÃO</span>
+              <select id="res-select" class="vp-select">
+                <option value="270">270p (Retro)</option>
+                <option value="360">360p (Arcade)</option>
+                <option value="480" selected>480p (Crisp)</option>
+                <option value="720">720p (HD)</option>
+                <option value="0">NATIVE HD</option>
+              </select>
+            </label>
+            <label class="vp-row settings-vp-row">
+              <span>DITHER</span>
+              <input id="dither-slider" type="range" min="0" max="1" step="0.05" value="0.25" />
+              <span id="dither-val" class="vp-val">25%</span>
+            </label>
+            <div class="vp-divider"></div>
+            <label class="vp-row settings-vp-row">
+              <span>FOV</span>
+              <input id="fov-slider" type="range" min="45" max="110" step="1" value="80" />
+              <span id="fov-val" class="vp-val">80&deg;</span>
+            </label>
+            <label class="vp-row settings-vp-row">
+              <span>CAM DIST</span>
+              <input id="dist-slider" type="range" min="0.5" max="2.6" step="0.05" value="1.35" />
+              <span id="dist-val" class="vp-val">1.35x</span>
+            </label>
+            <label class="vp-row settings-vp-row">
+              <span>OBJ DIST</span>
+              <input id="scale-slider" type="range" min="0.5" max="2.2" step="0.05" value="1.00" />
+              <span id="scale-val" class="vp-val">1.00x</span>
+            </label>
+          </div>
+
+          <!-- TAB 4: TERRAIN (LOCKED IN MULTIPLAYER, INHERITED FROM HOST) -->
+          <div id="settings-tab-terrain" class="settings-tab-panel hidden">
+            <div id="terrain-lock-banner" class="terrain-lock-banner hidden">
+              &#128274; Herdado do Host (opções de terreno bloqueadas no Multiplayer)
+            </div>
+            <label class="vp-row settings-vp-row">
+              <span>AMBIENTE</span>
+              <select id="terrain-theme-select" class="vp-select">
+                <option value="sunset">Pôr do Sol Clássico</option>
+                <option value="tropical">Alvorada Tropical</option>
+                <option value="volcanic">Crepúsculo Vulcânico</option>
+                <option value="alpine">Pico Alpino Nevado</option>
+              </select>
+            </label>
+            <label class="vp-row settings-vp-row">
+              <span>DEFORMAÇÃO</span>
+              <select id="terrain-deform-select" class="vp-select">
+                <option value="normal">Normal (1.0x)</option>
+                <option value="deep">Crateras Profundas (1.5x)</option>
+                <option value="off">Indestrutível (Off)</option>
+              </select>
+            </label>
+            <label class="vp-row settings-vp-row">
+              <span>NUVENS</span>
+              <select id="terrain-clouds-select" class="vp-select">
+                <option value="full">Densas (54 Nuvens)</option>
+                <option value="light">Leves (27 Nuvens)</option>
+                <option value="clear">Céu Limpo</option>
+              </select>
+            </label>
+            <div class="settings-footer-actions">
+              <button id="rebuild-terrain-btn" class="vp-reset-btn" style="width:100%;padding:6px 8px;" type="button">RESTAURAR MONTANHAS (R)</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
   </div>
 
   <script type="importmap">
@@ -214,6 +438,6 @@
       }
     }
   </script>
-  <script type="module" src="js/main.js?v=10"></script>
+  <script type="module" src="js/main.js?v=11"></script>
 </body>
 </html>

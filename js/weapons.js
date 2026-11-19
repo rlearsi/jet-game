@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { getTerrainHeight, WATER_LEVEL } from './world.js?v=10';
+import { getTerrainHeight, WATER_LEVEL } from './world.js?v=11';
 
 function createDitherExplosionMat(hex) {
   return new THREE.ShaderMaterial({
@@ -609,8 +609,9 @@ export class MissileSystem {
               const hl = Math.hypot(b.vel.x, b.vel.z) || 1;
               const dx = b.vel.x / hl;
               const dz = b.vel.z / hl;
-              this.world.deformTerrain(b.pos.x, b.pos.z, 18, 10.5, dx, dz);
-              this.netHooks.onDeform?.(b.pos.x, b.pos.z, 18, 10.5, dx, dz);
+              if (this.world.deformTerrain(b.pos.x, b.pos.z, 18, 10.5, dx, dz)) {
+                this.netHooks.onDeform?.(b.pos.x, b.pos.z, 18, 10.5, dx, dz);
+              }
             }
             this.destroyAt(b.pos, isWater ? 8.5 : 16, time);
           }
@@ -699,8 +700,9 @@ export class MissileSystem {
           const dx = m.vel.x / hl;
           const dz = m.vel.z / hl;
           if (m.pos.y < getTerrainHeight(m.pos.x, m.pos.z) + 22) {
-            this.world.deformTerrain(m.pos.x, m.pos.z, 46, 32, dx, dz);
-            this.netHooks.onDeform?.(m.pos.x, m.pos.z, 46, 32, dx, dz);
+            if (this.world.deformTerrain(m.pos.x, m.pos.z, 46, 32, dx, dz)) {
+              this.netHooks.onDeform?.(m.pos.x, m.pos.z, 46, 32, dx, dz);
+            }
           }
           this.destroyAt(m.pos, 46, time);
         }
@@ -767,8 +769,9 @@ export class MissileSystem {
               const hl = Math.hypot(m.vel.x, m.vel.z) || 1;
               const dx = m.vel.x / hl;
               const dz = m.vel.z / hl;
-              this.world.deformTerrain(m.pos.x, m.pos.z, 52, 38, dx, dz);
-              this.netHooks.onDeform?.(m.pos.x, m.pos.z, 52, 38, dx, dz);
+              if (this.world.deformTerrain(m.pos.x, m.pos.z, 52, 38, dx, dz)) {
+                this.netHooks.onDeform?.(m.pos.x, m.pos.z, 52, 38, dx, dz);
+              }
             }
             this.destroyAt(m.pos, 48, time);
           }
