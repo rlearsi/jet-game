@@ -6,14 +6,14 @@ import {
   TERRAIN_DEFORM_MODES,
   TERRAIN_CLOUD_MODES,
   DEFAULT_TERRAIN_OPTIONS,
-} from './world.js?v=18';
-import { FighterJet, RemoteJet, SHIP_CATALOG, SHIP_IDS } from './jet.js?v=18';
-import { MissileSystem } from './weapons.js?v=18';
-import { FighterCockpit } from './cockpit.js?v=18';
-import { JetSoundEngine } from './audio.js?v=18';
-import { MultiplayerManager } from './multiplayer.js?v=18';
-import { GamepadController, DEFAULT_GAMEPAD_DEADZONE } from './gamepad.js?v=18';
-import { TouchController } from './touch.js?v=18';
+} from './world.js?v=19';
+import { FighterJet, RemoteJet, SHIP_CATALOG, SHIP_IDS } from './jet.js?v=19';
+import { MissileSystem } from './weapons.js?v=19';
+import { FighterCockpit } from './cockpit.js?v=19';
+import { JetSoundEngine } from './audio.js?v=19';
+import { MultiplayerManager } from './multiplayer.js?v=19';
+import { GamepadController, DEFAULT_GAMEPAD_DEADZONE } from './gamepad.js?v=19';
+import { TouchController } from './touch.js?v=19';
 
 // 6 live-switchable rendering styles (exclusively configurable inside Settings -> Render, plus V in flight)
 const RENDER_PRESETS = {
@@ -344,11 +344,18 @@ function writeJsonStorage(key, val) {
 }
 
 let savedStyleId = 'crisp480';
+let hasSavedRenderStyle = false;
 try {
   const s = localStorage.getItem('sunsetStriker_renderStyle');
-  if (s && RENDER_PRESETS[s]) savedStyleId = s;
+  if (s && RENDER_PRESETS[s]) {
+    savedStyleId = s;
+    hasSavedRenderStyle = true;
+  }
 } catch (_) {}
 const renderSettings = { ...RENDER_PRESETS[savedStyleId] };
+if (!hasSavedRenderStyle && TouchController.isTouchDevice()) {
+  renderSettings.resHeight = 360;
+}
 
 const savedView = readJsonStorage('sunsetStriker_viewSettings');
 const viewSettings = {
@@ -2149,20 +2156,20 @@ function updateShowcaseFlight(dt) {
   jet.flameR.scale.set(0.8, 0.8, 0.72 * flicker);
   jet.updatePuffs(dt);
 
-  const fwd = jet.getForwardDirection();
-  const right = new THREE.Vector3(-fwd.z, 0, fwd.x).normalize();
-  const desiredPos = jet.position
-    .clone()
+  const fwd = jet.getForwardDirection(_camFwd);
+  _camRight.set(-fwd.z, 0, fwd.x).normalize();
+  _camVec1
+    .copy(jet.position)
     .addScaledVector(fwd, -16.5 * viewSettings.objDist)
-    .addScaledVector(right, 8.5 * viewSettings.objDist)
-    .add(new THREE.Vector3(0, 5.2 * viewSettings.objDist, 0));
-  const desiredLook = jet.position.clone().addScaledVector(fwd, 12 * viewSettings.objDist);
+    .addScaledVector(_camRight, 8.5 * viewSettings.objDist);
+  _camVec1.y += 5.2 * viewSettings.objDist;
+  _camVec2.copy(jet.position).addScaledVector(fwd, 12 * viewSettings.objDist);
 
   camera.fov = THREE.MathUtils.lerp(camera.fov, viewSettings.fov, 1 - Math.exp(-5.0 * dt));
   camera.updateProjectionMatrix();
   camera.up.set(0, 1, 0);
-  camera.position.copy(desiredPos);
-  camera.lookAt(desiredLook);
+  camera.position.copy(_camVec1);
+  camera.lookAt(_camVec2);
 }
 
 let wasLookingBack = false;
@@ -2175,7 +2182,7 @@ function isLookingBackActive() {
 
 function updateCamera(dt) {
   const mode = CAMERA_MODES[camModeIdx].id;
-  const fwd = jet.getForwardDirection();
+  const fwd = jet.getForwardDirection(_camFwd);
   const lookingBack = isLookingBackActive();
   const flipped = lookingBack !== wasLookingBack;
   wasLookingBack = lookingBack;
@@ -2211,58 +2218,53 @@ function updateCamera(dt) {
     const heightOff = (lookingBack ? 6.6 : 7.4) * totalDistScale;
     const dirSign = lookingBack ? 1 : -1;
 
-    const desiredPos = jet.position
-      .clone()
-      .addScaledVector(fwd, dirSign * dist)
-      .add(new THREE.Vector3(0, heightOff, 0));
-    const desiredLook = jet.position
-      .clone()
-      .addScaledVector(fwd, -dirSign * 34 * viewSettings.objDist)
-      .add(new THREE.Vector3(0, -1.6 * viewSettings.objDist, 0));
+    _camVec1.copy(jet.position).addScaledVector(fwd, dirSign * dist);
+    _camVec1.y += heightOff;
+    _camVec2.copy(jet.position).addScaledVector(fwd, -dirSign * 34 * viewSettings.objDist);
+    _camVec2.y -= 1.6 * viewSettings.objDist;
 
     const targetRoll = (lookingBack ? -1 : 1) * jet.bank * 0.34;
     if (dt > 0 && !flipped) {
-      camPosSmooth.lerp(desiredPos, 1 - Math.exp(-8.5 * dt));
-      camLookSmooth.lerp(desiredLook, 1 - Math.exp(-10.5 * dt));
+      camPosSmooth.lerp(_camVec1, 1 - Math.exp(-8.5 * dt));
+      camLookSmooth.lerp(_camVec2, 1 - Math.exp(-10.5 * dt));
       camRollSmooth = THREE.MathUtils.lerp(camRollSmooth, targetRoll, 1 - Math.exp(-5.0 * dt));
     } else {
-      camPosSmooth.copy(desiredPos);
-      camLookSmooth.copy(desiredLook);
+      camPosSmooth.copy(_camVec1);
+      camLookSmooth.copy(_camVec2);
       camRollSmooth = targetRoll;
     }
 
     camera.position.copy(camPosSmooth);
-    const rightAxis = new THREE.Vector3(Math.cos(jet.yaw), 0, -Math.sin(jet.yaw));
+    _camRight.set(Math.cos(jet.yaw), 0, -Math.sin(jet.yaw));
     camera.up
       .set(0, Math.cos(camRollSmooth), 0)
-      .addScaledVector(rightAxis, Math.sin(-camRollSmooth))
+      .addScaledVector(_camRight, Math.sin(-camRollSmooth))
       .normalize();
     camera.lookAt(camLookSmooth);
   } else if (mode === 'COCKPIT') {
     camera.up.set(0, 1, 0);
-    const eye = jet.position.clone().addScaledVector(fwd, 1.4).add(new THREE.Vector3(0, 0.55, 0));
-    camera.position.copy(eye);
+    _camVec1.copy(jet.position).addScaledVector(fwd, 1.4);
+    _camVec1.y += 0.55;
+    camera.position.copy(_camVec1);
 
     let extraRoll = 0;
     if (jet.rollAnim > 0) {
       extraRoll = (1.0 - jet.rollAnim) * Math.PI * 2 * jet.rollDir;
     }
-    const euler = new THREE.Euler(jet.pitch, jet.yaw, jet.bank + extraRoll, 'YXZ');
-    camera.quaternion.setFromEuler(euler);
+    _camEuler.set(jet.pitch, jet.yaw, jet.bank + extraRoll, 'YXZ');
+    camera.quaternion.setFromEuler(_camEuler);
   } else {
-    const horizFwd = new THREE.Vector3(-Math.sin(jet.yaw), 0, -Math.cos(jet.yaw));
-    const desiredPos = jet.position
-      .clone()
-      .addScaledVector(horizFwd, -28 * totalDistScale)
-      .add(new THREE.Vector3(0, 82 * totalDistScale, 0));
-    const desiredLook = jet.position.clone().addScaledVector(horizFwd, 20 * viewSettings.objDist);
+    _camVec3.set(-Math.sin(jet.yaw), 0, -Math.cos(jet.yaw));
+    _camVec1.copy(jet.position).addScaledVector(_camVec3, -28 * totalDistScale);
+    _camVec1.y += 82 * totalDistScale;
+    _camVec2.copy(jet.position).addScaledVector(_camVec3, 20 * viewSettings.objDist);
 
     if (dt > 0 && !flipped) {
-      camPosSmooth.lerp(desiredPos, 1 - Math.exp(-6.0 * dt));
-      camLookSmooth.lerp(desiredLook, 1 - Math.exp(-9.0 * dt));
+      camPosSmooth.lerp(_camVec1, 1 - Math.exp(-6.0 * dt));
+      camLookSmooth.lerp(_camVec2, 1 - Math.exp(-9.0 * dt));
     } else {
-      camPosSmooth.copy(desiredPos);
-      camLookSmooth.copy(desiredLook);
+      camPosSmooth.copy(_camVec1);
+      camLookSmooth.copy(_camVec2);
     }
 
     camera.up.set(0, 1, 0);
@@ -2281,6 +2283,29 @@ function updateCamera(dt) {
 
 const clock = new THREE.Clock();
 const projVec = new THREE.Vector3();
+const _camVec1 = new THREE.Vector3();
+const _camVec2 = new THREE.Vector3();
+const _camVec3 = new THREE.Vector3();
+const _camRight = new THREE.Vector3();
+const _camFwd = new THREE.Vector3();
+const _camEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+const _hudVec = new THREE.Vector3();
+
+const pickupTagPool = [];
+for (let i = 0; i < 4; i++) {
+  const el = document.createElement('div');
+  el.className = 'pickup-tag hidden';
+  pickupMarkersEl.appendChild(el);
+  pickupTagPool.push({ el, text: '', cls: 'pickup-tag hidden', opacity: '', left: '', top: '' });
+}
+
+let lastTelemText = '';
+let lastDestroyedText = '';
+let lastHpText = '';
+let lastHpColor = '';
+let lastHpFillCls = '';
+let lastHpPctStr = '';
+let lastMissileCountText = '';
 
 function projectToScreen(worldPos) {
   projVec.copy(worldPos).project(camera);
@@ -2300,7 +2325,11 @@ function updatePlayingHUD(elapsed) {
     ammoPipEls[i].classList.toggle('ready', i < weapons.ammo);
   }
   if (touchMissileCount) {
-    touchMissileCount.textContent = String(weapons.ammo);
+    const ammoStr = String(weapons.ammo);
+    if (ammoStr !== lastMissileCountText) {
+      lastMissileCountText = ammoStr;
+      touchMissileCount.textContent = ammoStr;
+    }
   }
   if (touchBtnMissile) {
     const hasLocked = Boolean(weapons.lockedTarget && weapons.lockedTarget.alive && weapons.ammo > 0);
@@ -2309,16 +2338,40 @@ function updatePlayingHUD(elapsed) {
   }
   const knots = Math.round(jet.speed * 9.6);
   const altFt = Math.max(0, Math.round(jet.position.y * 3.6));
-  telemBadge.textContent = `SPD ${knots} · ALT ${altFt}`;
-  destroyedBadge.textContent = `DESTROYED: ${weapons.destroyed}`;
+  const telemText = `SPD ${knots} · ALT ${altFt}`;
+  if (telemText !== lastTelemText) {
+    lastTelemText = telemText;
+    telemBadge.textContent = telemText;
+  }
+  const destroyedText = `DESTROYED: ${weapons.destroyed}`;
+  if (destroyedText !== lastDestroyedText) {
+    lastDestroyedText = destroyedText;
+    destroyedBadge.textContent = destroyedText;
+  }
 
   const hpCur = Math.round(jet.hp);
   const hpMax = Math.round(jet.maxHp);
   const hpPct = Math.max(0, Math.min(100, (hpCur / Math.max(1, hpMax)) * 100));
-  playerHpFill.style.width = `${hpPct}%`;
-  playerHpFill.className = 'player-hp-fill' + (hpPct <= 30 ? ' low' : hpPct <= 60 ? ' mid' : '');
-  playerHpText.textContent = `${hpCur}/${hpMax}`;
-  playerHpText.style.color = hpPct <= 30 ? '#ff5a44' : hpPct <= 60 ? '#ffd066' : '#88ffa8';
+  const hpPctStr = `${hpPct}%`;
+  if (hpPctStr !== lastHpPctStr) {
+    lastHpPctStr = hpPctStr;
+    playerHpFill.style.width = hpPctStr;
+  }
+  const hpFillCls = 'player-hp-fill' + (hpPct <= 30 ? ' low' : hpPct <= 60 ? ' mid' : '');
+  if (hpFillCls !== lastHpFillCls) {
+    lastHpFillCls = hpFillCls;
+    playerHpFill.className = hpFillCls;
+  }
+  const hpText = `${hpCur}/${hpMax}`;
+  if (hpText !== lastHpText) {
+    lastHpText = hpText;
+    playerHpText.textContent = hpText;
+  }
+  const hpColor = hpPct <= 30 ? '#ff5a44' : hpPct <= 60 ? '#ffd066' : '#88ffa8';
+  if (hpColor !== lastHpColor) {
+    lastHpColor = hpColor;
+    playerHpText.style.color = hpColor;
+  }
 
   if (weapons.incomingMissile) {
     const distM = Math.round(weapons.incomingMissile.dist);
@@ -2337,8 +2390,8 @@ function updatePlayingHUD(elapsed) {
       rec.el.classList.add('hidden');
       continue;
     }
-    const labelPos = rj.position.clone().add(new THREE.Vector3(0, 4.2, 0));
-    const sp = projectToScreen(labelPos);
+    _hudVec.set(rj.position.x, rj.position.y + 4.2, rj.position.z);
+    const sp = projectToScreen(_hudVec);
     if (sp && sp.x > 16 && sp.x < vpW - 16 && sp.y > 24 && sp.y < vpH - 24) {
       rec.el.classList.remove('hidden');
       rec.el.style.left = `${sp.x}px`;
@@ -2353,34 +2406,84 @@ function updatePlayingHUD(elapsed) {
     }
   }
 
-  pickupMarkersEl.innerHTML = '';
+  let poolIdx = 0;
   if (modeId !== 'TOP') {
     const allPickups = world.getPickups();
-    const healthDrops = [];
-    const mslDrops = [];
-    for (const pk of allPickups) {
-      if (!pk.active) continue;
-      const d = Math.hypot(pk.x - jet.position.x, pk.y - jet.position.y, pk.z - jet.position.z);
-      if (d > 1100) continue;
-      if (pk.type === 'health') healthDrops.push({ pk, d });
-      else if (pk.type === 'missile') mslDrops.push({ pk, d });
-    }
-    healthDrops.sort((a, b) => a.d - b.d);
-    mslDrops.sort((a, b) => a.d - b.d);
+    let bestH1 = null;
+    let bestH2 = null;
+    let bestM1 = null;
+    let bestM2 = null;
 
-    for (const { pk, d } of [...healthDrops.slice(0, 2), ...mslDrops.slice(0, 2)]) {
-      const sp = projectToScreen(new THREE.Vector3(pk.x, pk.y + 8, pk.z));
+    for (let i = 0; i < allPickups.length; i++) {
+      const pk = allPickups[i];
+      if (!pk.active) continue;
+      const dx = pk.x - jet.position.x;
+      const dy = pk.y - jet.position.y;
+      const dz = pk.z - jet.position.z;
+      const d = Math.hypot(dx, dy, dz);
+      if (d > 1100) continue;
+      if (pk.type === 'health') {
+        if (!bestH1 || d < bestH1.d) {
+          bestH2 = bestH1;
+          bestH1 = { pk, d };
+        } else if (!bestH2 || d < bestH2.d) {
+          bestH2 = { pk, d };
+        }
+      } else if (pk.type === 'missile') {
+        if (!bestM1 || d < bestM1.d) {
+          bestM2 = bestM1;
+          bestM1 = { pk, d };
+        } else if (!bestM2 || d < bestM2.d) {
+          bestM2 = { pk, d };
+        }
+      }
+    }
+
+    const chosen = [bestH1, bestH2, bestM1, bestM2];
+    for (let i = 0; i < chosen.length && poolIdx < pickupTagPool.length; i++) {
+      const item = chosen[i];
+      if (!item) continue;
+      const { pk, d } = item;
+      _hudVec.set(pk.x, pk.y + 8, pk.z);
+      const sp = projectToScreen(_hudVec);
       if (!sp || sp.x < 16 || sp.x > vpW - 16 || sp.y < 24 || sp.y > vpH - 24) continue;
-      const tag = document.createElement('div');
-      tag.className = `pickup-tag ${pk.type}`;
-      tag.style.left = `${sp.x}px`;
-      tag.style.top = `${sp.y}px`;
+
+      const slot = pickupTagPool[poolIdx++];
+      const cls = `pickup-tag ${pk.type}`;
+      if (slot.cls !== cls) {
+        slot.cls = cls;
+        slot.el.className = cls;
+      }
+      const leftStr = `${sp.x.toFixed(1)}px`;
+      const topStr = `${sp.y.toFixed(1)}px`;
+      if (slot.left !== leftStr) {
+        slot.left = leftStr;
+        slot.el.style.left = leftStr;
+      }
+      if (slot.top !== topStr) {
+        slot.top = topStr;
+        slot.el.style.top = topStr;
+      }
       const needed = pk.type === 'health' ? jet.hp < jet.maxHp : weapons.ammo < weapons.maxAmmo;
-      tag.style.opacity = needed ? '0.96' : '0.52';
-      tag.textContent = pk.type === 'health'
+      const opStr = needed ? '0.96' : '0.52';
+      if (slot.opacity !== opStr) {
+        slot.opacity = opStr;
+        slot.el.style.opacity = opStr;
+      }
+      const text = pk.type === 'health'
         ? `+ VIDA 100% ${Math.round(d)}M`
         : (pk.isSeaSkim ? `MSL MAR ${Math.round(d)}M` : `MSL ${Math.round(d)}M`);
-      pickupMarkersEl.appendChild(tag);
+      if (slot.text !== text) {
+        slot.text = text;
+        slot.el.textContent = text;
+      }
+    }
+  }
+  for (let i = poolIdx; i < pickupTagPool.length; i++) {
+    const slot = pickupTagPool[i];
+    if (slot.cls !== 'pickup-tag hidden') {
+      slot.cls = 'pickup-tag hidden';
+      slot.el.className = 'pickup-tag hidden';
     }
   }
 
@@ -2392,8 +2495,9 @@ function updatePlayingHUD(elapsed) {
   }
 
   if (modeId === 'CHASE' && !isLookingBackActive()) {
-    const aimPt = jet.position.clone().addScaledVector(jet.getForwardDirection(), 180);
-    const sp = projectToScreen(aimPt);
+    jet.getForwardDirection(_camFwd);
+    _hudVec.copy(jet.position).addScaledVector(_camFwd, 180);
+    const sp = projectToScreen(_hudVec);
     if (sp) {
       aimReticle.classList.remove('hidden');
       aimReticle.style.left = `${sp.x}px`;
@@ -2408,13 +2512,13 @@ function updatePlayingHUD(elapsed) {
 
   if (weapons.lockedTarget && weapons.lockedTarget.alive && modeId !== 'TOP') {
     const t = weapons.lockedTarget;
-    const tPos = new THREE.Vector3(t.x, t.y + (t.h || 6) * 0.5, t.z);
-    const sp = projectToScreen(tPos);
+    _hudVec.set(t.x, t.y + (t.h || 6) * 0.5, t.z);
+    const sp = projectToScreen(_hudVec);
     if (sp && sp.x > 20 && sp.x < vpW - 20 && sp.y > 30 && sp.y < vpH - 30) {
       lockBox.classList.remove('hidden');
       lockBox.style.left = `${sp.x}px`;
       lockBox.style.top = `${sp.y}px`;
-      const distM = Math.round(jet.position.distanceTo(tPos));
+      const distM = Math.round(jet.position.distanceTo(_hudVec));
       lockLabel.textContent = `${t.label || 'TARGET'} ${distM}M`;
     } else {
       lockBox.classList.add('hidden');
@@ -2639,32 +2743,6 @@ function animate() {
     }
   }
 
-  window.__GAME__ = {
-    jet,
-    weapons,
-    world,
-    mp,
-    gamepad,
-    remoteJets,
-    objective,
-    renderSettings,
-    controlSettings,
-    audioSettings,
-    get state() {
-      return { gameState, gameMode, menuOpen, activeMenuView, activeSettingsTab, activeTerrain };
-    },
-    setCameraMode,
-    selectRenderPreset,
-    selectShip,
-    startSoloMatch,
-    startMultiplayerMatch,
-    openPauseMenu,
-    closeMenuToPlay,
-    returnToMainMenu,
-    applyTerrainSettings,
-    testIncomingMissile: () => weapons.spawnTestThreat(jet),
-  };
-
   // Pass 1: Render 3D scene
   camera.layers.set(0);
   renderer.setRenderTarget(renderTarget);
@@ -2694,6 +2772,33 @@ function animate() {
     cockpit.render(dt, jet, weapons, remoteJets, world.getPickups(), world.getShips());
   }
 }
+
+window.__GAME__ = {
+  jet,
+  weapons,
+  world,
+  mp,
+  gamepad,
+  touchControls,
+  remoteJets,
+  objective,
+  renderSettings,
+  controlSettings,
+  audioSettings,
+  get state() {
+    return { gameState, gameMode, menuOpen, activeMenuView, activeSettingsTab, activeTerrain };
+  },
+  setCameraMode,
+  selectRenderPreset,
+  selectShip,
+  startSoloMatch,
+  startMultiplayerMatch,
+  openPauseMenu,
+  closeMenuToPlay,
+  returnToMainMenu,
+  applyTerrainSettings,
+  testIncomingMissile: () => weapons.spawnTestThreat(jet),
+};
 
 // Auto-open Multiplayer Lobby (pre-match hangar) if ?room=XXXXXX is present in URL
 const urlParams = new URLSearchParams(window.location.search);

@@ -1,48 +1,10 @@
 import * as THREE from 'three';
-import { getTerrainHeight, WATER_LEVEL } from './world.js?v=18';
+import { getTerrainHeight, WATER_LEVEL } from './world.js?v=19';
+import { DitheredParticlePool } from './particles.js?v=19';
 
-function createDitherExplosionMat(hex) {
-  return new THREE.ShaderMaterial({
-    uniforms: {
-      uColor: { value: new THREE.Color(hex) },
-      uAlpha: { value: 1.0 },
-    },
-    vertexShader: `
-      void main() {
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }
-    `,
-    fragmentShader: `
-      uniform vec3 uColor;
-      uniform float uAlpha;
-      float bayer4(vec2 pos) {
-        int x = int(mod(pos.x, 4.0));
-        int y = int(mod(pos.y, 4.0));
-        int idx = y * 4 + x;
-        if (idx == 0) return 0.0 / 16.0;
-        if (idx == 1) return 8.0 / 16.0;
-        if (idx == 2) return 2.0 / 16.0;
-        if (idx == 3) return 10.0 / 16.0;
-        if (idx == 4) return 12.0 / 16.0;
-        if (idx == 5) return 4.0 / 16.0;
-        if (idx == 6) return 14.0 / 16.0;
-        if (idx == 7) return 6.0 / 16.0;
-        if (idx == 8) return 3.0 / 16.0;
-        if (idx == 9) return 11.0 / 16.0;
-        if (idx == 10) return 1.0 / 16.0;
-        if (idx == 11) return 9.0 / 16.0;
-        if (idx == 12) return 15.0 / 16.0;
-        if (idx == 13) return 7.0 / 16.0;
-        if (idx == 14) return 13.0 / 16.0;
-        return 5.0 / 16.0;
-      }
-      void main() {
-        if (uAlpha < bayer4(floor(gl_FragCoord.xy))) discard;
-        gl_FragColor = vec4(uColor, 1.0);
-      }
-    `,
-  });
-}
+const _tmpColor = new THREE.Color();
+const _tmpVel = new THREE.Vector3();
+const _tmpPos = new THREE.Vector3();
 
 export class MissileSystem {
   constructor(scene, sound, world) {
@@ -84,9 +46,20 @@ export class MissileSystem {
     this.bulletGeo = new THREE.BoxGeometry(0.18, 0.18, 4.8);
     this.bulletMat = new THREE.MeshBasicMaterial({ color: 0xfff59e });
 
-    this.sphereGeo = new THREE.IcosahedronGeometry(1.0, 1);
-    this.smokeMatWhite = new THREE.MeshBasicMaterial({ color: 0xf7f4f0 });
+    this.particlePool = new DitheredParticlePool(scene, 380);
     this.netHooks = {};
+  }
+
+  addBurner(x, y, z, life, big) {
+    if (this.burners.length >= 18) {
+      this.burners.shift();
+    }
+    this.burners.push({
+      pos: new THREE.Vector3(x, y, z),
+      life,
+      acc: 0,
+      big,
+    });
   }
 
   setNetHooks(hooks = {}) {
@@ -138,7 +111,7 @@ export class MissileSystem {
       const count = isMajor ? 22 : 10;
       for (let i = 0; i < count; i++) {
         const spread = isMajor ? 28 : 16;
-        const vel = new THREE.Vector3(
+        _tmpVel.set(
           (Math.random() - 0.5) * spread,
           6 + Math.random() * (isMajor ? 26 : 16),
           (Math.random() - 0.5) * spread
@@ -147,7 +120,7 @@ export class MissileSystem {
         const col = r < 0.3 ? 0xfff28c : r < 0.62 ? 0xf57a2e : r < 0.82 ? o.color : 0x4b4658;
         this.spawnParticle(
           p,
-          vel,
+          _tmpVel,
           (isMajor ? 2.0 : 1.1) + Math.random() * 1.6,
           0.75 + Math.random() * 0.65,
           col,
@@ -162,12 +135,7 @@ export class MissileSystem {
 
       // Add persistent rising smoke & fire plume on destroyed structures/ships
       if (o.type !== 'balloon') {
-        this.burners.push({
-          pos: new THREE.Vector3(o.x, Math.max(WATER_LEVEL + 0.8, o.y + 1.0), o.z),
-          life: isMajor ? 10.0 : 3.5,
-          acc: 0,
-          big: isMajor,
-        });
+        this.addBurner(o.x, Math.max(WATER_LEVEL + 0.8, o.y + 1.0), o.z, isMajor ? 10.0 : 3.5, isMajor);
       }
 
       if (!silentNet) {
@@ -363,16 +331,16 @@ export class MissileSystem {
   }
 
   spawnPickupBurst(pos, isHealth) {
-    const p = new THREE.Vector3(pos.x, pos.y, pos.z);
+    _tmpPos.set(pos.x, pos.y, pos.z);
     const colA = isHealth ? 0xff4fa3 : 0xffb842;
     const colB = isHealth ? 0xffcbe6 : 0xfff08a;
     for (let i = 0; i < 16; i++) {
-      const vel = new THREE.Vector3(
+      _tmpVel.set(
         (Math.random() - 0.5) * 24,
         (Math.random() - 0.3) * 22,
         (Math.random() - 0.5) * 24
       );
-      this.spawnParticle(p, vel, 1.1 + Math.random() * 0.9, 0.55 + Math.random() * 0.35, i % 2 === 0 ? colA : colB, 2.2, true);
+      this.spawnParticle(_tmpPos, _tmpVel, 1.1 + Math.random() * 0.9, 0.55 + Math.random() * 0.35, i % 2 === 0 ? colA : colB, 2.2, true);
     }
   }
 
@@ -384,44 +352,48 @@ export class MissileSystem {
     if (isWater) {
       this.world.addWaterRipple(x, z, time);
     }
-    this.destroyAt(new THREE.Vector3(x, y, z), r, time, true);
+    this.destroyAt(_tmpPos.set(x, y, z), r, time, true);
   }
 
   spawnJetExplosion(pos, time) {
     this.shake = Math.max(this.shake, 0.9);
     this.sound.playImpact(false);
-    const p = new THREE.Vector3(pos.x, pos.y, pos.z);
+    _tmpPos.set(pos.x, pos.y, pos.z);
     for (let i = 0; i < 36; i++) {
-      const vel = new THREE.Vector3(
+      _tmpVel.set(
         (Math.random() - 0.5) * 46,
         (Math.random() - 0.3) * 40,
         (Math.random() - 0.5) * 46
       );
       const r = Math.random();
       const col = r < 0.28 ? 0xfff49a : r < 0.62 ? 0xf57428 : r < 0.85 ? 0xd93c26 : 0x4b4658;
-      this.spawnParticle(p, vel, 1.8 + Math.random() * 2.2, 0.9 + Math.random() * 0.7, col, 3.0, true);
+      this.spawnParticle(_tmpPos, _tmpVel, 1.8 + Math.random() * 2.2, 0.9 + Math.random() * 0.7, col, 3.0, true);
     }
-    if (p.y <= WATER_LEVEL + 6) {
-      this.world.addWaterRipple(p.x, p.z, time);
+    if (_tmpPos.y <= WATER_LEVEL + 6) {
+      this.world.addWaterRipple(_tmpPos.x, _tmpPos.z, time);
     }
   }
 
   spawnParticle(pos, vel, size, maxLife, hex, grow, dithered = true) {
-    const mat = dithered ? createDitherExplosionMat(hex) : this.smokeMatWhite;
-    const mesh = new THREE.Mesh(this.sphereGeo, mat);
-    mesh.position.copy(pos);
-    mesh.scale.setScalar(size);
-    this.scene.add(mesh);
-
+    if (this.particles.length >= 380) {
+      this.particles.shift();
+    }
+    _tmpColor.setHex(hex);
     this.particles.push({
-      mesh,
-      mat,
-      dithered,
-      vel: vel.clone(),
+      x: pos.x,
+      y: pos.y,
+      z: pos.z,
+      vx: vel.x,
+      vy: vel.y,
+      vz: vel.z,
       size,
       life: maxLife,
       maxLife,
       grow,
+      dithered,
+      r: _tmpColor.r,
+      g: _tmpColor.g,
+      b: _tmpColor.b,
     });
   }
 
@@ -429,23 +401,23 @@ export class MissileSystem {
     if (isWater) {
       if (Math.random() < 0.5) this.world.addWaterRipple(pos.x, pos.z, time);
       for (let i = 0; i < 4; i++) {
-        const vel = new THREE.Vector3(
+        _tmpVel.set(
           (Math.random() - 0.5) * 9,
           8 + Math.random() * 14,
           (Math.random() - 0.5) * 9
         );
-        this.spawnParticle(pos, vel, 0.55 + Math.random() * 0.5, 0.36 + Math.random() * 0.2, 0xeef9fc, 1.8, true);
+        this.spawnParticle(pos, _tmpVel, 0.55 + Math.random() * 0.5, 0.36 + Math.random() * 0.2, 0xeef9fc, 1.8, true);
       }
     } else {
       for (let i = 0; i < 7; i++) {
-        const vel = new THREE.Vector3(
+        _tmpVel.set(
           (Math.random() - 0.5) * 18,
           7 + Math.random() * 16,
           (Math.random() - 0.5) * 18
         );
         const r = Math.random();
         const col = r < 0.4 ? 0xfff088 : r < 0.72 ? 0xf27d30 : 0x56485c;
-        this.spawnParticle(pos, vel, 0.75 + Math.random() * 0.75, 0.4 + Math.random() * 0.3, col, 2.0, true);
+        this.spawnParticle(pos, _tmpVel, 0.75 + Math.random() * 0.75, 0.4 + Math.random() * 0.3, col, 2.0, true);
       }
     }
   }
@@ -459,25 +431,25 @@ export class MissileSystem {
       for (let i = 0; i < 16; i++) {
         const angle = Math.random() * Math.PI * 2;
         const spread = 3 + Math.random() * 14;
-        const vel = new THREE.Vector3(
+        _tmpVel.set(
           Math.cos(angle) * spread,
           14 + Math.random() * 24,
           Math.sin(angle) * spread
         );
         const col = Math.random() < 0.65 ? 0xf2fafc : 0x7cd6db;
-        this.spawnParticle(pos, vel, 0.9 + Math.random() * 1.2, 0.65 + Math.random() * 0.45, col, 2.2, true);
+        this.spawnParticle(pos, _tmpVel, 0.9 + Math.random() * 1.2, 0.65 + Math.random() * 0.45, col, 2.2, true);
       }
     } else {
       // Big mountain-carving fireball + flying rock chunks
       for (let i = 0; i < 28; i++) {
-        const vel = new THREE.Vector3(
+        _tmpVel.set(
           (Math.random() - 0.5) * 42,
           12 + Math.random() * 34,
           (Math.random() - 0.5) * 42
         );
         const r = Math.random();
         const col = r < 0.25 ? 0xfff08a : r < 0.55 ? 0xf27d30 : r < 0.75 ? 0xd94126 : r < 0.9 ? 0x5c5064 : 0xaba3ba;
-        this.spawnParticle(pos, vel, 1.6 + Math.random() * 2.4, 0.8 + Math.random() * 0.65, col, 2.9, true);
+        this.spawnParticle(pos, _tmpVel, 1.6 + Math.random() * 2.4, 0.8 + Math.random() * 0.65, col, 2.9, true);
       }
     }
   }
@@ -717,14 +689,14 @@ export class MissileSystem {
       m.smokeAcc += dt;
       if (m.smokeAcc >= 0.015) {
         m.smokeAcc = 0;
-        const drift = new THREE.Vector3(
+        _tmpVel.set(
           (Math.random() - 0.5) * 1.4,
           (Math.random() - 0.5) * 1.4,
           (Math.random() - 0.5) * 1.4
         );
         this.spawnParticle(
           m.pos,
-          drift,
+          _tmpVel,
           0.42 + Math.random() * 0.22,
           1.1 + Math.random() * 0.4,
           0xf7f5f2,
@@ -757,12 +729,13 @@ export class MissileSystem {
         if (hit) {
           this.spawnImpact(m.pos, isWater, time);
           if (!isWater) {
-            this.burners.push({
-              pos: new THREE.Vector3(m.pos.x, Math.max(WATER_LEVEL + 0.8, getTerrainHeight(m.pos.x, m.pos.z) + 1.0), m.pos.z),
-              life: 8.5,
-              acc: 0,
-              big: true,
-            });
+            this.addBurner(
+              m.pos.x,
+              Math.max(WATER_LEVEL + 0.8, getTerrainHeight(m.pos.x, m.pos.z) + 1.0),
+              m.pos.z,
+              8.5,
+              true
+            );
           }
           if (!m.isRemote) {
             if (!isWater) {
@@ -795,33 +768,35 @@ export class MissileSystem {
       br.acc += dt;
       if (br.acc >= 0.14) {
         br.acc = 0;
-        const vel = new THREE.Vector3((Math.random() - 0.5) * 3.5, 9 + Math.random() * 7, (Math.random() - 0.5) * 3.5);
+        _tmpVel.set((Math.random() - 0.5) * 3.5, 9 + Math.random() * 7, (Math.random() - 0.5) * 3.5);
         const col = Math.random() < 0.28 ? 0xf58434 : 0x454052;
-        this.spawnParticle(br.pos, vel, br.big ? 1.8 : 1.0, 1.5, col, 2.2, true);
+        this.spawnParticle(br.pos, _tmpVel, br.big ? 1.8 : 1.0, 1.5, col, 2.2, true);
       }
     }
 
-    // Update particles
+    // Update particles in single InstancedMesh draw call
+    this.particlePool.beginFrame();
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const p = this.particles[i];
       p.life -= dt;
       if (p.life <= 0) {
-        this.scene.remove(p.mesh);
-        if (p.dithered) p.mat.dispose();
         this.particles.splice(i, 1);
         continue;
       }
 
-      p.mesh.position.addScaledVector(p.vel, dt);
-      p.vel.y -= 9.8 * dt * 0.35;
-      p.vel.multiplyScalar(0.95);
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.z += p.vz * dt;
+      p.vy -= 9.8 * dt * 0.35;
+      p.vx *= 0.95;
+      p.vy *= 0.95;
+      p.vz *= 0.95;
 
       const t = 1 - p.life / p.maxLife;
-      const sc = p.size * (1 + t * p.grow);
-      p.mesh.scale.setScalar(Math.max(0.08, sc));
-      if (p.dithered) {
-        p.mat.uniforms.uAlpha.value = Math.max(0, 1.0 - t * 1.05);
-      }
+      const sc = Math.max(0.08, p.size * (1 + t * p.grow));
+      const alpha = p.dithered ? Math.max(0, 1.0 - t * 1.05) : 1.0;
+      this.particlePool.push(p.x, p.y, p.z, sc, p.r, p.g, p.b, alpha);
     }
+    this.particlePool.endFrame();
   }
 }

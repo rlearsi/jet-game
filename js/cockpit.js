@@ -1,4 +1,4 @@
-import { getTerrainHeight } from './world.js?v=18';
+import { getTerrainHeight } from './world.js?v=19';
 
 export class FighterCockpit {
   constructor(canvas) {

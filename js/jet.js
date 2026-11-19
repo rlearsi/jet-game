@@ -1,53 +1,154 @@
 import * as THREE from 'three';
-import { getTerrainHeight, WATER_LEVEL } from './world.js?v=18';
-import { SHIP_IDS, SHIP_CATALOG, buildJetVisualRig, buildAirfoilSurface } from './jets/index.js?v=18';
+import { getTerrainHeight, WATER_LEVEL } from './world.js?v=19';
+import { SHIP_IDS, SHIP_CATALOG, buildJetVisualRig, buildAirfoilSurface } from './jets/index.js?v=19';
+import { DitheredParticlePool } from './particles.js?v=19';
 
 export { SHIP_IDS, SHIP_CATALOG, buildJetVisualRig, buildAirfoilSurface };
 
-function createDitherPuffMaterial() {
-  return new THREE.ShaderMaterial({
-    uniforms: {
-      uColor: { value: new THREE.Color(0xffea78) },
-      uAlpha: { value: 1.0 },
-    },
-    vertexShader: `
-      void main() {
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }
-    `,
-    fragmentShader: `
-      uniform vec3 uColor;
-      uniform float uAlpha;
+const COL_YELLOW = new THREE.Color(0xffef7a);
+const COL_ORANGE = new THREE.Color(0xf28836);
+const COL_SMOKE = new THREE.Color(0xb6b0c8);
+const COL_FIRE_HOT = new THREE.Color(0xfff066);
+const COL_FIRE_WARM = new THREE.Color(0xff962e);
+const COL_FIRE_RED = new THREE.Color(0xf2461c);
+const COL_SOOT_DARK = new THREE.Color(0x2d2834);
+const COL_SOOT_MID = new THREE.Color(0x4a4456);
 
-      float bayer4(vec2 pos) {
-        int x = int(mod(pos.x, 4.0));
-        int y = int(mod(pos.y, 4.0));
-        int idx = y * 4 + x;
-        if (idx == 0) return 0.0 / 16.0;
-        if (idx == 1) return 8.0 / 16.0;
-        if (idx == 2) return 2.0 / 16.0;
-        if (idx == 3) return 10.0 / 16.0;
-        if (idx == 4) return 12.0 / 16.0;
-        if (idx == 5) return 4.0 / 16.0;
-        if (idx == 6) return 14.0 / 16.0;
-        if (idx == 7) return 6.0 / 16.0;
-        if (idx == 8) return 3.0 / 16.0;
-        if (idx == 9) return 11.0 / 16.0;
-        if (idx == 10) return 1.0 / 16.0;
-        if (idx == 11) return 9.0 / 16.0;
-        if (idx == 12) return 15.0 / 16.0;
-        if (idx == 13) return 7.0 / 16.0;
-        if (idx == 14) return 13.0 / 16.0;
-        return 5.0 / 16.0;
-      }
+const TMP_COLOR = new THREE.Color();
+const TMP_VEC_A = new THREE.Vector3();
+const TMP_VEC_B = new THREE.Vector3();
+const TMP_FWD = new THREE.Vector3();
+const TMP_RIGHT = new THREE.Vector3();
+const TMP_QUAT = new THREE.Quaternion();
+const TMP_EULER = new THREE.Euler();
 
-      void main() {
-        float threshold = bayer4(floor(gl_FragCoord.xy));
-        if (uAlpha < threshold) discard;
-        gl_FragColor = vec4(uColor, 1.0);
+function pushExhaustPuffsForJet(jetObj, maxPuffs, backSpeed, abLife, cruiseLife, abSize, cruiseSize) {
+  const nx = Number.isFinite(jetObj.nozzleX) ? jetObj.nozzleX : 0.40;
+  const ny = jetObj.nozzleY || 0.0;
+  const nz = (jetObj.nozzleZ || 2.60) + 0.85;
+  const xs = jetObj.engineCount === 1 ? [0] : [-nx, nx];
+
+  TMP_EULER.set(jetObj.pitch, jetObj.yaw, 0, 'YXZ');
+  TMP_FWD.set(0, 0, -1).applyEuler(TMP_EULER).normalize().multiplyScalar(-backSpeed);
+
+  const initSize = jetObj.afterburner ? abSize : cruiseSize;
+  const maxAge = jetObj.afterburner ? abLife : cruiseLife;
+
+  for (const sx of xs) {
+    if (jetObj.puffs.length >= maxPuffs) jetObj.puffs.shift();
+    jetObj.getWorldPoint(sx, ny, nz, TMP_VEC_A);
+    jetObj.puffs.push({
+      x: TMP_VEC_A.x,
+      y: TMP_VEC_A.y,
+      z: TMP_VEC_A.z,
+      vx: TMP_FWD.x + (Math.random() - 0.5) * 3.0,
+      vy: TMP_FWD.y + (Math.random() - 0.5) * 3.0,
+      vz: TMP_FWD.z + (Math.random() - 0.5) * 3.0,
+      age: 0,
+      maxAge,
+      initSize,
+      ab: jetObj.afterburner,
+      isDamageFire: false,
+      dmg: 0,
+    });
+  }
+}
+
+function pushDamageFirePuffsForJet(jetObj, dmgRatio, maxPuffs, backSpeed, baseLife) {
+  if (jetObj.puffs.length >= maxPuffs) return;
+  TMP_EULER.set(jetObj.pitch, jetObj.yaw, 0, 'YXZ');
+  TMP_FWD.set(0, 0, -1).applyEuler(TMP_EULER).normalize().multiplyScalar(-backSpeed);
+
+  const count = dmgRatio > 0.72 ? 3 : dmgRatio > 0.42 ? 2 : 1;
+  for (let i = 0; i < count; i++) {
+    if (jetObj.puffs.length >= maxPuffs) break;
+    const ox = (Math.random() - 0.5) * (1.2 + dmgRatio * 1.4);
+    const oy = (Math.random() - 0.3) * 0.45;
+    const oz = 1.2 + Math.random() * 1.8;
+    jetObj.getWorldPoint(ox, oy, oz, TMP_VEC_A);
+    const initSize = (0.40 + dmgRatio * 0.62) * (0.8 + Math.random() * 0.45);
+
+    jetObj.puffs.push({
+      x: TMP_VEC_A.x,
+      y: TMP_VEC_A.y,
+      z: TMP_VEC_A.z,
+      vx: TMP_FWD.x + (Math.random() - 0.5) * 4.5,
+      vy: TMP_FWD.y + 3.0 + Math.random() * 5.0,
+      vz: TMP_FWD.z + (Math.random() - 0.5) * 4.5,
+      age: 0,
+      maxAge: baseLife + dmgRatio * 0.62,
+      initSize,
+      ab: false,
+      isDamageFire: true,
+      dmg: dmgRatio,
+    });
+  }
+}
+
+function updateJetPuffPool(puffs, puffPool, dt, abGrow = 3.6, cruiseGrow = 2.4) {
+  puffPool.beginFrame();
+  for (let i = puffs.length - 1; i >= 0; i--) {
+    const p = puffs[i];
+    p.age += dt;
+    if (p.age >= p.maxAge) {
+      puffs.splice(i, 1);
+      continue;
+    }
+
+    const t = p.age / p.maxAge;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.z += p.vz * dt;
+    p.vx *= 0.95;
+    p.vy *= 0.95;
+    p.vz *= 0.95;
+
+    let scale;
+    let alpha;
+    if (p.isDamageFire) {
+      scale = p.initSize * (1.0 + t * (2.6 + p.dmg * 2.2));
+      if (t < 0.24) {
+        TMP_COLOR.copy(p.dmg > 0.5 ? COL_FIRE_HOT : COL_FIRE_WARM);
+        alpha = 1.0;
+      } else if (t < 0.52) {
+        TMP_COLOR.copy(COL_FIRE_RED);
+        alpha = 1.0 - (t - 0.24) * 0.45;
+      } else {
+        const sootT = (t - 0.52) / 0.48;
+        TMP_COLOR.copy(COL_SOOT_DARK).lerp(COL_SOOT_MID, sootT);
+        alpha = Math.max(0, 1.0 - sootT) * (0.65 + p.dmg * 0.3);
       }
-    `,
-  });
+    } else {
+      scale = p.initSize * (1.0 + t * (p.ab ? abGrow : cruiseGrow));
+      if (t < 0.25) {
+        TMP_COLOR.copy(COL_YELLOW);
+        alpha = 1.0;
+      } else if (t < 0.55) {
+        TMP_COLOR.copy(COL_ORANGE);
+        alpha = 1.0 - (t - 0.25) * 0.6;
+      } else {
+        TMP_COLOR.copy(COL_SMOKE);
+        alpha = Math.max(0, (1.0 - t) / 0.45) * 0.85;
+      }
+    }
+
+    puffPool.push(p.x, p.y, p.z, scale, TMP_COLOR.r, TMP_COLOR.g, TMP_COLOR.b, alpha);
+  }
+  puffPool.endFrame();
+}
+
+function assignRigToJet(target, rig) {
+  target.group = rig.group;
+  target.visual = rig.visual;
+  target.hullGroup = rig.hullGroup;
+  target.flameL = rig.flameL;
+  target.flameR = rig.flameR;
+  target.muzzleFlash = rig.muzzleFlash;
+  target.wingtipPoint = rig.wingtipPoint;
+  target.nozzleX = rig.nozzleX;
+  target.nozzleY = rig.nozzleY || 0.0;
+  target.nozzleZ = rig.nozzleZ;
+  target.engineCount = rig.engineCount ?? 2;
 }
 
 class RibbonTrail {
@@ -133,18 +234,7 @@ export class FighterJet {
     this.scene = scene;
     this.shipId = SHIP_CATALOG[shipId] ? shipId : 'striker';
     this.stats = SHIP_CATALOG[this.shipId];
-    const rig = buildJetVisualRig(this.shipId);
-    this.group = rig.group;
-    this.visual = rig.visual;
-    this.hullGroup = rig.hullGroup;
-    this.flameL = rig.flameL;
-    this.flameR = rig.flameR;
-    this.muzzleFlash = rig.muzzleFlash;
-    this.wingtipPoint = rig.wingtipPoint;
-    this.nozzleX = rig.nozzleX;
-    this.nozzleY = rig.nozzleY || 0.0;
-    this.nozzleZ = rig.nozzleZ;
-    this.engineCount = rig.engineCount ?? 2;
+    assignRigToJet(this, buildJetVisualRig(this.shipId));
     scene.add(this.group);
 
     this.visual.scale.setScalar(0.74);
@@ -154,7 +244,7 @@ export class FighterJet {
     this.trailTimer = 0;
 
     this.puffs = [];
-    this.puffGeo = new THREE.IcosahedronGeometry(1.0, 1);
+    this.puffPool = new DitheredParticlePool(scene, 180);
     this.puffTimer = 0;
     this.damageTrailTimer = 0;
 
@@ -202,18 +292,7 @@ export class FighterJet {
 
     this.shipId = id;
     this.stats = SHIP_CATALOG[id];
-    const rig = buildJetVisualRig(id);
-    this.group = rig.group;
-    this.visual = rig.visual;
-    this.hullGroup = rig.hullGroup;
-    this.flameL = rig.flameL;
-    this.flameR = rig.flameR;
-    this.muzzleFlash = rig.muzzleFlash;
-    this.wingtipPoint = rig.wingtipPoint;
-    this.nozzleX = rig.nozzleX;
-    this.nozzleY = rig.nozzleY || 0.0;
-    this.nozzleZ = rig.nozzleZ;
-    this.engineCount = rig.engineCount ?? 2;
+    assignRigToJet(this, buildJetVisualRig(id));
 
     this.hullGroup.traverse((obj) => {
       if (obj.isMesh) obj.layers.enable(1);
@@ -228,6 +307,11 @@ export class FighterJet {
     this.hp = Math.max(1, Math.min(this.maxHp, Math.round(prevRatio * this.maxHp)));
     this.leftTrail.clear();
     this.rightTrail.clear();
+  }
+
+  clearPuffs() {
+    this.puffs.length = 0;
+    this.puffPool.clear();
   }
 
   respawn(offsetIndex = 0) {
@@ -248,10 +332,11 @@ export class FighterJet {
     this.spawnProtection = 2.0;
     this.damageTrailTimer = 0;
     this.damageCooldown = 0;
-    const fwd = this.getForwardDirection();
+    const fwd = this.getForwardDirection(TMP_FWD);
     this.velocity.copy(fwd).multiplyScalar(this.speed);
     this.leftTrail.clear();
     this.rightTrail.clear();
+    this.clearPuffs();
     this.group.position.copy(this.position);
     this.group.visible = true;
   }
@@ -278,142 +363,25 @@ export class FighterJet {
     this.rightTrail.setVisible(visible);
   }
 
-  getWorldPoint(x, y, z) {
-    return new THREE.Vector3(x, y, z).applyMatrix4(this.visual.matrixWorld);
+  getWorldPoint(x, y, z, out = new THREE.Vector3()) {
+    return out.set(x, y, z).applyMatrix4(this.visual.matrixWorld);
   }
 
-  getForwardDirection() {
-    const fwd = new THREE.Vector3(0, 0, -1);
-    fwd.applyEuler(new THREE.Euler(this.pitch, this.yaw, 0, 'YXZ'));
-    return fwd.normalize();
+  getForwardDirection(out = new THREE.Vector3()) {
+    TMP_EULER.set(this.pitch, this.yaw, 0, 'YXZ');
+    return out.set(0, 0, -1).applyEuler(TMP_EULER).normalize();
   }
 
   spawnExhaustPuffs() {
-    const nx = Number.isFinite(this.nozzleX) ? this.nozzleX : 0.40;
-    const ny = this.nozzleY || 0.0;
-    const nz = (this.nozzleZ || 2.60) + 0.85;
-    const xs = this.engineCount === 1 ? [0] : [-nx, nx];
-    for (const sx of xs) {
-      const origin = this.getWorldPoint(sx, ny, nz);
-      const mat = createDitherPuffMaterial();
-      const mesh = new THREE.Mesh(this.puffGeo, mat);
-      mesh.position.copy(origin);
-      const initSize = this.afterburner ? 0.52 : 0.34;
-      mesh.scale.setScalar(initSize);
-      this.scene.add(mesh);
-
-      const backDir = this.getForwardDirection().multiplyScalar(-12);
-      this.puffs.push({
-        mesh,
-        mat,
-        vel: backDir.add(
-          new THREE.Vector3(
-            (Math.random() - 0.5) * 3.0,
-            (Math.random() - 0.5) * 3.0,
-            (Math.random() - 0.5) * 3.0
-          )
-        ),
-        age: 0,
-        maxAge: this.afterburner ? 0.76 : 0.48,
-        initSize,
-        ab: this.afterburner,
-      });
-    }
+    pushExhaustPuffsForJet(this, 180, 12, 0.76, 0.48, 0.52, 0.34);
   }
 
   spawnDamageFirePuffs(dmgRatio) {
-    if (this.puffs.length >= 180) return;
-    const count = dmgRatio > 0.72 ? 3 : dmgRatio > 0.42 ? 2 : 1;
-    const backDir = this.getForwardDirection().multiplyScalar(-9.5);
-    for (let i = 0; i < count; i++) {
-      if (this.puffs.length >= 180) break;
-      const ox = (Math.random() - 0.5) * (1.2 + dmgRatio * 1.4);
-      const oy = (Math.random() - 0.3) * 0.45;
-      const oz = 1.2 + Math.random() * 1.8;
-      const origin = this.getWorldPoint(ox, oy, oz);
-      const mat = createDitherPuffMaterial();
-      const mesh = new THREE.Mesh(this.puffGeo, mat);
-      mesh.position.copy(origin);
-      const initSize = (0.42 + dmgRatio * 0.65) * (0.8 + Math.random() * 0.45);
-      mesh.scale.setScalar(initSize);
-      this.scene.add(mesh);
-
-      this.puffs.push({
-        mesh,
-        mat,
-        isDamageFire: true,
-        dmg: dmgRatio,
-        vel: backDir.clone().add(
-          new THREE.Vector3(
-            (Math.random() - 0.5) * 4.5,
-            3.0 + Math.random() * 5.0,
-            (Math.random() - 0.5) * 4.5
-          )
-        ),
-        age: 0,
-        maxAge: 0.65 + dmgRatio * 0.65,
-        initSize,
-        ab: false,
-      });
-    }
+    pushDamageFirePuffsForJet(this, dmgRatio, 180, 9.5, 0.65);
   }
 
   updatePuffs(dt) {
-    const colYellow = new THREE.Color(0xffef7a);
-    const colOrange = new THREE.Color(0xf28836);
-    const colSmoke = new THREE.Color(0xb6b0c8);
-    const colFireHot = new THREE.Color(0xfff066);
-    const colFireWarm = new THREE.Color(0xff962e);
-    const colFireRed = new THREE.Color(0xf2461c);
-    const colSootDark = new THREE.Color(0x2d2834);
-    const colSootMid = new THREE.Color(0x4a4456);
-
-    for (let i = this.puffs.length - 1; i >= 0; i--) {
-      const p = this.puffs[i];
-      p.age += dt;
-      if (p.age >= p.maxAge) {
-        this.scene.remove(p.mesh);
-        p.mat.dispose();
-        this.puffs.splice(i, 1);
-        continue;
-      }
-
-      const t = p.age / p.maxAge;
-      p.mesh.position.addScaledVector(p.vel, dt);
-      p.vel.multiplyScalar(0.95);
-
-      if (p.isDamageFire) {
-        const scale = p.initSize * (1.0 + t * (2.6 + p.dmg * 2.2));
-        p.mesh.scale.setScalar(scale);
-
-        if (t < 0.24) {
-          p.mat.uniforms.uColor.value.copy(p.dmg > 0.5 ? colFireHot : colFireWarm);
-          p.mat.uniforms.uAlpha.value = 1.0;
-        } else if (t < 0.52) {
-          p.mat.uniforms.uColor.value.copy(colFireRed);
-          p.mat.uniforms.uAlpha.value = 1.0 - (t - 0.24) * 0.45;
-        } else {
-          const sootT = (t - 0.52) / 0.48;
-          p.mat.uniforms.uColor.value.copy(colSootDark).lerp(colSootMid, sootT);
-          p.mat.uniforms.uAlpha.value = Math.max(0, 1.0 - sootT) * (0.65 + p.dmg * 0.3);
-        }
-        continue;
-      }
-
-      const scale = p.initSize * (1.0 + t * (p.ab ? 3.6 : 2.4));
-      p.mesh.scale.setScalar(scale);
-
-      if (t < 0.25) {
-        p.mat.uniforms.uColor.value.copy(colYellow);
-        p.mat.uniforms.uAlpha.value = 1.0;
-      } else if (t < 0.55) {
-        p.mat.uniforms.uColor.value.copy(colOrange);
-        p.mat.uniforms.uAlpha.value = 1.0 - (t - 0.25) * 0.6;
-      } else {
-        p.mat.uniforms.uColor.value.copy(colSmoke);
-        p.mat.uniforms.uAlpha.value = Math.max(0, (1.0 - t) / 0.45) * 0.85;
-      }
-    }
+    updateJetPuffPool(this.puffs, this.puffPool, dt, 3.6, 2.4);
   }
 
   update(dt, input, isCockpit) {
@@ -463,7 +431,7 @@ export class FighterJet {
     const targetSpeed = (this.afterburner ? this.stats.abSpeed : this.stats.cruiseSpeed) + climbDrag;
     this.speed = THREE.MathUtils.lerp(this.speed, targetSpeed, 1 - Math.exp(-2.6 * dt));
 
-    const fwd = this.getForwardDirection();
+    const fwd = this.getForwardDirection(TMP_FWD);
     this.velocity.copy(fwd).multiplyScalar(this.speed);
     this.position.addScaledVector(this.velocity, dt);
 
@@ -525,14 +493,14 @@ export class FighterJet {
     this.trailTimer += dt;
     if (this.trailTimer >= 0.018) {
       this.trailTimer = 0;
-      const rightVec = new THREE.Vector3(1, 0, 0).applyQuaternion(
-        new THREE.Quaternion().setFromEuler(new THREE.Euler(this.pitch, this.yaw, this.bank + extraRoll, 'YXZ'))
-      );
+      TMP_EULER.set(this.pitch, this.yaw, this.bank + extraRoll, 'YXZ');
+      TMP_QUAT.setFromEuler(TMP_EULER);
+      TMP_RIGHT.set(1, 0, 0).applyQuaternion(TMP_QUAT);
       const [wx, wy, wz] = this.wingtipPoint;
-      const tipL = this.getWorldPoint(-wx, wy, wz);
-      const tipR = this.getWorldPoint(wx, wy, wz);
-      this.leftTrail.push(tipL, rightVec);
-      this.rightTrail.push(tipR, rightVec);
+      const tipL = this.getWorldPoint(-wx, wy, wz, TMP_VEC_A);
+      const tipR = this.getWorldPoint(wx, wy, wz, TMP_VEC_B);
+      this.leftTrail.push(tipL, TMP_RIGHT);
+      this.rightTrail.push(tipR, TMP_RIGHT);
     }
 
     if (!isCockpit) {
@@ -560,7 +528,7 @@ export class FighterJet {
 
 /**
  * Network-controlled remote player fighter jet with smooth dead-reckoning interpolation,
- * squadron accent colors, wingtip contrails, and dithered exhaust puffs.
+ * squadron accent colors, wingtip contrails, and instanced dithered exhaust puffs.
  */
 export class RemoteJet {
   constructor(scene, id, name = 'PILOT', colorHex = '#36d6ff', shipId = 'striker') {
@@ -574,18 +542,7 @@ export class RemoteJet {
     this.r = 8.5;
     this.h = 5.0;
 
-    const rig = buildJetVisualRig(this.shipId, colorHex);
-    this.group = rig.group;
-    this.visual = rig.visual;
-    this.hullGroup = rig.hullGroup;
-    this.flameL = rig.flameL;
-    this.flameR = rig.flameR;
-    this.muzzleFlash = rig.muzzleFlash;
-    this.wingtipPoint = rig.wingtipPoint;
-    this.nozzleX = rig.nozzleX;
-    this.nozzleY = rig.nozzleY || 0.0;
-    this.nozzleZ = rig.nozzleZ;
-    this.engineCount = rig.engineCount ?? 2;
+    assignRigToJet(this, buildJetVisualRig(this.shipId, colorHex));
 
     this.hullGroup.traverse((obj) => {
       if (obj.isMesh) obj.layers.enable(1);
@@ -599,7 +556,7 @@ export class RemoteJet {
     this.trailTimer = 0;
 
     this.puffs = [];
-    this.puffGeo = new THREE.IcosahedronGeometry(1.0, 1);
+    this.puffPool = new DitheredParticlePool(scene, 140);
     this.puffTimer = 0;
     this.damageTrailTimer = 0;
 
@@ -638,18 +595,7 @@ export class RemoteJet {
     this.shipId = id;
     this.maxHp = SHIP_CATALOG[id].maxHp;
 
-    const rig = buildJetVisualRig(id, this.colorHex);
-    this.group = rig.group;
-    this.visual = rig.visual;
-    this.hullGroup = rig.hullGroup;
-    this.flameL = rig.flameL;
-    this.flameR = rig.flameR;
-    this.muzzleFlash = rig.muzzleFlash;
-    this.wingtipPoint = rig.wingtipPoint;
-    this.nozzleX = rig.nozzleX;
-    this.nozzleY = rig.nozzleY || 0.0;
-    this.nozzleZ = rig.nozzleZ;
-    this.engineCount = rig.engineCount ?? 2;
+    assignRigToJet(this, buildJetVisualRig(id, this.colorHex));
 
     this.hullGroup.traverse((obj) => {
       if (obj.isMesh) obj.layers.enable(1);
@@ -704,133 +650,20 @@ export class RemoteJet {
     this.muzzleTimer = 0.07;
   }
 
-  getWorldPoint(x, y, z) {
-    return new THREE.Vector3(x, y, z).applyMatrix4(this.visual.matrixWorld);
+  getWorldPoint(x, y, z, out = new THREE.Vector3()) {
+    return out.set(x, y, z).applyMatrix4(this.visual.matrixWorld);
   }
 
   spawnExhaustPuffs() {
-    const fwd = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(this.pitch, this.yaw, 0, 'YXZ'));
-    const nx = Number.isFinite(this.nozzleX) ? this.nozzleX : 0.40;
-    const ny = this.nozzleY || 0.0;
-    const nz = (this.nozzleZ || 2.60) + 0.85;
-    const xs = this.engineCount === 1 ? [0] : [-nx, nx];
-    for (const sx of xs) {
-      const origin = this.getWorldPoint(sx, ny, nz);
-      const mat = createDitherPuffMaterial();
-      const mesh = new THREE.Mesh(this.puffGeo, mat);
-      mesh.position.copy(origin);
-      const initSize = this.afterburner ? 0.50 : 0.32;
-      mesh.scale.setScalar(initSize);
-      this.scene.add(mesh);
-
-      this.puffs.push({
-        mesh,
-        mat,
-        vel: fwd.clone().multiplyScalar(-12).add(
-          new THREE.Vector3(
-            (Math.random() - 0.5) * 3.0,
-            (Math.random() - 0.5) * 3.0,
-            (Math.random() - 0.5) * 3.0
-          )
-        ),
-        age: 0,
-        maxAge: this.afterburner ? 0.72 : 0.44,
-        initSize,
-        ab: this.afterburner,
-      });
-    }
+    pushExhaustPuffsForJet(this, 140, 12, 0.72, 0.44, 0.50, 0.32);
   }
 
   spawnDamageFirePuffs(dmgRatio) {
-    if (this.puffs.length >= 160) return;
-    const fwd = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(this.pitch, this.yaw, 0, 'YXZ'));
-    const count = dmgRatio > 0.72 ? 3 : dmgRatio > 0.42 ? 2 : 1;
-    const backDir = fwd.multiplyScalar(-9.5);
-    for (let i = 0; i < count; i++) {
-      if (this.puffs.length >= 160) break;
-      const ox = (Math.random() - 0.5) * (1.2 + dmgRatio * 1.4);
-      const oy = (Math.random() - 0.3) * 0.45;
-      const oz = 1.2 + Math.random() * 1.8;
-      const origin = this.getWorldPoint(ox, oy, oz);
-      const mat = createDitherPuffMaterial();
-      const mesh = new THREE.Mesh(this.puffGeo, mat);
-      mesh.position.copy(origin);
-      const initSize = (0.40 + dmgRatio * 0.62) * (0.8 + Math.random() * 0.45);
-      mesh.scale.setScalar(initSize);
-      this.scene.add(mesh);
-
-      this.puffs.push({
-        mesh,
-        mat,
-        isDamageFire: true,
-        dmg: dmgRatio,
-        vel: backDir.clone().add(
-          new THREE.Vector3(
-            (Math.random() - 0.5) * 4.5,
-            3.0 + Math.random() * 5.0,
-            (Math.random() - 0.5) * 4.5
-          )
-        ),
-        age: 0,
-        maxAge: 0.62 + dmgRatio * 0.60,
-        initSize,
-        ab: false,
-      });
-    }
+    pushDamageFirePuffsForJet(this, dmgRatio, 140, 9.5, 0.62);
   }
 
   updatePuffs(dt) {
-    const colYellow = new THREE.Color(0xffef7a);
-    const colOrange = new THREE.Color(0xf28836);
-    const colSmoke = new THREE.Color(0xb6b0c8);
-    const colFireHot = new THREE.Color(0xfff066);
-    const colFireWarm = new THREE.Color(0xff962e);
-    const colFireRed = new THREE.Color(0xf2461c);
-    const colSootDark = new THREE.Color(0x2d2834);
-    const colSootMid = new THREE.Color(0x4a4456);
-
-    for (let i = this.puffs.length - 1; i >= 0; i--) {
-      const p = this.puffs[i];
-      p.age += dt;
-      if (p.age >= p.maxAge) {
-        this.scene.remove(p.mesh);
-        p.mat.dispose();
-        this.puffs.splice(i, 1);
-        continue;
-      }
-      const t = p.age / p.maxAge;
-      p.mesh.position.addScaledVector(p.vel, dt);
-      p.vel.multiplyScalar(0.95);
-
-      if (p.isDamageFire) {
-        p.mesh.scale.setScalar(p.initSize * (1.0 + t * (2.6 + p.dmg * 2.2)));
-        if (t < 0.24) {
-          p.mat.uniforms.uColor.value.copy(p.dmg > 0.5 ? colFireHot : colFireWarm);
-          p.mat.uniforms.uAlpha.value = 1.0;
-        } else if (t < 0.52) {
-          p.mat.uniforms.uColor.value.copy(colFireRed);
-          p.mat.uniforms.uAlpha.value = 1.0 - (t - 0.24) * 0.45;
-        } else {
-          const sootT = (t - 0.52) / 0.48;
-          p.mat.uniforms.uColor.value.copy(colSootDark).lerp(colSootMid, sootT);
-          p.mat.uniforms.uAlpha.value = Math.max(0, 1.0 - sootT) * (0.65 + p.dmg * 0.3);
-        }
-        continue;
-      }
-
-      p.mesh.scale.setScalar(p.initSize * (1.0 + t * (p.ab ? 3.5 : 2.2)));
-
-      if (t < 0.25) {
-        p.mat.uniforms.uColor.value.copy(colYellow);
-        p.mat.uniforms.uAlpha.value = 1.0;
-      } else if (t < 0.55) {
-        p.mat.uniforms.uColor.value.copy(colOrange);
-        p.mat.uniforms.uAlpha.value = 1.0 - (t - 0.25) * 0.6;
-      } else {
-        p.mat.uniforms.uColor.value.copy(colSmoke);
-        p.mat.uniforms.uAlpha.value = Math.max(0, (1.0 - t) / 0.45) * 0.85;
-      }
-    }
+    updateJetPuffPool(this.puffs, this.puffPool, dt, 3.5, 2.2);
   }
 
   update(dt, localJetPos) {
@@ -876,14 +709,14 @@ export class RemoteJet {
       this.trailTimer += dt;
       if (this.trailTimer >= 0.022) {
         this.trailTimer = 0;
-        const rightVec = new THREE.Vector3(1, 0, 0).applyQuaternion(
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(this.pitch, this.yaw, this.bank + this.rollExtra, 'YXZ'))
-        );
+        TMP_EULER.set(this.pitch, this.yaw, this.bank + this.rollExtra, 'YXZ');
+        TMP_QUAT.setFromEuler(TMP_EULER);
+        TMP_RIGHT.set(1, 0, 0).applyQuaternion(TMP_QUAT);
         const [wx, wy, wz] = this.wingtipPoint;
-        const tipL = this.getWorldPoint(-wx, wy, wz);
-        const tipR = this.getWorldPoint(wx, wy, wz);
-        this.leftTrail.push(tipL, rightVec);
-        this.rightTrail.push(tipR, rightVec);
+        const tipL = this.getWorldPoint(-wx, wy, wz, TMP_VEC_A);
+        const tipR = this.getWorldPoint(wx, wy, wz, TMP_VEC_B);
+        this.leftTrail.push(tipL, TMP_RIGHT);
+        this.rightTrail.push(tipR, TMP_RIGHT);
       }
 
       const dist = localJetPos ? this.position.distanceTo(localJetPos) : 0;
@@ -917,11 +750,7 @@ export class RemoteJet {
     this.leftTrail.mat.dispose();
     this.rightTrail.geo.dispose();
     this.rightTrail.mat.dispose();
-    for (const p of this.puffs) {
-      this.scene.remove(p.mesh);
-      p.mat.dispose();
-    }
     this.puffs.length = 0;
-    this.puffGeo.dispose();
+    this.puffPool.dispose();
   }
 }

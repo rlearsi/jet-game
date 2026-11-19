@@ -20,6 +20,51 @@ const CELL_SIZE = WORLD_SIZE / TERRAIN_SEGS;
 let liveHeights = null;
 let baseHeights = null;
 
+function writeTSMatrix(arr, index, x, y, z, sx, sy, sz) {
+  const o = index * 16;
+  arr[o] = sx;
+  arr[o + 1] = 0;
+  arr[o + 2] = 0;
+  arr[o + 3] = 0;
+  arr[o + 4] = 0;
+  arr[o + 5] = sy;
+  arr[o + 6] = 0;
+  arr[o + 7] = 0;
+  arr[o + 8] = 0;
+  arr[o + 9] = 0;
+  arr[o + 10] = sz;
+  arr[o + 11] = 0;
+  arr[o + 12] = x;
+  arr[o + 13] = y;
+  arr[o + 14] = z;
+  arr[o + 15] = 1;
+}
+
+function writeYRotTransMatrix(arr, index, x, y, z, sinA, cosA) {
+  const o = index * 16;
+  arr[o] = cosA;
+  arr[o + 1] = 0;
+  arr[o + 2] = -sinA;
+  arr[o + 3] = 0;
+  arr[o + 4] = 0;
+  arr[o + 5] = 1;
+  arr[o + 6] = 0;
+  arr[o + 7] = 0;
+  arr[o + 8] = sinA;
+  arr[o + 9] = 0;
+  arr[o + 10] = cosA;
+  arr[o + 11] = 0;
+  arr[o + 12] = x;
+  arr[o + 13] = y;
+  arr[o + 14] = z;
+  arr[o + 15] = 1;
+}
+
+function writeZeroMatrix(arr, index) {
+  const o = index * 16;
+  arr.fill(0, o, o + 16);
+}
+
 function mulberry32(seed) {
   let a = seed >>> 0;
   return function () {
@@ -259,6 +304,7 @@ export function buildWorld(scene) {
     rippleUniforms.push(new THREE.Vector4(0, 0, -999, 0));
   }
   let nextRippleIdx = 0;
+  let lastRippleAt = -999;
 
   // =========================================================================
   // 1. SUNSET SKY DOME (lavender -> peach -> apricot -> cream + dramatic cirrus streaks)
@@ -408,6 +454,7 @@ export function buildWorld(scene) {
       uSunDir: { value: SUN_DIR.clone() },
       uCamPos: { value: new THREE.Vector3() },
       uClouds: { value: cloudShadowUniforms },
+      uCloudCount: { value: MAX_CLOUDS },
       uTime: { value: 0 },
       uTerrainGrain: { value: 0.35 },
       uTerrainTheme: { value: 0.0 },
@@ -429,6 +476,7 @@ export function buildWorld(scene) {
       uniform vec3 uSunDir;
       uniform vec3 uCamPos;
       uniform vec4 uClouds[${MAX_CLOUDS}];
+      uniform int uCloudCount;
       uniform float uTime;
       uniform float uTerrainGrain;
       uniform float uTerrainTheme;
@@ -619,7 +667,7 @@ export function buildWorld(scene) {
         }
 
         // Stepped sunset cel-lighting with theme shadows
-        float ndl = dot(N, normalize(uSunDir));
+        float ndl = dot(N, uSunDir);
         float lit = smoothstep(-0.18, 0.08, ndl) * 0.5 + smoothstep(0.18, 0.45, ndl) * 0.5;
         vec3 shadowTint = vec3(0.56, 0.52, 0.68);
         vec3 sunTint    = vec3(1.06, 0.99, 0.90);
@@ -639,18 +687,21 @@ export function buildWorld(scene) {
         }
         vec3 col = baseCol * mix(shadowTint, sunTint, lit);
 
-        // Cloud shadows on terrain
-        float cloudDark = 0.0;
-        for (int i = 0; i < ${MAX_CLOUDS}; i++) {
-          vec2 cd = p - uClouds[i].xy;
-          float r = uClouds[i].z;
-          float d2 = dot(cd, cd) / (r * r);
-          cloudDark = max(cloudDark, 1.0 - smoothstep(0.55, 1.05, d2));
+        // Distance to camera & dynamic-bound cloud shadows
+        float dist = length(uCamPos - vWorldPos);
+        if (uCloudCount > 0 && dist < 1850.0) {
+          float cloudDark = 0.0;
+          for (int i = 0; i < ${MAX_CLOUDS}; i++) {
+            if (i >= uCloudCount) break;
+            vec2 cd = p - uClouds[i].xy;
+            float r = uClouds[i].z;
+            float d2 = dot(cd, cd) / (r * r);
+            cloudDark = max(cloudDark, 1.0 - smoothstep(0.55, 1.05, d2));
+          }
+          col = mix(col, col * vec3(0.58, 0.56, 0.74), cloudDark * 0.65);
         }
-        col = mix(col, col * vec3(0.58, 0.56, 0.74), cloudDark * 0.65);
 
         // Atmospheric horizon fog (pushed back for epic long vistas!)
-        float dist = length(uCamPos - vWorldPos);
         float fog = smoothstep(420.0, 1850.0, dist);
         col = mix(col, fogCol, fog);
 
@@ -673,7 +724,9 @@ export function buildWorld(scene) {
       uHeightTex: { value: heightTex },
       uWorldSize: { value: WORLD_SIZE },
       uClouds: { value: cloudShadowUniforms },
+      uCloudCount: { value: MAX_CLOUDS },
       uRipples: { value: rippleUniforms },
+      uRippleCount: { value: 0 },
       uTerrainTheme: { value: 0.0 },
     },
     vertexShader: `
@@ -691,7 +744,9 @@ export function buildWorld(scene) {
       uniform sampler2D uHeightTex;
       uniform float uWorldSize;
       uniform vec4 uClouds[${MAX_CLOUDS}];
+      uniform int uCloudCount;
       uniform vec4 uRipples[${MAX_RIPPLES}];
+      uniform int uRippleCount;
       uniform float uTerrainTheme;
       varying vec3 vWorldPos;
 
@@ -760,45 +815,55 @@ export function buildWorld(scene) {
         float foamRibbon = smoothstep(0.45, 0.85, shoreWave) * smoothstep(6.0, 1.2, depth) * 0.55;
         col = mix(col, cFoam, clamp(foamEdge * 0.92 + foamRibbon, 0.0, 1.0));
 
-        // Oval cloud shadows on ocean
-        float cloudShadow = 0.0;
-        for (int i = 0; i < ${MAX_CLOUDS}; i++) {
-          vec2 cd = p - uClouds[i].xy;
-          float r = uClouds[i].z;
-          float d2 = dot(cd, cd) / (r * r);
-          cloudShadow = max(cloudShadow, 1.0 - smoothstep(0.68, 0.98, d2));
-        }
-        col = mix(col, vec3(0.22, 0.27, 0.45), cloudShadow * 0.64);
-
-        // Twinkling white pixel sun-sparkles
-        vec2 sparkGrid = floor(p * 0.32);
-        float tStep = floor(uTime * 3.5 + hash(sparkGrid) * 10.0);
-        float sp = hash(sparkGrid + vec2(tStep * 1.31, tStep * 0.73));
         float distCam = length(uCamPos - vWorldPos);
-        float sparkFade = 1.0 - smoothstep(280.0, 920.0, distCam);
-        float sparkle = step(0.978, sp) * sparkFade;
-        col = mix(col, vec3(0.96, 0.98, 0.95), sparkle * 0.92);
 
-        // Short white wave flecks
-        vec2 waveCell = floor(vec2(p.x * 0.13 + uTime * 0.35, p.y * 0.26));
-        if (hash(waveCell) > 0.989 && distCam < 520.0) {
-          col = mix(col, vec3(0.84, 0.94, 0.96), 0.72);
+        // Oval cloud shadows on ocean (dynamic active bound & distance guard)
+        if (uCloudCount > 0 && distCam < 1920.0) {
+          float cloudShadow = 0.0;
+          for (int i = 0; i < ${MAX_CLOUDS}; i++) {
+            if (i >= uCloudCount) break;
+            vec2 cd = p - uClouds[i].xy;
+            float r = uClouds[i].z;
+            float d2 = dot(cd, cd) / (r * r);
+            cloudShadow = max(cloudShadow, 1.0 - smoothstep(0.68, 0.98, d2));
+          }
+          col = mix(col, vec3(0.22, 0.27, 0.45), cloudShadow * 0.64);
+        }
+
+        // Twinkling white pixel sun-sparkles & wave flecks (skipped beyond fade range)
+        if (distCam < 920.0) {
+          vec2 sparkGrid = floor(p * 0.32);
+          float tStep = floor(uTime * 3.5 + hash(sparkGrid) * 10.0);
+          float sp = hash(sparkGrid + vec2(tStep * 1.31, tStep * 0.73));
+          float sparkFade = 1.0 - smoothstep(280.0, 920.0, distCam);
+          float sparkle = step(0.978, sp) * sparkFade;
+          col = mix(col, vec3(0.96, 0.98, 0.95), sparkle * 0.92);
+
+          if (distCam < 520.0) {
+            vec2 waveCell = floor(vec2(p.x * 0.13 + uTime * 0.35, p.y * 0.26));
+            if (hash(waveCell) > 0.989) {
+              col = mix(col, vec3(0.84, 0.94, 0.96), 0.72);
+            }
+          }
         }
 
         // Expanding white concentric water impact ripples
-        for (int i = 0; i < ${MAX_RIPPLES}; i++) {
-          vec4 rip = uRipples[i];
-          if (rip.w > 0.5) {
-            float age = uTime - rip.z;
-            if (age >= 0.0 && age < 4.5) {
-              float d = length(p - rip.xy);
-              float r1 = age * 14.0;
-              float r2 = max(0.0, (age - 0.35) * 11.0);
-              float ring1 = 1.0 - smoothstep(0.4, 1.5, abs(d - r1));
-              float ring2 = (age > 0.35 ? 1.0 : 0.0) * (1.0 - smoothstep(0.4, 1.4, abs(d - r2)));
-              float fadeR = 1.0 - smoothstep(1.8, 4.5, age);
-              float ringVal = clamp(ring1 + ring2 * 0.75, 0.0, 1.0) * fadeR;
-              col = mix(col, vec3(0.95, 0.98, 1.0), ringVal * 0.92);
+        if (uRippleCount > 0 && distCam < 1800.0) {
+          for (int i = 0; i < ${MAX_RIPPLES}; i++) {
+            if (i >= uRippleCount) break;
+            vec4 rip = uRipples[i];
+            if (rip.w > 0.5) {
+              float age = uTime - rip.z;
+              if (age >= 0.0 && age < 4.5) {
+                float d = length(p - rip.xy);
+                float r1 = age * 14.0;
+                float r2 = max(0.0, (age - 0.35) * 11.0);
+                float ring1 = 1.0 - smoothstep(0.4, 1.5, abs(d - r1));
+                float ring2 = (age > 0.35 ? 1.0 : 0.0) * (1.0 - smoothstep(0.4, 1.4, abs(d - r2)));
+                float fadeR = 1.0 - smoothstep(1.8, 4.5, age);
+                float ringVal = clamp(ring1 + ring2 * 0.75, 0.0, 1.0) * fadeR;
+                col = mix(col, vec3(0.95, 0.98, 1.0), ringVal * 0.92);
+              }
             }
           }
         }
@@ -967,18 +1032,22 @@ export function buildWorld(scene) {
   const lhWhiteMat = new THREE.MeshLambertMaterial({ color: 0xf7f2e8, flatShading: true });
   const lhRedMat = new THREE.MeshLambertMaterial({ color: 0xd94534, flatShading: true });
   const lhLampMat = new THREE.MeshBasicMaterial({ color: 0xfff08a });
+  const lhBaseGeo = new THREE.CylinderGeometry(1.6, 2.4, 7.5, 6);
+  const lhStripeGeo = new THREE.CylinderGeometry(1.25, 1.6, 4.5, 6);
+  const lhLampGeo = new THREE.BoxGeometry(1.8, 1.8, 1.8);
+  const lhCapGeo = new THREE.ConeGeometry(1.7, 2.0, 6);
 
   for (const [lx, lz] of lhCoords) {
     const ly = getTerrainHeight(lx, lz);
     if (ly < 2.0) continue;
     const g = new THREE.Group();
-    const base = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 2.4, 7.5, 6), lhWhiteMat);
+    const base = new THREE.Mesh(lhBaseGeo, lhWhiteMat);
     base.position.y = 3.75;
-    const stripe = new THREE.Mesh(new THREE.CylinderGeometry(1.25, 1.6, 4.5, 6), lhRedMat);
+    const stripe = new THREE.Mesh(lhStripeGeo, lhRedMat);
     stripe.position.y = 9.75;
-    const lamp = new THREE.Mesh(new THREE.BoxGeometry(1.8, 1.8, 1.8), lhLampMat);
+    const lamp = new THREE.Mesh(lhLampGeo, lhLampMat);
     lamp.position.y = 13.0;
-    const cap = new THREE.Mesh(new THREE.ConeGeometry(1.7, 2.0, 6), lhRedMat);
+    const cap = new THREE.Mesh(lhCapGeo, lhRedMat);
     cap.position.y = 14.8;
     g.add(base, stripe, lamp, cap);
     g.position.set(lx, ly - 0.5, lz);
@@ -990,7 +1059,7 @@ export function buildWorld(scene) {
     }, true);
   }
 
-  // 4d. Coastal Island Airstrip at (-215, 225) for epic low flybys!
+  // 4d. Coastal Island Airstrip at (-215, 225) for epic low flybys! (Instanced dashes & edge lights)
   const stripY = getTerrainHeight(-215, 225) + 0.35;
   const runway = new THREE.Mesh(
     new THREE.BoxGeometry(20, 0.4, 132),
@@ -1001,17 +1070,30 @@ export function buildWorld(scene) {
 
   const dashMat = new THREE.MeshBasicMaterial({ color: 0xf7efe0 });
   const lightMat = new THREE.MeshBasicMaterial({ color: 0xffb84a });
+  const dashGeo = new THREE.BoxGeometry(1.1, 0.48, 6.5);
+  const rLightGeo = new THREE.BoxGeometry(0.9, 0.9, 0.9);
+  const runwayDashes = new THREE.InstancedMesh(dashGeo, dashMat, 9);
+  const runwayLights = new THREE.InstancedMesh(rLightGeo, lightMat, 18);
+  let dashIdx = 0;
+  let lightIdx = 0;
   for (let dz = -54; dz <= 54; dz += 14) {
-    const dash = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.48, 6.5), dashMat);
-    dash.position.set(-215, stripY + 0.05, 225 + dz);
-    scene.add(dash);
+    dummy.position.set(-215, stripY + 0.05, 225 + dz);
+    dummy.rotation.set(0, 0, 0);
+    dummy.scale.set(1, 1, 1);
+    dummy.updateMatrix();
+    runwayDashes.setMatrixAt(dashIdx++, dummy.matrix);
 
     for (const sx of [-10.5, 10.5]) {
-      const rl = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 0.9), lightMat);
-      rl.position.set(-215 + sx, stripY + 0.5, 225 + dz);
-      scene.add(rl);
+      dummy.position.set(-215 + sx, stripY + 0.5, 225 + dz);
+      dummy.updateMatrix();
+      runwayLights.setMatrixAt(lightIdx++, dummy.matrix);
     }
   }
+  runwayDashes.count = dashIdx;
+  runwayLights.count = lightIdx;
+  runwayDashes.instanceMatrix.needsUpdate = true;
+  runwayLights.instanceMatrix.needsUpdate = true;
+  scene.add(runwayDashes, runwayLights);
   // Control tower beside airstrip
   const tower = new THREE.Mesh(new THREE.BoxGeometry(6, 13, 6), lhWhiteMat);
   tower.position.set(-196, stripY + 6.5, 215);
@@ -1052,10 +1134,14 @@ export function buildWorld(scene) {
     }, true);
   }
 
-  // 4f. Large Naval Ships cruising the central bays (24 ships for 20-ship objective!)
+  // 4f. Large Naval Ships cruising the central bays (24 ships batched into 4 InstancedMeshes!)
   const ships = [];
   const shipHullMat = new THREE.MeshLambertMaterial({ color: 0x4b556b, flatShading: true });
   const shipDeckMat = new THREE.MeshLambertMaterial({ color: 0xb84735, flatShading: true });
+  const shipHullGeo = new THREE.BoxGeometry(6.5, 3.8, 24.0);
+  const shipDeckGeo = new THREE.BoxGeometry(5.6, 0.8, 21.5);
+  const shipBridgeGeo = new THREE.BoxGeometry(4.8, 5.2, 6.2);
+  const shipFunnelGeo = new THREE.CylinderGeometry(1.1, 1.3, 4.4, 6);
   const shipPositions = [
     [-40, 85, 0.3],
     [35, 30, -0.8],
@@ -1084,31 +1170,77 @@ export function buildWorld(scene) {
   ];
   for (const [sx, sz, ang] of shipPositions) {
     if (getTerrainHeight(sx, sz) > -3.5) continue;
-    const sg = new THREE.Group();
-    const hull = new THREE.Mesh(new THREE.BoxGeometry(6.5, 3.8, 24.0), shipHullMat);
-    hull.position.y = 1.6;
-    const deck = new THREE.Mesh(new THREE.BoxGeometry(5.6, 0.8, 21.5), shipDeckMat);
-    deck.position.y = 3.6;
-    const bridge = new THREE.Mesh(new THREE.BoxGeometry(4.8, 5.2, 6.2), lhWhiteMat);
-    bridge.position.set(0, 6.2, 3.5);
-    const funnel = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.3, 4.4, 6), lhRedMat);
-    funnel.position.set(0, 6.8, -3.5);
-    sg.add(hull, deck, bridge, funnel);
-    sg.position.set(sx, WATER_LEVEL, sz);
-    sg.rotation.y = ang;
-    scene.add(sg);
-
+    const shipIdx = ships.length;
     const shipObj = {
-      type: 'ship', label: 'NAVAL SHIP', x: sx, y: WATER_LEVEL, z: sz,
-      originX: sx, originZ: sz, originAng: ang,
-      r: 12.5, h: 12.0, color: 0xd9563c,
-      group: sg, angle: ang, speed: 4.5 + rand() * 3.0, phase: rand() * Math.PI * 2,
-      alive: true, respawnTimer: 0,
-      kill() { sg.visible = false; this.respawnTimer = 38.0; },
+      idx: shipIdx,
+      type: 'ship',
+      label: 'NAVAL SHIP',
+      x: sx,
+      y: WATER_LEVEL,
+      z: sz,
+      originX: sx,
+      originZ: sz,
+      originAng: ang,
+      r: 12.5,
+      h: 12.0,
+      color: 0xd9563c,
+      angle: ang,
+      speed: 4.5 + rand() * 3.0,
+      phase: rand() * Math.PI * 2,
+      alive: true,
+      respawnTimer: 0,
+      kill() {
+        this.respawnTimer = 38.0;
+        writeShipInstance(this.idx, this, WATER_LEVEL, false);
+        markShipsMatricesDirty();
+      },
     };
     ships.push(shipObj);
     lockableTargets.push(shipObj);
   }
+
+  const shipHulls = new THREE.InstancedMesh(shipHullGeo, shipHullMat, Math.max(1, ships.length));
+  const shipDecks = new THREE.InstancedMesh(shipDeckGeo, shipDeckMat, Math.max(1, ships.length));
+  const shipBridges = new THREE.InstancedMesh(shipBridgeGeo, lhWhiteMat, Math.max(1, ships.length));
+  const shipFunnels = new THREE.InstancedMesh(shipFunnelGeo, lhRedMat, Math.max(1, ships.length));
+  for (const im of [shipHulls, shipDecks, shipBridges, shipFunnels]) {
+    im.count = ships.length;
+    im.frustumCulled = false;
+    im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  }
+  scene.add(shipHulls, shipDecks, shipBridges, shipFunnels);
+
+  function writeShipInstance(idx, sh, baseY, visible = true) {
+    const hullArr = shipHulls.instanceMatrix.array;
+    const deckArr = shipDecks.instanceMatrix.array;
+    const bridgeArr = shipBridges.instanceMatrix.array;
+    const funnelArr = shipFunnels.instanceMatrix.array;
+    if (!visible) {
+      writeZeroMatrix(hullArr, idx);
+      writeZeroMatrix(deckArr, idx);
+      writeZeroMatrix(bridgeArr, idx);
+      writeZeroMatrix(funnelArr, idx);
+      return;
+    }
+    const sinA = Math.sin(sh.angle);
+    const cosA = Math.cos(sh.angle);
+    writeYRotTransMatrix(hullArr, idx, sh.x, baseY + 1.6, sh.z, sinA, cosA);
+    writeYRotTransMatrix(deckArr, idx, sh.x, baseY + 3.6, sh.z, sinA, cosA);
+    writeYRotTransMatrix(bridgeArr, idx, sh.x + 3.5 * sinA, baseY + 6.2, sh.z + 3.5 * cosA, sinA, cosA);
+    writeYRotTransMatrix(funnelArr, idx, sh.x - 3.5 * sinA, baseY + 6.8, sh.z - 3.5 * cosA, sinA, cosA);
+  }
+
+  function markShipsMatricesDirty() {
+    shipHulls.instanceMatrix.needsUpdate = true;
+    shipDecks.instanceMatrix.needsUpdate = true;
+    shipBridges.instanceMatrix.needsUpdate = true;
+    shipFunnels.instanceMatrix.needsUpdate = true;
+  }
+
+  for (let i = 0; i < ships.length; i++) {
+    writeShipInstance(i, ships[i], WATER_LEVEL, true);
+  }
+  markShipsMatricesDirty();
 
   // 4g. Rare Sky Balloons carrying Pink-Cross Full-Heal Medkits (only 3 rare balloons in the sky!)
   const balloons = [];
@@ -1182,7 +1314,7 @@ export function buildWorld(scene) {
   scene.add(boatHulls, boatSails);
 
   // =========================================================================
-  // 5. PUFFY 3D CUMULUS CLOUDS (flat lavender base + dithered pink mid + bright cream dome)
+  // 5. PUFFY 3D CUMULUS CLOUDS (InstancedMesh: 54 clouds -> 2 draw calls)
   // =========================================================================
   const cloudMat = new THREE.ShaderMaterial({
     uniforms: {
@@ -1194,9 +1326,10 @@ export function buildWorld(scene) {
       varying vec3 vNormal;
       varying vec3 vWorldPos;
       void main() {
-        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vec4 wp = modelMatrix * instanceMatrix * vec4(position, 1.0);
         vWorldPos = wp.xyz;
-        vNormal = normalize(mat3(modelMatrix) * normal);
+        mat3 instMat3 = mat3(instanceMatrix[0].xyz, instanceMatrix[1].xyz, instanceMatrix[2].xyz);
+        vNormal = normalize(mat3(modelMatrix) * instMat3 * normal);
         gl_Position = projectionMatrix * viewMatrix * wp;
       }
     `,
@@ -1218,7 +1351,7 @@ export function buildWorld(scene) {
 
       void main() {
         vec3 N = normalize(vNormal);
-        float ndl = dot(N, normalize(uSunDir)) * 0.5 + 0.5;
+        float ndl = dot(N, uSunDir) * 0.5 + 0.5;
         float topness = clamp(N.y * 0.65 + 0.45, 0.0, 1.0);
         float lightVal = ndl * 0.5 + topness * 0.5;
 
@@ -1280,43 +1413,88 @@ export function buildWorld(scene) {
   const cloudGroup = new THREE.Group();
   scene.add(cloudGroup);
   const clouds = [];
+  let totalCloudPuffs = 0;
 
   for (let i = 0; i < 54; i++) {
-    const cg = new THREE.Group();
     const isShadowCaster = i < MAX_CLOUDS;
     const scaleBase = isShadowCaster ? 32 + rand() * 44 : 22 + rand() * 32;
     const puffs = 3 + Math.floor(rand() * 3);
+    const puffList = [];
 
     for (let p = 0; p < puffs; p++) {
       const r = scaleBase * (p === 0 ? 1.0 : 0.52 + rand() * 0.44);
       const hScale = 0.45 + rand() * 0.25;
       const ox = p === 0 ? 0 : (rand() - 0.5) * scaleBase * 1.45;
       const oz = p === 0 ? 0 : (rand() - 0.5) * scaleBase * 1.15;
+      const szDome = r * (0.8 + rand() * 0.35);
+      const szCap = r * (0.8 + rand() * 0.35);
 
-      const domeMesh = new THREE.Mesh(baseDome.dome, cloudMat);
-      domeMesh.scale.set(r, r * hScale, r * (0.8 + rand() * 0.35));
-      domeMesh.position.set(ox, 0, oz);
-      cg.add(domeMesh);
-
-      const capMesh = new THREE.Mesh(baseDome.cap, cloudMat);
-      capMesh.scale.set(r, 1, r * (0.8 + rand() * 0.35));
-      capMesh.position.set(ox, 0.02, oz);
-      cg.add(capMesh);
+      puffList.push({
+        idx: totalCloudPuffs++,
+        ox,
+        oz,
+        sx: r,
+        sy: r * hScale,
+        szDome,
+        szCap,
+      });
     }
 
     const cx = (rand() - 0.5) * 2350;
     const cz = (rand() - 0.5) * 2350;
     const cy = isShadowCaster ? 85 + rand() * 65 : 185 + rand() * 95;
-    cg.position.set(cx, cy, cz);
-    cloudGroup.add(cg);
 
     clouds.push({
-      mesh: cg,
+      x: cx,
+      y: cy,
+      z: cz,
+      puffs: puffList,
+      visible: true,
       speed: 2.2 + rand() * 2.4,
       shadowRadius: scaleBase * 1.15,
       shadowIndex: isShadowCaster ? i : -1,
     });
   }
+
+  const cloudDomes = new THREE.InstancedMesh(baseDome.dome, cloudMat, totalCloudPuffs);
+  const cloudCaps = new THREE.InstancedMesh(baseDome.cap, cloudMat, totalCloudPuffs);
+  cloudDomes.frustumCulled = false;
+  cloudCaps.frustumCulled = false;
+  cloudDomes.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  cloudCaps.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  cloudGroup.add(cloudDomes, cloudCaps);
+
+  let cloudMatricesDirty = true;
+  function syncCloudMatrices() {
+    if (!cloudGroup.visible) {
+      cloudMatricesDirty = false;
+      return;
+    }
+    const domeArr = cloudDomes.instanceMatrix.array;
+    const capArr = cloudCaps.instanceMatrix.array;
+    for (let i = 0; i < clouds.length; i++) {
+      const c = clouds[i];
+      if (!c.visible) {
+        for (let j = 0; j < c.puffs.length; j++) {
+          const idx = c.puffs[j].idx;
+          writeZeroMatrix(domeArr, idx);
+          writeZeroMatrix(capArr, idx);
+        }
+        continue;
+      }
+      for (let j = 0; j < c.puffs.length; j++) {
+        const pf = c.puffs[j];
+        const px = c.x + pf.ox;
+        const pz = c.z + pf.oz;
+        writeTSMatrix(domeArr, pf.idx, px, c.y, pz, pf.sx, pf.sy, pf.szDome);
+        writeTSMatrix(capArr, pf.idx, px, c.y + 0.02, pz, pf.sx, 1, pf.szCap);
+      }
+    }
+    cloudDomes.instanceMatrix.needsUpdate = true;
+    cloudCaps.instanceMatrix.needsUpdate = true;
+    cloudMatricesDirty = false;
+  }
+  syncCloudMatrices();
 
   function damage(pos, blast) {
     const killed = [];
@@ -1701,6 +1879,7 @@ export function buildWorld(scene) {
   }
 
   function respawnSunkShips() {
+    let any = false;
     for (const sh of ships) {
       if (!sh.alive) {
         sh.alive = true;
@@ -1708,11 +1887,11 @@ export function buildWorld(scene) {
         sh.x = sh.originX;
         sh.z = sh.originZ;
         sh.angle = sh.originAng;
-        sh.group.position.set(sh.x, WATER_LEVEL, sh.z);
-        sh.group.rotation.y = sh.angle;
-        sh.group.visible = true;
+        writeShipInstance(sh.idx, sh, WATER_LEVEL, true);
+        any = true;
       }
     }
+    if (any) markShipsMatricesDirty();
   }
 
   function checkObstacleCollision(pos, jetRadius = 2.6) {
@@ -1774,6 +1953,9 @@ export function buildWorld(scene) {
   function applyCloudDensity(mode) {
     if (mode === 'clear') {
       cloudGroup.visible = false;
+      cloudMatricesDirty = true;
+      terrainMat.uniforms.uCloudCount.value = 0;
+      waterMat.uniforms.uCloudCount.value = 0;
       for (let i = 0; i < MAX_CLOUDS; i++) {
         cloudShadowUniforms[i].set(99999, 99999, 1, 0);
       }
@@ -1783,12 +1965,10 @@ export function buildWorld(scene) {
     const light = mode === 'light';
     for (let i = 0; i < clouds.length; i++) {
       const c = clouds[i];
-      const vis = !light || (i % 2 === 0);
-      c.mesh.visible = vis;
-      if (!vis && c.shadowIndex >= 0) {
-        cloudShadowUniforms[c.shadowIndex].set(99999, 99999, 1, 0);
-      }
+      c.visible = !light || (i % 2 === 0);
     }
+    cloudMatricesDirty = true;
+    syncCloudMatrices();
   }
 
   function applyTerrainOptions(opts = {}) {
@@ -1836,6 +2016,7 @@ export function buildWorld(scene) {
     addWaterRipple(x, z, time) {
       rippleUniforms[nextRippleIdx].set(x, z, time, 1.0);
       nextRippleIdx = (nextRippleIdx + 1) % MAX_RIPPLES;
+      lastRippleAt = time;
     },
     update(time, camPos, dt) {
       skyMat.uniforms.uTime.value = time;
@@ -1844,29 +2025,47 @@ export function buildWorld(scene) {
       waterMat.uniforms.uTime.value = time;
       waterMat.uniforms.uCamPos.value.copy(camPos);
       cloudMat.uniforms.uCamPos.value.copy(camPos);
+      waterMat.uniforms.uRippleCount.value = lastRippleAt >= 0 && time - lastRippleAt < 4.8 ? MAX_RIPPLES : 0;
 
-      // Drift clouds & update shadow casters
-      for (const c of clouds) {
-        c.mesh.position.x += c.speed * dt;
-        if (c.mesh.position.x > 1250) c.mesh.position.x = -1250;
-        if (c.shadowIndex >= 0 && cloudGroup.visible && c.mesh.visible) {
-          const offX = -SUN_DIR.x * (c.mesh.position.y * 0.25);
-          const offZ = -SUN_DIR.z * (c.mesh.position.y * 0.25);
-          cloudShadowUniforms[c.shadowIndex].set(
-            c.mesh.position.x + offX,
-            c.mesh.position.z + offZ,
-            c.shadowRadius,
-            1.0
-          );
+      // Drift clouds & pack nearby active shadow casters
+      let activeCloudCount = 0;
+      if (!cloudGroup.visible) {
+        terrainMat.uniforms.uCloudCount.value = 0;
+        waterMat.uniforms.uCloudCount.value = 0;
+      } else {
+        for (let i = 0; i < clouds.length; i++) {
+          const c = clouds[i];
+          if (dt > 0) {
+            c.x += c.speed * dt;
+            if (c.x > 1250) c.x = -1250;
+          }
+          if (c.shadowIndex >= 0 && c.visible && activeCloudCount < MAX_CLOUDS) {
+            const sx = c.x - SUN_DIR.x * (c.y * 0.25);
+            const sz = c.z - SUN_DIR.z * (c.y * 0.25);
+            const dx = sx - camPos.x;
+            const dz = sz - camPos.z;
+            if (dx * dx + dz * dz < 1650 * 1650) {
+              cloudShadowUniforms[activeCloudCount++].set(sx, sz, c.shadowRadius, 1.0);
+            }
+          }
+        }
+        terrainMat.uniforms.uCloudCount.value = activeCloudCount;
+        waterMat.uniforms.uCloudCount.value = activeCloudCount;
+        if (dt > 0 || cloudMatricesDirty) {
+          syncCloudMatrices();
         }
       }
 
+      if (dt <= 0) return;
+
       // Gently animate sailboats on the water
+      const hullArr = boatHulls.instanceMatrix.array;
+      const sailArr = boatSails.instanceMatrix.array;
       for (let i = 0; i < boats.length; i++) {
         const b = boats[i];
         if (!b.alive) {
-          boatHulls.setMatrixAt(i, ZERO_M);
-          boatSails.setMatrixAt(i, ZERO_M);
+          writeZeroMatrix(hullArr, i);
+          writeZeroMatrix(sailArr, i);
           continue;
         }
         const nx = b.x + Math.sin(b.angle) * b.speed * dt;
@@ -1901,9 +2100,7 @@ export function buildWorld(scene) {
             sh.x = sh.originX;
             sh.z = sh.originZ;
             sh.angle = sh.originAng;
-            sh.group.position.set(sh.x, WATER_LEVEL, sh.z);
-            sh.group.rotation.y = sh.angle;
-            sh.group.visible = true;
+            writeShipInstance(sh.idx, sh, WATER_LEVEL, true);
           }
           continue;
         }
@@ -1915,9 +2112,9 @@ export function buildWorld(scene) {
         } else {
           sh.angle += 1.4;
         }
-        sh.group.position.set(sh.x, WATER_LEVEL + Math.sin(time * 1.5 + sh.phase) * 0.3, sh.z);
-        sh.group.rotation.y = sh.angle;
+        writeShipInstance(sh.idx, sh, WATER_LEVEL + Math.sin(time * 1.5 + sh.phase) * 0.3, true);
       }
+      markShipsMatricesDirty();
 
       // Rare floating target balloons: gentle drift + rare respawn in another spot
       for (const bl of balloons) {
