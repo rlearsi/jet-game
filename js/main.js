@@ -6,12 +6,13 @@ import {
   TERRAIN_DEFORM_MODES,
   TERRAIN_CLOUD_MODES,
   DEFAULT_TERRAIN_OPTIONS,
-} from './world.js?v=11';
-import { FighterJet, RemoteJet, SHIP_CATALOG, SHIP_IDS } from './jet.js?v=11';
-import { MissileSystem } from './weapons.js?v=11';
-import { FighterCockpit } from './cockpit.js?v=11';
-import { JetSoundEngine } from './audio.js?v=11';
-import { MultiplayerManager } from './multiplayer.js?v=11';
+} from './world.js?v=12';
+import { FighterJet, RemoteJet, SHIP_CATALOG, SHIP_IDS } from './jet.js?v=12';
+import { MissileSystem } from './weapons.js?v=12';
+import { FighterCockpit } from './cockpit.js?v=12';
+import { JetSoundEngine } from './audio.js?v=12';
+import { MultiplayerManager } from './multiplayer.js?v=12';
+import { GamepadController, DEFAULT_GAMEPAD_DEADZONE } from './gamepad.js?v=12';
 
 // 6 live-switchable rendering styles (exclusively configurable inside Settings -> Render, plus V in flight)
 const RENDER_PRESETS = {
@@ -125,6 +126,7 @@ const BINDING_META = [
 const DEFAULT_CONTROLS = {
   invertY: false,
   mouseSensitivity: 1.0,
+  gamepadDeadzone: DEFAULT_GAMEPAD_DEADZONE,
   bindings: { ...DEFAULT_BINDINGS },
 };
 
@@ -262,6 +264,9 @@ const audioSfxSlider = document.getElementById('audio-sfx-slider');
 const audioSfxVal = document.getElementById('audio-sfx-val');
 const audioTestBtn = document.getElementById('audio-test-btn');
 
+const ctrlGamepadStatus = document.getElementById('ctrl-gamepad-status');
+const ctrlDeadzoneSlider = document.getElementById('ctrl-deadzone-slider');
+const ctrlDeadzoneVal = document.getElementById('ctrl-deadzone-val');
 const ctrlInvertYBtn = document.getElementById('ctrl-invert-y-btn');
 const ctrlSensSlider = document.getElementById('ctrl-sens-slider');
 const ctrlSensVal = document.getElementById('ctrl-sens-val');
@@ -346,6 +351,9 @@ const controlSettings = {
   mouseSensitivity: Number.isFinite(Number(savedControls?.mouseSensitivity))
     ? THREE.MathUtils.clamp(Number(savedControls.mouseSensitivity), 0.5, 1.8)
     : DEFAULT_CONTROLS.mouseSensitivity,
+  gamepadDeadzone: Number.isFinite(Number(savedControls?.gamepadDeadzone))
+    ? THREE.MathUtils.clamp(Number(savedControls.gamepadDeadzone), 0.05, 0.35)
+    : DEFAULT_CONTROLS.gamepadDeadzone,
   bindings: { ...DEFAULT_BINDINGS },
 };
 if (savedControls?.bindings && typeof savedControls.bindings === 'object') {
@@ -832,11 +840,46 @@ function renderBindingsList() {
   }
 }
 
+function syncGamepadStatusUI(connected = gamepad.connected, id = gamepad.gamepadId) {
+  if (!ctrlGamepadStatus) return;
+  if (connected) {
+    ctrlGamepadStatus.textContent = `CONECTADO: ${(id || 'GAMEPAD').slice(0, 26)}`;
+    ctrlGamepadStatus.className = 'gamepad-status-badge connected';
+  } else {
+    ctrlGamepadStatus.textContent = 'NENHUM DETECTADO';
+    ctrlGamepadStatus.className = 'gamepad-status-badge disconnected';
+  }
+}
+
+const gamepad = new GamepadController({
+  deadzone: controlSettings.gamepadDeadzone,
+  onConnectionChange({ connected, id }) {
+    syncGamepadStatusUI(connected, id);
+    if (!connected) {
+      input.gamepadActive = false;
+      input.joyX = 0;
+      input.joyY = 0;
+      input.joyBoost = false;
+      input.joyCannon = false;
+    }
+    if (gameState === 'playing') {
+      weapons.killBannerText = connected ? 'JOYSTICK CONECTADO' : 'JOYSTICK DESCONECTADO';
+      weapons.killBannerTimer = 1.8;
+    }
+  },
+});
+
 function syncControlsUI() {
   ctrlInvertYBtn.textContent = controlSettings.invertY ? 'SIM' : 'NÃO';
   ctrlInvertYBtn.classList.toggle('active', controlSettings.invertY);
   ctrlSensSlider.value = controlSettings.mouseSensitivity.toFixed(2);
   ctrlSensVal.textContent = `${controlSettings.mouseSensitivity.toFixed(2)}x`;
+  if (ctrlDeadzoneSlider) {
+    ctrlDeadzoneSlider.value = controlSettings.gamepadDeadzone.toFixed(2);
+    ctrlDeadzoneVal.textContent = `${Math.round(controlSettings.gamepadDeadzone * 100)}%`;
+  }
+  gamepad.setDeadzone(controlSettings.gamepadDeadzone);
+  syncGamepadStatusUI();
 
   const b = controlSettings.bindings;
   if (hudKeyMissile) hudKeyMissile.textContent = formatKeyLabel(b.missile);
@@ -871,10 +914,18 @@ ctrlSensSlider.addEventListener('input', () => {
   syncControlsUI();
 });
 
+ctrlDeadzoneSlider.addEventListener('input', () => {
+  controlSettings.gamepadDeadzone = Number(ctrlDeadzoneSlider.value);
+  gamepad.setDeadzone(controlSettings.gamepadDeadzone);
+  saveControlSettings();
+  syncControlsUI();
+});
+
 ctrlResetBtn.addEventListener('click', () => {
   rebindingAction = null;
   controlSettings.invertY = DEFAULT_CONTROLS.invertY;
   controlSettings.mouseSensitivity = DEFAULT_CONTROLS.mouseSensitivity;
+  controlSettings.gamepadDeadzone = DEFAULT_CONTROLS.gamepadDeadzone;
   controlSettings.bindings = { ...DEFAULT_BINDINGS };
   saveControlSettings();
   syncControlsUI();
@@ -978,7 +1029,7 @@ function cycleRenderPreset() {
   selectRenderPreset(nextId);
 }
 
-function syncViewUI() {
+function syncViewUI(persist = true) {
   fovSlider.value = String(viewSettings.fov);
   fovVal.innerHTML = `${Math.round(viewSettings.fov)}&deg;`;
   distSlider.value = viewSettings.camDist.toFixed(2);
@@ -992,7 +1043,7 @@ function syncViewUI() {
   for (const rj of remoteJets.values()) {
     rj.visual.scale.setScalar(objScale);
   }
-  writeJsonStorage('sunsetStriker_viewSettings', viewSettings);
+  if (persist) writeJsonStorage('sunsetStriker_viewSettings', viewSettings);
 }
 
 styleSelect.addEventListener('change', () => {
@@ -1415,6 +1466,10 @@ function syncMenuUI() {
 function clearInputs() {
   input.boost = false;
   input.cannonFiring = false;
+  input.joyBoost = false;
+  input.joyCannon = false;
+  input.joyX = 0;
+  input.joyY = 0;
   input.keys = {};
 }
 
@@ -1690,6 +1745,11 @@ const input = {
   mouseY: 0,
   boost: false,
   cannonFiring: false,
+  gamepadActive: false,
+  joyX: 0,
+  joyY: 0,
+  joyBoost: false,
+  joyCannon: false,
   keys: {},
   sensitivity: controlSettings.mouseSensitivity,
   invertY: controlSettings.invertY,
@@ -1697,9 +1757,16 @@ const input = {
 };
 
 let leftDownAt = 0;
+let lastMousePxX = null;
+let lastMousePxY = null;
 
 window.addEventListener('mousemove', (e) => {
   if (menuOpen || gameState !== 'playing') return;
+  if (lastMousePxX !== null && Math.hypot(e.clientX - lastMousePxX, e.clientY - lastMousePxY) >= 4) {
+    input.gamepadActive = false;
+  }
+  lastMousePxX = e.clientX;
+  lastMousePxY = e.clientY;
   input.mouseX = (e.clientX / window.innerWidth) * 2 - 1;
   input.mouseY = (e.clientY / window.innerHeight) * 2 - 1;
 });
@@ -2140,16 +2207,95 @@ const NEUTRAL_INPUT = {
   mouseX: 0,
   mouseY: 0,
   boost: false,
+  gamepadActive: false,
+  joyX: 0,
+  joyY: 0,
+  joyBoost: false,
   keys: {},
   sensitivity: 1.0,
   invertY: false,
   afterburnerKey: 'ShiftLeft',
 };
 
+function handleGamepadFrame(dt) {
+  const gp = gamepad.poll(dt);
+
+  if (gp.pressed.pause && gameState === 'playing') {
+    if (!menuOpen) {
+      openPauseMenu();
+      sound.playSwitch();
+    } else if (activeMenuView !== 'main') {
+      setMenuView('main');
+      sound.playSwitch();
+    } else {
+      closeMenuToPlay();
+    }
+    return;
+  }
+
+  if (gameState !== 'playing' || menuOpen) {
+    input.joyX = 0;
+    input.joyY = 0;
+    input.joyBoost = false;
+    input.joyCannon = false;
+    return;
+  }
+
+  if (!gp.connected) {
+    input.gamepadActive = false;
+    input.joyX = 0;
+    input.joyY = 0;
+    input.joyBoost = false;
+    input.joyCannon = false;
+    return;
+  }
+
+  if (gp.anyInput) {
+    input.gamepadActive = true;
+  }
+
+  input.joyX = gp.steerX;
+  input.joyY = gp.steerY;
+  input.joyBoost = gp.boostHeld;
+  input.joyCannon = gp.cannonHeld;
+
+  if (Math.abs(gp.camDistDelta) > 0.0001) {
+    viewSettings.camDist = THREE.MathUtils.clamp(viewSettings.camDist + gp.camDistDelta, 0.5, 2.6);
+    syncViewUI(false);
+  }
+
+  if (gp.pressed.missile && jet.alive) {
+    weapons.tryFireMissile(jet);
+  }
+  if (gp.pressed.camera) {
+    setCameraMode(camModeIdx + 1);
+  }
+  if (gp.pressed.cockpit) {
+    toggleCockpit();
+  }
+  if (gp.pressed.renderCycle) {
+    if (gameMode === 'solo' && !mp.isActive()) {
+      cycleRenderPreset();
+      weapons.killBannerText = `RENDER: ${renderSettings.shortLabel}`;
+      weapons.killBannerTimer = 1.4;
+    } else {
+      weapons.killBannerText = 'RENDER VIA SELECT APENAS NO SOLO';
+      weapons.killBannerTimer = 1.6;
+      sound.playEmpty();
+    }
+  }
+  if (jet.alive) {
+    if (gp.pressed.rollLeft) jet.triggerRoll(-1);
+    else if (gp.pressed.rollRight) jet.triggerRoll(1);
+    else if (gp.pressed.roll) jet.triggerRoll(input.joyX >= 0 ? 1 : -1);
+  }
+}
+
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(0.05, clock.getDelta());
   const elapsed = clock.elapsedTime;
+  handleGamepadFrame(dt);
   const modeId = CAMERA_MODES[camModeIdx].id;
   const isCockpit = modeId === 'COCKPIT';
 
@@ -2193,7 +2339,7 @@ function animate() {
       }
 
       if (jet.alive) {
-        if (!menuOpen && input.cannonFiring) {
+        if (!menuOpen && (input.cannonFiring || input.joyCannon)) {
           weapons.tryFireCannon(jet);
         }
 
@@ -2246,6 +2392,7 @@ function animate() {
     weapons,
     world,
     mp,
+    gamepad,
     remoteJets,
     objective,
     renderSettings,

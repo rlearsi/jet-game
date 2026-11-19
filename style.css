@@ -1412,6 +1412,34 @@ html, body {
   letter-spacing: 0.06em;
 }
 
+.guide-card.guide-card-wide {
+  grid-column: 1 / -1;
+}
+
+.gamepad-status-badge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 3px 8px;
+  border: 1px solid;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gamepad-status-badge.connected {
+  color: #88ffa8;
+  border-color: rgba(136, 255, 168, 0.55);
+  background: rgba(34, 96, 56, 0.35);
+}
+
+.gamepad-status-badge.disconnected {
+  color: #aeb6c4;
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(60, 66, 86, 0.35);
+}
+
 .hidden {
   display: none !important;
 }

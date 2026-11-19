@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Sunset Striker — Pixel-Art Fighter Jet</title>
-  <link rel="stylesheet" href="style.css?v=11" />
+  <link rel="stylesheet" href="style.css?v=12" />
 </head>
 <body>
   <canvas id="game-canvas"></canvas>
@@ -277,6 +277,17 @@
             <div class="guide-row"><kbd>BALÕES RAROS</kbd><span>3 balões no céu derrubam caixa <b>Cruz Rosa (+100% Vida)</b></span></div>
             <div class="guide-row"><kbd>MÍSSEIS NO MAR</kbd><span>Navios e solo dropam caixas de míssil — voe rente ao mar para recarregar</span></div>
           </div>
+
+          <div class="guide-card guide-card-wide">
+            <div class="guide-card-title">JOYSTICK / GAMEPAD</div>
+            <div class="guide-row"><kbd>ANALÓGICO ESQ. / D-PAD</kbd><span>Direcionar, subir e mergulhar</span></div>
+            <div class="guide-row"><kbd>RT</kbd><span>Canhão automático (atirar)</span></div>
+            <div class="guide-row"><kbd>BOTÃO A</kbd><span>Lançar míssil teleguiado (FOX 2)</span></div>
+            <div class="guide-row"><kbd>BOTÃO X</kbd><span>Abrir / alternar Cockpit 2D</span></div>
+            <div class="guide-row"><kbd>BOTÃO B</kbd><span>Ciclar câmeras (Chase &rarr; Cockpit &rarr; Top)</span></div>
+            <div class="guide-row"><kbd>SELECT</kbd><span>Alterar estilo de renderização <i>(apenas modo Solo)</i></span></div>
+            <div class="guide-row"><kbd>LT / LB / RB / Y / START / DIR. Y</kbd><span><b>LT</b> Afterburner &middot; <b>LB / RB / Y</b> Barrel Roll &middot; <b>START</b> Menu / Pausa &middot; <b>DIR. Y</b> Distância câmera</span></div>
+          </div>
         </div>
       </div>
 
@@ -324,6 +335,16 @@
 
           <!-- TAB 2: CONTROLS -->
           <div id="settings-tab-controls" class="settings-tab-panel hidden">
+            <div class="settings-row">
+              <span>JOYSTICK / GAMEPAD</span>
+              <span id="ctrl-gamepad-status" class="gamepad-status-badge disconnected">NENHUM DETECTADO</span>
+            </div>
+            <label class="vp-row settings-vp-row">
+              <span>ZONA MORTA (JOYSTICK)</span>
+              <input id="ctrl-deadzone-slider" type="range" min="0.05" max="0.35" step="0.01" value="0.14" />
+              <span id="ctrl-deadzone-val" class="vp-val">14%</span>
+            </label>
+            <div class="vp-divider"></div>
             <div class="settings-row">
               <span>INVERTER EIXO Y (PITCH)</span>
               <button id="ctrl-invert-y-btn" class="vp-reset-btn settings-toggle-btn" type="button">NÃO</button>
@@ -438,6 +459,6 @@
       }
     }
   </script>
-  <script type="module" src="js/main.js?v=11"></script>
+  <script type="module" src="js/main.js?v=12"></script>
 </body>
 </html>
