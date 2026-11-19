@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { SUN_DIR } from '../world.js?v=17';
+import { SUN_DIR } from '../world.js?v=18';
 
 export const DEFAULT_FUSELAGE_STATIONS = [
   { z: -3.95, w: 0.03, chineW: 0.03, top: 0.02, midY: 0.0, bot: -0.02 },

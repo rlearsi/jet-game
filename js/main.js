@@ -6,13 +6,14 @@ import {
   TERRAIN_DEFORM_MODES,
   TERRAIN_CLOUD_MODES,
   DEFAULT_TERRAIN_OPTIONS,
-} from './world.js?v=17';
-import { FighterJet, RemoteJet, SHIP_CATALOG, SHIP_IDS } from './jet.js?v=17';
-import { MissileSystem } from './weapons.js?v=17';
-import { FighterCockpit } from './cockpit.js?v=17';
-import { JetSoundEngine } from './audio.js?v=17';
-import { MultiplayerManager } from './multiplayer.js?v=17';
-import { GamepadController, DEFAULT_GAMEPAD_DEADZONE } from './gamepad.js?v=17';
+} from './world.js?v=18';
+import { FighterJet, RemoteJet, SHIP_CATALOG, SHIP_IDS } from './jet.js?v=18';
+import { MissileSystem } from './weapons.js?v=18';
+import { FighterCockpit } from './cockpit.js?v=18';
+import { JetSoundEngine } from './audio.js?v=18';
+import { MultiplayerManager } from './multiplayer.js?v=18';
+import { GamepadController, DEFAULT_GAMEPAD_DEADZONE } from './gamepad.js?v=18';
+import { TouchController } from './touch.js?v=18';
 
 // 6 live-switchable rendering styles (exclusively configurable inside Settings -> Render, plus V in flight)
 const RENDER_PRESETS = {
@@ -130,6 +131,7 @@ const DEFAULT_CONTROLS = {
   gamepadInvertY: false,
   mouseSensitivity: 1.0,
   gamepadDeadzone: DEFAULT_GAMEPAD_DEADZONE,
+  touchMode: 'auto',
   bindings: { ...DEFAULT_BINDINGS },
 };
 
@@ -181,6 +183,17 @@ const distBadge = document.getElementById('dist-badge');
 const destroyedBadge = document.getElementById('destroyed-badge');
 const playerHpFill = document.getElementById('player-hp-fill');
 const playerHpText = document.getElementById('player-hp-text');
+
+const mobileControlsEl = document.getElementById('mobile-controls');
+const touchStickZoneEl = document.getElementById('touch-stick-zone');
+const touchStickKnobEl = document.getElementById('touch-stick-knob');
+const touchBtnFire = document.getElementById('touch-btn-fire');
+const touchBtnMissile = document.getElementById('touch-btn-missile');
+const touchMissileCount = document.getElementById('touch-missile-count');
+const touchBtnBoost = document.getElementById('touch-btn-boost');
+const touchBtnRoll = document.getElementById('touch-btn-roll');
+const touchBtnCam = document.getElementById('touch-btn-cam');
+const touchBtnRear = document.getElementById('touch-btn-rear');
 
 // DOM References — Menu Overlay & Views
 const menuOverlay = document.getElementById('game-menu-overlay');
@@ -269,6 +282,7 @@ const audioSfxSlider = document.getElementById('audio-sfx-slider');
 const audioSfxVal = document.getElementById('audio-sfx-val');
 const audioTestBtn = document.getElementById('audio-test-btn');
 
+const ctrlTouchModeSelect = document.getElementById('ctrl-touch-mode-select');
 const ctrlGamepadStatus = document.getElementById('ctrl-gamepad-status');
 const ctrlGamepadInvertYBtn = document.getElementById('ctrl-gamepad-invert-y-btn');
 const ctrlDeadzoneSlider = document.getElementById('ctrl-deadzone-slider');
@@ -361,6 +375,9 @@ const controlSettings = {
   gamepadDeadzone: Number.isFinite(Number(savedControls?.gamepadDeadzone))
     ? THREE.MathUtils.clamp(Number(savedControls.gamepadDeadzone), 0.05, 0.35)
     : DEFAULT_CONTROLS.gamepadDeadzone,
+  touchMode: ['auto', 'on', 'off'].includes(savedControls?.touchMode)
+    ? savedControls.touchMode
+    : DEFAULT_CONTROLS.touchMode,
   bindings: { ...DEFAULT_BINDINGS },
 };
 if (savedControls?.bindings && typeof savedControls.bindings === 'object') {
@@ -380,14 +397,21 @@ function sanitizeTerrainObj(src) {
   };
 }
 
+function getViewportSize() {
+  const w = Math.max(1, Math.round(window.visualViewport?.width || window.innerWidth || 1));
+  const h = Math.max(1, Math.round(window.visualViewport?.height || window.innerHeight || 1));
+  return { w, h };
+}
+
 let localSoloTerrain = sanitizeTerrainObj(readJsonStorage('sunsetStriker_terrainSettings'));
 let activeTerrain = { ...localSoloTerrain };
 
-const camera = new THREE.PerspectiveCamera(viewSettings.fov, window.innerWidth / window.innerHeight, 0.5, 3600);
+const initVp = getViewportSize();
+const camera = new THREE.PerspectiveCamera(viewSettings.fov, initVp.w / initVp.h, 0.5, 3600);
 
 // Render targets: main scene + fighter jet silhouette mask
 let rtHeight = 480;
-let rtWidth = Math.max(480, Math.round(rtHeight * (window.innerWidth / window.innerHeight)));
+let rtWidth = Math.max(480, Math.round(rtHeight * (initVp.w / initVp.h)));
 
 const rtOpts = {
   minFilter: THREE.NearestFilter,
@@ -880,7 +904,52 @@ const gamepad = new GamepadController({
   },
 });
 
+let detectedTouchDevice = TouchController.isTouchDevice();
+let lastTouchAt = 0;
+
+function shouldUseTouchControls() {
+  if (controlSettings.touchMode === 'on') return true;
+  if (controlSettings.touchMode === 'off') return false;
+  return detectedTouchDevice;
+}
+
+const touchControls = new TouchController({
+  rootEl: mobileControlsEl,
+  stickZoneEl: touchStickZoneEl,
+  stickKnobEl: touchStickKnobEl,
+  fireBtnEl: touchBtnFire,
+  missileBtnEl: touchBtnMissile,
+  boostBtnEl: touchBtnBoost,
+  rollBtnEl: touchBtnRoll,
+  camBtnEl: touchBtnCam,
+  rearBtnEl: touchBtnRear,
+  onMissile: () => {
+    if (!menuOpen && gameState === 'playing' && jet.alive) {
+      weapons.tryFireMissile(jet);
+    }
+  },
+  onRoll: (sx) => {
+    if (!menuOpen && gameState === 'playing' && jet.alive) {
+      jet.triggerRoll(sx < -0.15 ? -1 : 1);
+    }
+  },
+  onCamera: () => {
+    if (!menuOpen && gameState === 'playing') {
+      setCameraMode(camModeIdx + 1);
+    }
+  },
+  onAnyTouch: () => {
+    lastTouchAt = performance.now();
+    detectedTouchDevice = true;
+    input.touchActive = true;
+    input.gamepadActive = false;
+  },
+});
+
 function syncControlsUI() {
+  if (ctrlTouchModeSelect) {
+    ctrlTouchModeSelect.value = controlSettings.touchMode;
+  }
   ctrlInvertYBtn.textContent = controlSettings.invertY ? 'SIM' : 'NÃO';
   ctrlInvertYBtn.classList.toggle('active', controlSettings.invertY);
   if (ctrlGamepadInvertYBtn) {
@@ -945,15 +1014,38 @@ ctrlDeadzoneSlider.addEventListener('input', () => {
   syncControlsUI();
 });
 
+if (ctrlTouchModeSelect) {
+  ctrlTouchModeSelect.addEventListener('change', () => {
+    controlSettings.touchMode = ['auto', 'on', 'off'].includes(ctrlTouchModeSelect.value)
+      ? ctrlTouchModeSelect.value
+      : 'auto';
+    if (!shouldUseTouchControls()) {
+      input.touchActive = false;
+      input.touchX = 0;
+      input.touchY = 0;
+      input.touchBoost = false;
+      input.touchCannon = false;
+      input.touchLookBack = false;
+      touchControls.reset();
+    }
+    saveControlSettings();
+    syncControlsUI();
+    syncHudVisibility();
+    sound.playSwitch();
+  });
+}
+
 ctrlResetBtn.addEventListener('click', () => {
   rebindingAction = null;
   controlSettings.invertY = DEFAULT_CONTROLS.invertY;
   controlSettings.gamepadInvertY = DEFAULT_CONTROLS.gamepadInvertY;
   controlSettings.mouseSensitivity = DEFAULT_CONTROLS.mouseSensitivity;
   controlSettings.gamepadDeadzone = DEFAULT_CONTROLS.gamepadDeadzone;
+  controlSettings.touchMode = DEFAULT_CONTROLS.touchMode;
   controlSettings.bindings = { ...DEFAULT_BINDINGS };
   saveControlSettings();
   syncControlsUI();
+  syncHudVisibility();
   sound.playSwitch();
 });
 
@@ -998,8 +1090,7 @@ function toggleCockpit() {
 }
 
 function applyRenderSettings() {
-  const w = window.innerWidth;
-  const h = window.innerHeight;
+  const { w, h } = getViewportSize();
   const targetH = renderSettings.resHeight === 0 ? Math.min(1080, h) : renderSettings.resHeight;
   rtHeight = Math.max(240, targetH);
   rtWidth = Math.max(320, Math.round(rtHeight * (w / h)));
@@ -1423,6 +1514,13 @@ function setMenuView(view) {
 function syncHudVisibility() {
   const inFlight = gameState === 'playing' && !menuOpen;
   const isCockpit = CAMERA_MODES[camModeIdx].id === 'COCKPIT';
+  const useTouch = shouldUseTouchControls();
+
+  document.body.classList.toggle('touch-active', useTouch);
+  touchControls.setVisible(inFlight && useTouch);
+  if (hudMenuBtn) {
+    hudMenuBtn.textContent = useTouch ? 'MENU' : 'MENU (ESC)';
+  }
 
   hudTopBar.classList.toggle('hidden', !inFlight);
   hudTopRight.classList.toggle('hidden', !inFlight);
@@ -1496,7 +1594,13 @@ function clearInputs() {
   input.joyLookBack = false;
   input.joyX = 0;
   input.joyY = 0;
+  input.touchBoost = false;
+  input.touchCannon = false;
+  input.touchLookBack = false;
+  input.touchX = 0;
+  input.touchY = 0;
   input.keys = {};
+  touchControls.reset();
 }
 
 function snapCameraToJet() {
@@ -1777,6 +1881,12 @@ const input = {
   joyBoost: false,
   joyCannon: false,
   joyLookBack: false,
+  touchActive: false,
+  touchX: 0,
+  touchY: 0,
+  touchBoost: false,
+  touchCannon: false,
+  touchLookBack: false,
   keys: {},
   sensitivity: controlSettings.mouseSensitivity,
   invertY: controlSettings.invertY,
@@ -1788,24 +1898,31 @@ let leftDownAt = 0;
 let lastMousePxX = null;
 let lastMousePxY = null;
 
+function isSyntheticMouseFromTouch(e) {
+  return Boolean(e.sourceCapabilities?.firesTouchEvents) || performance.now() - lastTouchAt < 900;
+}
+
 window.addEventListener('mousemove', (e) => {
-  if (menuOpen || gameState !== 'playing') return;
+  if (menuOpen || gameState !== 'playing' || isSyntheticMouseFromTouch(e) || shouldUseTouchControls()) return;
   if (lastMousePxX !== null && Math.hypot(e.clientX - lastMousePxX, e.clientY - lastMousePxY) >= 4) {
     input.gamepadActive = false;
+    input.touchActive = false;
   }
   lastMousePxX = e.clientX;
   lastMousePxY = e.clientY;
-  input.mouseX = (e.clientX / window.innerWidth) * 2 - 1;
-  input.mouseY = (e.clientY / window.innerHeight) * 2 - 1;
+  const { w, h } = getViewportSize();
+  input.mouseX = (e.clientX / w) * 2 - 1;
+  input.mouseY = (e.clientY / h) * 2 - 1;
 });
 
 window.addEventListener('mousedown', (e) => {
-  if (menuOpen || gameState !== 'playing') return;
+  if (menuOpen || gameState !== 'playing' || isSyntheticMouseFromTouch(e) || shouldUseTouchControls()) return;
   if (
     e.target.closest('button') ||
     e.target.closest('select') ||
     e.target.closest('input') ||
     e.target.closest('.clickable') ||
+    e.target.closest('#mobile-controls') ||
     e.target.closest('#game-menu-overlay') ||
     e.target.closest('#hud-top-right') ||
     e.target.closest('#hud-top-bar')
@@ -1828,7 +1945,14 @@ window.addEventListener('mousedown', (e) => {
 window.addEventListener('mouseup', (e) => {
   if (e.button === 0) {
     input.boost = false;
-    if (!menuOpen && gameState === 'playing' && jet.alive && performance.now() - leftDownAt < 230) {
+    if (
+      !menuOpen &&
+      gameState === 'playing' &&
+      jet.alive &&
+      !isSyntheticMouseFromTouch(e) &&
+      !shouldUseTouchControls() &&
+      performance.now() - leftDownAt < 230
+    ) {
       jet.triggerRoll(input.mouseX >= 0 ? 1 : -1);
     }
   } else if (e.button === 2) {
@@ -1949,6 +2073,43 @@ cockpitToggleBtn.addEventListener('click', () => {
 });
 
 window.addEventListener('resize', applyRenderSettings);
+window.visualViewport?.addEventListener('resize', applyRenderSettings);
+window.addEventListener('orientationchange', () => setTimeout(applyRenderSettings, 120));
+
+window.addEventListener(
+  'touchstart',
+  () => {
+    lastTouchAt = performance.now();
+    if (!detectedTouchDevice) {
+      detectedTouchDevice = true;
+      syncHudVisibility();
+    }
+  },
+  { passive: true }
+);
+
+document.addEventListener(
+  'touchmove',
+  (e) => {
+    if (menuOpen && e.target.closest('.menu-shell')) return;
+    e.preventDefault();
+  },
+  { passive: false }
+);
+
+for (const ev of ['gesturestart', 'gesturechange', 'gestureend']) {
+  document.addEventListener(ev, (e) => e.preventDefault(), { passive: false });
+}
+
+window.addEventListener(
+  'scroll',
+  () => {
+    if (window.scrollX !== 0 || window.scrollY !== 0) {
+      window.scrollTo(0, 0);
+    }
+  },
+  { passive: true }
+);
 
 // Initial startup configuration (starts in Main Menu with live 3D showcase)
 applyRenderSettings();
@@ -2009,7 +2170,7 @@ let wasLookingBack = false;
 function isLookingBackActive() {
   if (menuOpen || gameState !== 'playing') return false;
   const kbKey = controlSettings.bindings.lookBack || 'KeyB';
-  return Boolean(input.joyLookBack || input.keys[kbKey]);
+  return Boolean(input.joyLookBack || input.touchLookBack || input.keys[kbKey]);
 }
 
 function updateCamera(dt) {
@@ -2124,17 +2285,27 @@ const projVec = new THREE.Vector3();
 function projectToScreen(worldPos) {
   projVec.copy(worldPos).project(camera);
   if (projVec.z > 1.0) return null;
+  const { w, h } = getViewportSize();
   return {
-    x: (projVec.x * 0.5 + 0.5) * window.innerWidth,
-    y: (-projVec.y * 0.5 + 0.5) * window.innerHeight,
+    x: (projVec.x * 0.5 + 0.5) * w,
+    y: (-projVec.y * 0.5 + 0.5) * h,
   };
 }
 
 function updatePlayingHUD(elapsed) {
   const modeId = CAMERA_MODES[camModeIdx].id;
+  const { w: vpW, h: vpH } = getViewportSize();
 
   for (let i = 0; i < ammoPipEls.length; i++) {
     ammoPipEls[i].classList.toggle('ready', i < weapons.ammo);
+  }
+  if (touchMissileCount) {
+    touchMissileCount.textContent = String(weapons.ammo);
+  }
+  if (touchBtnMissile) {
+    const hasLocked = Boolean(weapons.lockedTarget && weapons.lockedTarget.alive && weapons.ammo > 0);
+    touchBtnMissile.classList.toggle('locked', hasLocked);
+    touchBtnMissile.classList.toggle('empty', weapons.ammo <= 0);
   }
   const knots = Math.round(jet.speed * 9.6);
   const altFt = Math.max(0, Math.round(jet.position.y * 3.6));
@@ -2168,7 +2339,7 @@ function updatePlayingHUD(elapsed) {
     }
     const labelPos = rj.position.clone().add(new THREE.Vector3(0, 4.2, 0));
     const sp = projectToScreen(labelPos);
-    if (sp && sp.x > 16 && sp.x < window.innerWidth - 16 && sp.y > 24 && sp.y < window.innerHeight - 24) {
+    if (sp && sp.x > 16 && sp.x < vpW - 16 && sp.y > 24 && sp.y < vpH - 24) {
       rec.el.classList.remove('hidden');
       rec.el.style.left = `${sp.x}px`;
       rec.el.style.top = `${sp.y}px`;
@@ -2199,7 +2370,7 @@ function updatePlayingHUD(elapsed) {
 
     for (const { pk, d } of [...healthDrops.slice(0, 2), ...mslDrops.slice(0, 2)]) {
       const sp = projectToScreen(new THREE.Vector3(pk.x, pk.y + 8, pk.z));
-      if (!sp || sp.x < 16 || sp.x > window.innerWidth - 16 || sp.y < 24 || sp.y > window.innerHeight - 24) continue;
+      if (!sp || sp.x < 16 || sp.x > vpW - 16 || sp.y < 24 || sp.y > vpH - 24) continue;
       const tag = document.createElement('div');
       tag.className = `pickup-tag ${pk.type}`;
       tag.style.left = `${sp.x}px`;
@@ -2239,7 +2410,7 @@ function updatePlayingHUD(elapsed) {
     const t = weapons.lockedTarget;
     const tPos = new THREE.Vector3(t.x, t.y + (t.h || 6) * 0.5, t.z);
     const sp = projectToScreen(tPos);
-    if (sp && sp.x > 20 && sp.x < window.innerWidth - 20 && sp.y > 30 && sp.y < window.innerHeight - 30) {
+    if (sp && sp.x > 20 && sp.x < vpW - 20 && sp.y > 30 && sp.y < vpH - 30) {
       lockBox.classList.remove('hidden');
       lockBox.style.left = `${sp.x}px`;
       lockBox.style.top = `${sp.y}px`;
@@ -2261,6 +2432,10 @@ const NEUTRAL_INPUT = {
   joyX: 0,
   joyY: 0,
   joyBoost: false,
+  touchActive: false,
+  touchX: 0,
+  touchY: 0,
+  touchBoost: false,
   keys: {},
   sensitivity: 1.0,
   invertY: false,
@@ -2350,6 +2525,29 @@ function animate() {
   const dt = Math.min(0.05, clock.getDelta());
   const elapsed = clock.elapsedTime;
   handleGamepadFrame(dt);
+
+  if (gameState !== 'playing' || menuOpen) {
+    input.touchX = 0;
+    input.touchY = 0;
+    input.touchBoost = false;
+    input.touchCannon = false;
+    input.touchLookBack = false;
+  } else if (shouldUseTouchControls() && !input.gamepadActive) {
+    input.touchActive = true;
+    input.touchX = touchControls.steerX;
+    input.touchY = touchControls.steerY;
+    input.touchBoost = touchControls.boostHeld;
+    input.touchCannon = touchControls.cannonHeld;
+    input.touchLookBack = touchControls.lookBackHeld;
+  } else {
+    input.touchActive = false;
+    input.touchX = 0;
+    input.touchY = 0;
+    input.touchBoost = false;
+    input.touchCannon = false;
+    input.touchLookBack = false;
+  }
+
   const modeId = CAMERA_MODES[camModeIdx].id;
   const isCockpit = modeId === 'COCKPIT';
 
@@ -2393,7 +2591,7 @@ function animate() {
       }
 
       if (jet.alive) {
-        if (!menuOpen && (input.cannonFiring || input.joyCannon)) {
+        if (!menuOpen && (input.cannonFiring || input.joyCannon || input.touchCannon)) {
           weapons.tryFireCannon(jet);
         }
 

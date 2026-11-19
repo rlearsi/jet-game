@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { getTerrainHeight, WATER_LEVEL } from './world.js?v=17';
+import { getTerrainHeight, WATER_LEVEL } from './world.js?v=18';
 
 function createDitherExplosionMat(hex) {
   return new THREE.ShaderMaterial({

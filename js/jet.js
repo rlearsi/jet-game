@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { getTerrainHeight, WATER_LEVEL } from './world.js?v=17';
-import { SHIP_IDS, SHIP_CATALOG, buildJetVisualRig, buildAirfoilSurface } from './jets/index.js?v=17';
+import { getTerrainHeight, WATER_LEVEL } from './world.js?v=18';
+import { SHIP_IDS, SHIP_CATALOG, buildJetVisualRig, buildAirfoilSurface } from './jets/index.js?v=18';
 
 export { SHIP_IDS, SHIP_CATALOG, buildJetVisualRig, buildAirfoilSurface };
 
@@ -422,7 +422,10 @@ export class FighterJet {
     const joyYSign = input.gamepadInvertY ? -1 : 1;
     let steerX;
     let steerY;
-    if (input.gamepadActive) {
+    if (input.touchActive) {
+      steerX = THREE.MathUtils.clamp((input.touchX || 0) * sens, -1, 1);
+      steerY = THREE.MathUtils.clamp((input.touchY || 0) * sens * ySign, -1, 1);
+    } else if (input.gamepadActive) {
       steerX = THREE.MathUtils.clamp((input.joyX || 0) * sens, -1, 1);
       steerY = THREE.MathUtils.clamp((input.joyY || 0) * sens * joyYSign, -1, 1);
     } else {
@@ -441,7 +444,7 @@ export class FighterJet {
 
     const abKey = input.afterburnerKey || 'ShiftLeft';
     this.afterburner = Boolean(
-      input.boost || input.joyBoost || keys[abKey] || (abKey === 'ShiftLeft' && keys.ShiftRight)
+      input.boost || input.joyBoost || input.touchBoost || keys[abKey] || (abKey === 'ShiftLeft' && keys.ShiftRight)
     );
 
     const targetThrottle = this.afterburner ? 1.0 : 0.64;
