@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { SHIP_STYLES, createNavalFleetMeshes } from './ships/index.js?v=23';
 
 export const WORLD_SIZE = 2800;
 export const WATER_LEVEL = 0.0;
@@ -1827,15 +1828,9 @@ export function buildWorld(scene) {
   updateVisibleChunks(0, 0, true);
 
   // =========================================================================
-  // 4f. Large Naval Ships cruising the bays & endless sea channels (24 ships!)
+  // 4f. Large Naval Ships cruising the bays & endless sea channels (24 ships, 4 distinct vessel classes!)
   // =========================================================================
   const ships = [];
-  const shipHullMat = new THREE.MeshLambertMaterial({ color: 0x4b556b, flatShading: true });
-  const shipDeckMat = new THREE.MeshLambertMaterial({ color: 0xb84735, flatShading: true });
-  const shipHullGeo = new THREE.BoxGeometry(6.5, 3.8, 24.0);
-  const shipDeckGeo = new THREE.BoxGeometry(5.6, 0.8, 21.5);
-  const shipBridgeGeo = new THREE.BoxGeometry(4.8, 5.2, 6.2);
-  const shipFunnelGeo = new THREE.CylinderGeometry(1.1, 1.3, 4.4, 6);
   const shipPositions = [
     [-40, 85, 0.3],
     [35, 30, -0.8],
@@ -1876,22 +1871,32 @@ export function buildWorld(scene) {
     return null;
   }
 
+  const shipStyleMeshes = createNavalFleetMeshes(scene, Math.ceil(shipPositions.length / SHIP_STYLES.length) + 4);
+  const styleInstanceCounts = new Array(SHIP_STYLES.length).fill(0);
+
   for (const [sx, sz, ang] of shipPositions) {
     if (getTerrainHeight(sx, sz) > -3.5) continue;
     const shipIdx = ships.length;
+    const styleIdx = shipIdx % SHIP_STYLES.length;
+    const styleDef = SHIP_STYLES[styleIdx];
+    const styleInstIdx = styleInstanceCounts[styleIdx]++;
+
     const shipObj = {
       idx: shipIdx,
+      styleIdx,
+      styleInstIdx,
+      styleId: styleDef.spec.id,
       type: 'ship',
-      label: 'NAVAL SHIP',
+      label: styleDef.spec.label || 'NAVAL SHIP',
       x: sx,
       y: WATER_LEVEL,
       z: sz,
       originX: sx,
       originZ: sz,
       originAng: ang,
-      r: 12.5,
-      h: 12.0,
-      color: 0xd9563c,
+      r: styleDef.spec.radius || 13.5,
+      h: styleDef.spec.height || 13.0,
+      color: styleDef.spec.color || 0xd9563c,
       angle: ang,
       speed: 4.5 + rand() * 3.0,
       phase: rand() * Math.PI * 2,
@@ -1907,42 +1912,26 @@ export function buildWorld(scene) {
     lockableTargets.push(shipObj);
   }
 
-  const shipHulls = new THREE.InstancedMesh(shipHullGeo, shipHullMat, Math.max(1, ships.length));
-  const shipDecks = new THREE.InstancedMesh(shipDeckGeo, shipDeckMat, Math.max(1, ships.length));
-  const shipBridges = new THREE.InstancedMesh(shipBridgeGeo, lhWhiteMat, Math.max(1, ships.length));
-  const shipFunnels = new THREE.InstancedMesh(shipFunnelGeo, lhRedMat, Math.max(1, ships.length));
-  for (const im of [shipHulls, shipDecks, shipBridges, shipFunnels]) {
-    im.count = ships.length;
-    im.frustumCulled = false;
-    im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  for (let s = 0; s < shipStyleMeshes.length; s++) {
+    shipStyleMeshes[s].mesh.count = styleInstanceCounts[s];
   }
-  scene.add(shipHulls, shipDecks, shipBridges, shipFunnels);
 
-  function writeShipInstance(idx, sh, baseY, visible = true) {
-    const hullArr = shipHulls.instanceMatrix.array;
-    const deckArr = shipDecks.instanceMatrix.array;
-    const bridgeArr = shipBridges.instanceMatrix.array;
-    const funnelArr = shipFunnels.instanceMatrix.array;
+  function writeShipInstance(_idx, sh, baseY, visible = true) {
+    const styleMesh = shipStyleMeshes[sh.styleIdx].mesh;
+    const arr = styleMesh.instanceMatrix.array;
     if (!visible) {
-      writeZeroMatrix(hullArr, idx);
-      writeZeroMatrix(deckArr, idx);
-      writeZeroMatrix(bridgeArr, idx);
-      writeZeroMatrix(funnelArr, idx);
+      writeZeroMatrix(arr, sh.styleInstIdx);
       return;
     }
     const sinA = Math.sin(sh.angle);
     const cosA = Math.cos(sh.angle);
-    writeYRotTransMatrix(hullArr, idx, sh.x, baseY + 1.6, sh.z, sinA, cosA);
-    writeYRotTransMatrix(deckArr, idx, sh.x, baseY + 3.6, sh.z, sinA, cosA);
-    writeYRotTransMatrix(bridgeArr, idx, sh.x + 3.5 * sinA, baseY + 6.2, sh.z + 3.5 * cosA, sinA, cosA);
-    writeYRotTransMatrix(funnelArr, idx, sh.x - 3.5 * sinA, baseY + 6.8, sh.z - 3.5 * cosA, sinA, cosA);
+    writeYRotTransMatrix(arr, sh.styleInstIdx, sh.x, baseY - 0.15, sh.z, sinA, cosA);
   }
 
   function markShipsMatricesDirty() {
-    shipHulls.instanceMatrix.needsUpdate = true;
-    shipDecks.instanceMatrix.needsUpdate = true;
-    shipBridges.instanceMatrix.needsUpdate = true;
-    shipFunnels.instanceMatrix.needsUpdate = true;
+    for (let s = 0; s < shipStyleMeshes.length; s++) {
+      shipStyleMeshes[s].mesh.instanceMatrix.needsUpdate = true;
+    }
   }
 
   for (let i = 0; i < ships.length; i++) {
