@@ -9,10 +9,32 @@ export const PILOT_COLORS = [
   '#52f2c8',
 ];
 
-const STUN_SERVERS = [
+const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun.cloudflare.com:3478' },
+  { urls: 'stun:openrelay.metered.ca:80' },
+  {
+    urls: 'turn:openrelay.metered.ca:80',
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
+  {
+    urls: 'turn:openrelay.metered.ca:443',
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
+  {
+    urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
 ];
+
+const RTC_CONFIG = {
+  iceServers: ICE_SERVERS,
+  iceCandidatePoolSize: 10,
+};
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
@@ -225,28 +247,32 @@ export class MultiplayerManager {
     this.setStatus('CONNECTING', `Connecting to ${cleanCode}...`);
     this.transport = await this.detectTransport(transportPref);
 
-    if (this.transport === 'php') {
-      const res = await fetch(`signal.php?action=join&code=${encodeURIComponent(cleanCode)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          code: cleanCode,
-          peerId: this.localId,
-          name: this.localName,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.ok) {
-        this.leaveRoom();
-        throw new Error(data?.error || 'Room not found');
+    try {
+      if (this.transport === 'php') {
+        const res = await fetch(`signal.php?action=join&code=${encodeURIComponent(cleanCode)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            code: cleanCode,
+            peerId: this.localId,
+            name: this.localName,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          throw new Error(data?.error || 'Room not found');
+        }
+        const cIdx = typeof data.colorIndex === 'number' ? data.colorIndex : 1;
+        this.localColor = PILOT_COLORS[cIdx % PILOT_COLORS.length];
+        this.startPhpGuestPolling(data.hostId, data.hostName);
+      } else {
+        await this.startPeerJsGuest();
       }
-      const cIdx = typeof data.colorIndex === 'number' ? data.colorIndex : 1;
-      this.localColor = PILOT_COLORS[cIdx % PILOT_COLORS.length];
-      this.startPhpGuestPolling(data.hostId, data.hostName);
-    } else {
-      await this.startPeerJsGuest();
+      return cleanCode;
+    } catch (err) {
+      this.leaveRoom();
+      throw err;
     }
-    return cleanCode;
   }
 
   // =========================================================================
@@ -307,7 +333,7 @@ export class MultiplayerManager {
   }
 
   async createPhpHostPeer(peerId, name, color, colorIndex) {
-    const pc = new RTCPeerConnection({ iceServers: STUN_SERVERS });
+    const pc = new RTCPeerConnection(RTC_CONFIG);
     const session = {
       id: peerId,
       name,
@@ -322,6 +348,7 @@ export class MultiplayerManager {
       opened: false,
       iceBuffer: [],
       iceFlushTimer: null,
+      disconnectTimer: null,
     };
     this.peers.set(peerId, session);
 
@@ -351,7 +378,18 @@ export class MultiplayerManager {
     };
 
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'failed' || pc.connectionState === 'closed' || pc.connectionState === 'disconnected') {
+      if (pc.connectionState === 'connected') {
+        clearTimeout(session.disconnectTimer);
+        session.disconnectTimer = null;
+      } else if (pc.connectionState === 'disconnected') {
+        clearTimeout(session.disconnectTimer);
+        session.disconnectTimer = setTimeout(() => {
+          if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+            this.handlePeerDisconnected(peerId);
+          }
+        }, 4500);
+      } else if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+        clearTimeout(session.disconnectTimer);
         this.handlePeerDisconnected(peerId);
       }
     };
@@ -379,7 +417,7 @@ export class MultiplayerManager {
   }
 
   startPhpGuestPolling(hostId, hostName) {
-    const pc = new RTCPeerConnection({ iceServers: STUN_SERVERS });
+    const pc = new RTCPeerConnection(RTC_CONFIG);
     const session = {
       id: hostId,
       name: hostName || 'HOST',
@@ -394,6 +432,7 @@ export class MultiplayerManager {
       opened: false,
       iceBuffer: [],
       iceFlushTimer: null,
+      disconnectTimer: null,
     };
     this.peers.set(hostId, session);
 
@@ -430,7 +469,19 @@ export class MultiplayerManager {
     };
 
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'failed' || pc.connectionState === 'closed' || pc.connectionState === 'disconnected') {
+      if (pc.connectionState === 'connected') {
+        clearTimeout(session.disconnectTimer);
+        session.disconnectTimer = null;
+      } else if (pc.connectionState === 'disconnected') {
+        clearTimeout(session.disconnectTimer);
+        session.disconnectTimer = setTimeout(() => {
+          if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+            this.setStatus('OFFLINE', 'Host disconnected');
+            this.leaveRoom();
+          }
+        }, 4500);
+      } else if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+        clearTimeout(session.disconnectTimer);
         this.setStatus('OFFLINE', 'Host disconnected');
         this.leaveRoom();
       }
@@ -539,7 +590,7 @@ export class MultiplayerManager {
       const peerId = `ssjet-${code}`;
       try {
         await new Promise((resolve, reject) => {
-          const peer = new PeerCtor(peerId, { config: { iceServers: STUN_SERVERS } });
+          const peer = new PeerCtor(peerId, { config: RTC_CONFIG });
           let settled = false;
 
           peer.on('open', () => {
@@ -548,6 +599,14 @@ export class MultiplayerManager {
             this.roomCode = code;
             bound = true;
             resolve();
+          });
+
+          peer.on('disconnected', () => {
+            if (this.role === 'host' && this.peerJsInstance === peer && !peer.destroyed) {
+              try {
+                peer.reconnect();
+              } catch (_) {}
+            }
           });
 
           peer.on('error', (err) => {
@@ -576,7 +635,7 @@ export class MultiplayerManager {
   handlePeerJsHostIncoming(conn) {
     const remotePeerId = conn.metadata?.pilotId || conn.peer;
     const name = (conn.metadata?.name || 'PILOT').slice(0, 12);
-    const kind = conn.label === 'state' ? 'state' : 'events';
+    const kind = conn.label === 'main' ? 'main' : conn.label === 'state' ? 'state' : 'events';
 
     let session = this.peers.get(remotePeerId);
     if (!session) {
@@ -593,6 +652,7 @@ export class MultiplayerManager {
         name,
         color: PILOT_COLORS[cIdx % PILOT_COLORS.length],
         colorIndex: cIdx,
+        mainConn: null,
         stateConn: null,
         eventsConn: null,
         opened: false,
@@ -600,13 +660,15 @@ export class MultiplayerManager {
       this.peers.set(remotePeerId, session);
     }
 
-    if (kind === 'state') session.stateConn = conn;
+    if (kind === 'main') session.mainConn = conn;
+    else if (kind === 'state') session.stateConn = conn;
     else session.eventsConn = conn;
 
     conn.on('open', () => {
-      const sOpen = session.stateConn && session.stateConn.open;
-      const eOpen = session.eventsConn && session.eventsConn.open;
-      if (sOpen && eOpen && !session.opened) {
+      const ready = session.mainConn
+        ? session.mainConn.open
+        : Boolean(session.stateConn?.open && session.eventsConn?.open);
+      if (ready && !session.opened) {
         session.opened = true;
         this.onHostPeerChannelReady(session);
       }
@@ -615,7 +677,8 @@ export class MultiplayerManager {
     conn.on('data', (raw) => {
       try {
         const msg = typeof raw === 'string' ? JSON.parse(raw) : raw;
-        this.handleIncomingMessage(session.id, kind, msg);
+        const msgKind = msg?.t === 's' ? 'state' : kind;
+        this.handleIncomingMessage(session.id, msgKind, msg);
       } catch (_) {}
     });
 
@@ -628,68 +691,91 @@ export class MultiplayerManager {
     const targetPeerId = `ssjet-${this.roomCode}`;
 
     await new Promise((resolve, reject) => {
-      const peer = new PeerCtor(undefined, { config: { iceServers: STUN_SERVERS } });
+      const peer = new PeerCtor(undefined, { config: RTC_CONFIG });
       let settled = false;
 
       const failTimeout = setTimeout(() => {
         if (!settled) {
           settled = true;
-          reject(new Error('Connection timed out'));
+          try {
+            peer.destroy();
+          } catch (_) {}
+          reject(new Error('Tempo esgotado (timeout) ao conectar P2P. Tente novamente.'));
         }
-      }, 12000);
+      }, 22000);
+
+      const failEarly = (err) => {
+        clearTimeout(failTimeout);
+        if (!settled) {
+          settled = true;
+          try {
+            peer.destroy();
+          } catch (_) {}
+          let msg = err?.message || 'Erro de conexão PeerJS';
+          if (err?.type === 'peer-unavailable') {
+            msg = `Sala ${this.roomCode} não encontrada (verifique o código ou se o Host está online).`;
+          } else if (err?.type === 'network' || err?.type === 'server-error' || err?.type === 'socket-error') {
+            msg = 'Falha no servidor de sinalização P2P. Tente novamente.';
+          }
+          reject(new Error(msg));
+        }
+      };
 
       peer.on('open', () => {
+        if (settled) return;
         this.peerJsInstance = peer;
         const meta = { pilotId: this.localId, name: this.localName };
-        const stateConn = peer.connect(targetPeerId, { label: 'state', reliable: false, metadata: meta });
-        const eventsConn = peer.connect(targetPeerId, { label: 'events', reliable: true, metadata: meta });
+        // Single multiplexed reliable DataConnection avoids dual-RTCPeerConnection ICE/SDP races
+        const mainConn = peer.connect(targetPeerId, { label: 'main', reliable: true, metadata: meta });
 
         const session = {
           id: targetPeerId,
           name: 'HOST',
           color: PILOT_COLORS[0],
           colorIndex: 0,
-          stateConn,
-          eventsConn,
+          mainConn,
+          stateConn: null,
+          eventsConn: null,
           opened: false,
         };
         this.peers.set(targetPeerId, session);
 
-        const checkOpen = () => {
-          if (stateConn.open && eventsConn.open && !session.opened) {
-            session.opened = true;
-            clearTimeout(failTimeout);
-            if (!settled) {
-              settled = true;
-              this.onGuestConnectedToHost(session);
-              resolve();
-            }
+        mainConn.on('open', () => {
+          if (session.opened) return;
+          session.opened = true;
+          clearTimeout(failTimeout);
+          if (!settled) {
+            settled = true;
+            this.onGuestConnectedToHost(session);
+            resolve();
           }
-        };
+        });
 
-        stateConn.on('open', checkOpen);
-        eventsConn.on('open', checkOpen);
-        stateConn.on('data', (raw) => {
-          const msg = typeof raw === 'string' ? JSON.parse(raw) : raw;
-          this.handleIncomingMessage(session.id, 'state', msg);
+        mainConn.on('data', (raw) => {
+          try {
+            const msg = typeof raw === 'string' ? JSON.parse(raw) : raw;
+            const kind = msg?.t === 's' ? 'state' : 'events';
+            this.handleIncomingMessage(session.id, kind, msg);
+          } catch (_) {}
         });
-        eventsConn.on('data', (raw) => {
-          const msg = typeof raw === 'string' ? JSON.parse(raw) : raw;
-          this.handleIncomingMessage(session.id, 'events', msg);
+
+        mainConn.on('error', (err) => {
+          if (!session.opened) {
+            failEarly(err);
+          }
         });
-        eventsConn.on('close', () => {
-          this.setStatus('OFFLINE', 'Host disconnected');
-          this.leaveRoom();
+
+        mainConn.on('close', () => {
+          if (!session.opened) {
+            failEarly(new Error('Conexão encerrada antes de abrir o canal P2P.'));
+          } else {
+            this.setStatus('OFFLINE', 'Host disconnected');
+            this.leaveRoom();
+          }
         });
       });
 
-      peer.on('error', (err) => {
-        clearTimeout(failTimeout);
-        if (!settled) {
-          settled = true;
-          reject(new Error(err?.message || 'PeerJS error'));
-        }
-      });
+      peer.on('error', failEarly);
     });
   }
 
@@ -708,7 +794,7 @@ export class MultiplayerManager {
         } catch (_) {}
       }
     } else if (this.transport === 'peerjs') {
-      const conn = kind === 'state' ? session.stateConn : session.eventsConn;
+      const conn = session.mainConn || (kind === 'state' ? session.stateConn : session.eventsConn);
       if (conn && conn.open) {
         try {
           conn.send(payload);
@@ -919,8 +1005,12 @@ export class MultiplayerManager {
     const session = this.peers.get(peerId);
     if (session) {
       clearTimeout(session.iceFlushTimer);
+      clearTimeout(session.disconnectTimer);
       try {
         session.pc?.close();
+      } catch (_) {}
+      try {
+        session.mainConn?.close();
       } catch (_) {}
       try {
         session.stateConn?.close();
@@ -1032,8 +1122,12 @@ export class MultiplayerManager {
 
     for (const [pid, session] of this.peers.entries()) {
       clearTimeout(session.iceFlushTimer);
+      clearTimeout(session.disconnectTimer);
       try {
         session.pc?.close();
+      } catch (_) {}
+      try {
+        session.mainConn?.close();
       } catch (_) {}
       try {
         session.stateConn?.close();

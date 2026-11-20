@@ -6,7 +6,7 @@ import {
   appendBridgeWindows,
   appendRadarMast,
   buildMergedShipGeometry,
-} from './shared.js?v=28';
+} from './shared.js?v=29';
 
 export const spec = {
   id: 'cargo',

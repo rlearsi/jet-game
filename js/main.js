@@ -9,14 +9,14 @@ import {
   DEFAULT_WORLD_SEED,
   sanitizeSeedString,
   generateRandomSeed,
-} from './world.js?v=28';
-import { FighterJet, RemoteJet, SHIP_CATALOG, SHIP_IDS, buildJetVisualRig } from './jet.js?v=28';
-import { MissileSystem } from './weapons.js?v=28';
-import { FighterCockpit } from './cockpit.js?v=28';
-import { JetSoundEngine } from './audio.js?v=28';
-import { MultiplayerManager } from './multiplayer.js?v=28';
-import { GamepadController, DEFAULT_GAMEPAD_DEADZONE } from './gamepad.js?v=28';
-import { TouchController } from './touch.js?v=28';
+} from './world.js?v=29';
+import { FighterJet, RemoteJet, SHIP_CATALOG, SHIP_IDS, buildJetVisualRig } from './jet.js?v=29';
+import { MissileSystem } from './weapons.js?v=29';
+import { FighterCockpit } from './cockpit.js?v=29';
+import { JetSoundEngine } from './audio.js?v=29';
+import { MultiplayerManager } from './multiplayer.js?v=29';
+import { GamepadController, DEFAULT_GAMEPAD_DEADZONE } from './gamepad.js?v=29';
+import { TouchController } from './touch.js?v=29';
 
 // 6 live-switchable rendering styles (exclusively configurable inside Settings -> Render, plus V in flight)
 const RENDER_PRESETS = {
