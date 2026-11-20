@@ -13,28 +13,56 @@ const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun.cloudflare.com:3478' },
-  { urls: 'stun:openrelay.metered.ca:80' },
-  {
-    urls: 'turn:openrelay.metered.ca:80',
-    username: 'openrelayproject',
-    credential: 'openrelayproject',
-  },
-  {
-    urls: 'turn:openrelay.metered.ca:443',
-    username: 'openrelayproject',
-    credential: 'openrelayproject',
-  },
-  {
-    urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-    username: 'openrelayproject',
-    credential: 'openrelayproject',
-  },
 ];
 
 const RTC_CONFIG = {
   iceServers: ICE_SERVERS,
   iceCandidatePoolSize: 10,
 };
+
+let cachedTurnServers = null;
+let cachedTurnFetchedAt = 0;
+
+async function getRtcConfig() {
+  let extraServers = [];
+  try {
+    const raw = (localStorage.getItem('sunsetStriker_turnUrl') || '').trim();
+    if (raw) {
+      if (raw.startsWith('[')) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) extraServers = parsed;
+      } else if (raw.startsWith('http://') || raw.startsWith('https://')) {
+        const now = Date.now();
+        if (cachedTurnServers && now - cachedTurnFetchedAt < 300000) {
+          extraServers = cachedTurnServers;
+        } else {
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort(), 3500);
+          try {
+            const res = await fetch(raw, { cache: 'no-store', signal: ctrl.signal });
+            clearTimeout(t);
+            if (res.ok) {
+              const data = await res.json();
+              if (Array.isArray(data)) {
+                extraServers = data;
+                cachedTurnServers = data;
+                cachedTurnFetchedAt = now;
+              }
+            }
+          } catch (_) {
+            clearTimeout(t);
+          }
+        }
+      }
+    }
+  } catch (_) {}
+
+  if (!extraServers.length) return RTC_CONFIG;
+  return {
+    iceServers: [...ICE_SERVERS, ...extraServers],
+    iceCandidatePoolSize: 10,
+  };
+}
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
@@ -333,7 +361,8 @@ export class MultiplayerManager {
   }
 
   async createPhpHostPeer(peerId, name, color, colorIndex) {
-    const pc = new RTCPeerConnection(RTC_CONFIG);
+    const rtcCfg = await getRtcConfig();
+    const pc = new RTCPeerConnection(rtcCfg);
     const session = {
       id: peerId,
       name,
@@ -416,8 +445,9 @@ export class MultiplayerManager {
     return session;
   }
 
-  startPhpGuestPolling(hostId, hostName) {
-    const pc = new RTCPeerConnection(RTC_CONFIG);
+  async startPhpGuestPolling(hostId, hostName) {
+    const rtcCfg = await getRtcConfig();
+    const pc = new RTCPeerConnection(rtcCfg);
     const session = {
       id: hostId,
       name: hostName || 'HOST',
@@ -582,7 +612,7 @@ export class MultiplayerManager {
   // =========================================================================
 
   async startPeerJsHost() {
-    const PeerCtor = await loadPeerJS();
+    const [PeerCtor, rtcCfg] = await Promise.all([loadPeerJS(), getRtcConfig()]);
     let bound = false;
 
     for (let attempt = 0; attempt < 4 && !bound; attempt++) {
@@ -590,7 +620,7 @@ export class MultiplayerManager {
       const peerId = `ssjet-${code}`;
       try {
         await new Promise((resolve, reject) => {
-          const peer = new PeerCtor(peerId, { config: RTC_CONFIG });
+          const peer = new PeerCtor(peerId, { config: rtcCfg });
           let settled = false;
 
           peer.on('open', () => {
@@ -687,11 +717,16 @@ export class MultiplayerManager {
   }
 
   async startPeerJsGuest() {
-    const PeerCtor = await loadPeerJS();
+    this.setStatus('CONNECTING', 'Conectando ao servidor P2P...');
+    const [PeerCtor, rtcCfg] = await Promise.all([loadPeerJS(), getRtcConfig()]);
     const targetPeerId = `ssjet-${this.roomCode}`;
+    const hasTurn = Array.isArray(rtcCfg.iceServers) && rtcCfg.iceServers.some((s) => {
+      const u = Array.isArray(s.urls) ? s.urls.join(',') : String(s.urls || '');
+      return u.startsWith('turn:') || u.startsWith('turns:');
+    });
 
     await new Promise((resolve, reject) => {
-      const peer = new PeerCtor(undefined, { config: RTC_CONFIG });
+      const peer = new PeerCtor(undefined, { config: rtcCfg });
       let settled = false;
 
       const failTimeout = setTimeout(() => {
@@ -700,7 +735,10 @@ export class MultiplayerManager {
           try {
             peer.destroy();
           } catch (_) {}
-          reject(new Error('Tempo esgotado (timeout) ao conectar P2P. Tente novamente.'));
+          const hint = hasTurn
+            ? 'Tempo esgotado (timeout) na conexão P2P/TURN.'
+            : 'Timeout P2P: a rede/CGNAT (ex.: Vivo Fibra) bloqueou a conexão direta sem TURN.';
+          reject(new Error(hint));
         }
       }, 22000);
 
