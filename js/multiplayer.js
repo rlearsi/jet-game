@@ -1,3 +1,5 @@
+import { MqttRelayClient, RELAY_BROKERS } from './relay.js?v=31';
+
 export const PILOT_COLORS = [
   '#e55238',
   '#36d6ff',
@@ -55,7 +57,7 @@ async function getRtcConfig() {
         }
       }
     }
-  } catch (_) {}
+  } catch (_) { }
 
   if (!extraServers.length) return RTC_CONFIG;
   return {
@@ -76,6 +78,18 @@ export function generateRoomCode(len = 6) {
 
 function makePeerId() {
   return 'p_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+}
+
+function relayTopicC2H(code) {
+  return `ssjet/r1/${code}/c2h`;
+}
+
+function relayTopicH2C(code) {
+  return `ssjet/r1/${code}/h2c`;
+}
+
+function relayTopicTo(code, peerId) {
+  return `ssjet/r1/${code}/to/${peerId}`;
 }
 
 function round1(v) {
@@ -150,6 +164,12 @@ export class MultiplayerManager {
     this.lastStateSentAt = 0;
     this.peerJsInstance = null;
 
+    this.relayClient = null;
+    this.relayActive = false;
+    this.hostLastSeenAt = 0;
+    this.relayBrokerIndex = 0;
+    this._relayJoinPending = null;
+
     this._onBeforeUnload = () => this.leaveRoom(true);
     if (typeof window !== 'undefined') {
       window.addEventListener('beforeunload', this._onBeforeUnload);
@@ -162,6 +182,7 @@ export class MultiplayerManager {
       status,
       role: this.role,
       transport: this.transport,
+      relayActive: this.relayActive,
       roomCode: this.roomCode,
       message,
     });
@@ -172,6 +193,7 @@ export class MultiplayerManager {
   }
 
   async detectTransport(pref = 'auto') {
+    if (pref === 'relay') return 'relay';
     if (pref === 'local') return 'php';
     if (pref === 'cloud') return 'peerjs';
 
@@ -246,8 +268,42 @@ export class MultiplayerManager {
         throw new Error('Could not allocate unique room code');
       }
       this.startPhpHostPolling();
+    } else if (this.transport === 'relay') {
+      this.roomCode = generateRoomCode();
+      try {
+        await this.startRelayHost(this.roomCode);
+      } catch (err) {
+        this.leaveRoom();
+        throw err;
+      }
     } else {
-      await this.startPeerJsHost();
+      let p2pOk = false;
+      try {
+        await this.startPeerJsHost();
+        p2pOk = true;
+      } catch (err) {
+        if (transportPref !== 'auto') {
+          this.leaveRoom();
+          throw err;
+        }
+      }
+
+      if (p2pOk) {
+        try {
+          await this.startRelayHost(this.roomCode);
+        } catch (_) {
+          this.relayActive = false;
+        }
+      } else {
+        this.roomCode = generateRoomCode();
+        this.transport = 'relay';
+        try {
+          await this.startRelayHost(this.roomCode);
+        } catch (err) {
+          this.leaveRoom();
+          throw err;
+        }
+      }
     }
 
     this.startPingLoop();
@@ -293,8 +349,25 @@ export class MultiplayerManager {
         const cIdx = typeof data.colorIndex === 'number' ? data.colorIndex : 1;
         this.localColor = PILOT_COLORS[cIdx % PILOT_COLORS.length];
         this.startPhpGuestPolling(data.hostId, data.hostName);
+      } else if (this.transport === 'relay') {
+        await this.startRelayGuest();
+      } else if (transportPref === 'auto') {
+        try {
+          await this.startPeerJsGuest(7500);
+        } catch (_) {
+          if (this.peerJsInstance) {
+            try {
+              this.peerJsInstance.destroy();
+            } catch (_) {}
+            this.peerJsInstance = null;
+          }
+          this.peers.clear();
+          this.setStatus('CONNECTING', 'P2P bloqueado pelo NAT — conectando via Relay WSS...');
+          this.transport = 'relay';
+          await this.startRelayGuest();
+        }
       } else {
-        await this.startPeerJsGuest();
+        await this.startPeerJsGuest(18000);
       }
       return cleanCode;
     } catch (err) {
@@ -333,7 +406,7 @@ export class MultiplayerManager {
             for (const cand of session.pendingIce) {
               try {
                 await session.pc.addIceCandidate(new RTCIceCandidate(cand));
-              } catch (_) {}
+              } catch (_) { }
             }
             session.pendingIce.length = 0;
           }
@@ -344,7 +417,7 @@ export class MultiplayerManager {
               if (session.remoteSet) {
                 try {
                   await session.pc.addIceCandidate(new RTCIceCandidate(cand));
-                } catch (_) {}
+                } catch (_) { }
               } else {
                 session.pendingIce.push(cand);
               }
@@ -368,6 +441,7 @@ export class MultiplayerManager {
       name,
       color,
       colorIndex,
+      via: 'php',
       pc,
       stateChannel: null,
       eventsChannel: null,
@@ -395,7 +469,7 @@ export class MultiplayerManager {
             ice: batch,
           }),
         });
-      } catch (_) {}
+      } catch (_) { }
     };
 
     pc.onicecandidate = (e) => {
@@ -453,6 +527,7 @@ export class MultiplayerManager {
       name: hostName || 'HOST',
       color: PILOT_COLORS[0],
       colorIndex: 0,
+      via: 'php',
       pc,
       stateChannel: null,
       eventsChannel: null,
@@ -480,7 +555,7 @@ export class MultiplayerManager {
             ice: batch,
           }),
         });
-      } catch (_) {}
+      } catch (_) { }
     };
 
     pc.onicecandidate = (e) => {
@@ -541,7 +616,7 @@ export class MultiplayerManager {
               const cand = data.hostIce[session.iceCursor++];
               try {
                 await pc.addIceCandidate(new RTCIceCandidate(cand));
-              } catch (_) {}
+              } catch (_) { }
             }
           }
           const answer = await pc.createAnswer();
@@ -561,10 +636,10 @@ export class MultiplayerManager {
             const cand = data.hostIce[session.iceCursor++];
             try {
               await pc.addIceCandidate(new RTCIceCandidate(cand));
-            } catch (_) {}
+            } catch (_) { }
           }
         }
-      } catch (_) {}
+      } catch (_) { }
     };
 
     poll();
@@ -594,7 +669,7 @@ export class MultiplayerManager {
       try {
         const msg = JSON.parse(e.data);
         this.handleIncomingMessage(session.id, kind, msg);
-      } catch (_) {}
+      } catch (_) { }
     };
 
     ch.onclose = () => {
@@ -635,7 +710,7 @@ export class MultiplayerManager {
             if (this.role === 'host' && this.peerJsInstance === peer && !peer.destroyed) {
               try {
                 peer.reconnect();
-              } catch (_) {}
+              } catch (_) { }
             }
           });
 
@@ -644,7 +719,7 @@ export class MultiplayerManager {
               settled = true;
               try {
                 peer.destroy();
-              } catch (_) {}
+              } catch (_) { }
               reject(err);
             }
           });
@@ -682,6 +757,7 @@ export class MultiplayerManager {
         name,
         color: PILOT_COLORS[cIdx % PILOT_COLORS.length],
         colorIndex: cIdx,
+        via: 'peerjs',
         mainConn: null,
         stateConn: null,
         eventsConn: null,
@@ -709,14 +785,14 @@ export class MultiplayerManager {
         const msg = typeof raw === 'string' ? JSON.parse(raw) : raw;
         const msgKind = msg?.t === 's' ? 'state' : kind;
         this.handleIncomingMessage(session.id, msgKind, msg);
-      } catch (_) {}
+      } catch (_) { }
     });
 
     conn.on('close', () => this.handlePeerDisconnected(remotePeerId));
     conn.on('error', () => this.handlePeerDisconnected(remotePeerId));
   }
 
-  async startPeerJsGuest() {
+  async startPeerJsGuest(timeoutMs = 18000) {
     this.setStatus('CONNECTING', 'Conectando ao servidor P2P...');
     const [PeerCtor, rtcCfg] = await Promise.all([loadPeerJS(), getRtcConfig()]);
     const targetPeerId = `ssjet-${this.roomCode}`;
@@ -734,13 +810,13 @@ export class MultiplayerManager {
           settled = true;
           try {
             peer.destroy();
-          } catch (_) {}
+          } catch (_) { }
           const hint = hasTurn
             ? 'Tempo esgotado (timeout) na conexão P2P/TURN.'
-            : 'Timeout P2P: a rede/CGNAT (ex.: Vivo Fibra) bloqueou a conexão direta sem TURN.';
+            : 'Timeout P2P: a rede/CGNAT bloqueou a conexão direta sem TURN.';
           reject(new Error(hint));
         }
-      }, 22000);
+      }, timeoutMs);
 
       const failEarly = (err) => {
         clearTimeout(failTimeout);
@@ -748,7 +824,7 @@ export class MultiplayerManager {
           settled = true;
           try {
             peer.destroy();
-          } catch (_) {}
+          } catch (_) { }
           let msg = err?.message || 'Erro de conexão PeerJS';
           if (err?.type === 'peer-unavailable') {
             msg = `Sala ${this.roomCode} não encontrada (verifique o código ou se o Host está online).`;
@@ -771,6 +847,7 @@ export class MultiplayerManager {
           name: 'HOST',
           color: PILOT_COLORS[0],
           colorIndex: 0,
+          via: 'peerjs',
           mainConn,
           stateConn: null,
           eventsConn: null,
@@ -794,7 +871,7 @@ export class MultiplayerManager {
             const msg = typeof raw === 'string' ? JSON.parse(raw) : raw;
             const kind = msg?.t === 's' ? 'state' : 'events';
             this.handleIncomingMessage(session.id, kind, msg);
-          } catch (_) {}
+          } catch (_) { }
         });
 
         mainConn.on('error', (err) => {
@@ -818,20 +895,325 @@ export class MultiplayerManager {
   }
 
   // =========================================================================
+  // WSS Relay Transport (MQTT 3.1.1 over WSS — bypasses symmetric NAT / CGNAT)
+  // =========================================================================
+
+  async startRelayHost(code) {
+    const client = new MqttRelayClient({
+      onMessage: (topic, text) => this.handleRelayHostMessage(topic, text),
+    });
+    const { brokerIndex } = await client.connect(0, { timeoutMs: 4500 });
+    if (this.role !== 'host' || this.roomCode !== code) {
+      client.close();
+      return;
+    }
+    await client.subscribe(relayTopicC2H(code), 4000);
+    if (this.role !== 'host' || this.roomCode !== code) {
+      client.close();
+      return;
+    }
+    this.relayClient = client;
+    this.relayActive = true;
+    this.relayBrokerIndex = brokerIndex;
+  }
+
+  handleRelayHostMessage(_topic, text) {
+    if (this.role !== 'host') return;
+    let env;
+    try {
+      env = JSON.parse(text);
+    } catch (_) {
+      return;
+    }
+    if (!env || !env.from || env.from === this.localId || !env.d || !env.d.t) return;
+
+    const from = String(env.from);
+    const msg = env.d;
+
+    if (msg.t === 'rjoin') {
+      this.handleRelayHostJoin(from, msg.name, msg.ship);
+      return;
+    }
+
+    const session = this.peers.get(from);
+    if (!session) return;
+    session.lastSeenAt = Date.now();
+    const kind = env.k === 's' ? 'state' : 'events';
+    this.handleIncomingMessage(from, kind, msg);
+  }
+
+  handleRelayHostJoin(peerId, rawName, rawShip) {
+    const cleanName = String(rawName || 'PILOT').trim().slice(0, 12) || 'PILOT';
+    const cleanShip = String(rawShip || 'striker');
+    const existing = this.peers.get(peerId);
+
+    if (existing) {
+      existing.lastSeenAt = Date.now();
+      existing.name = cleanName;
+      existing.ship = cleanShip;
+      const r = this.roster.get(peerId);
+      if (r) {
+        r.name = cleanName;
+        r.ship = cleanShip;
+      }
+      this.sendViaSession(existing, 'events', {
+        t: 'welcome',
+        assignedId: existing.id,
+        color: existing.color,
+        colorIndex: existing.colorIndex,
+        hostId: this.localId,
+        terrainConfig: this.hostTerrainConfig,
+        roster: Array.from(this.roster.values()),
+      });
+      if (this.deformHistory.length || this.damageHistory.length) {
+        this.sendViaSession(existing, 'events', {
+          t: 'sync',
+          terrainConfig: this.hostTerrainConfig,
+          deforms: this.deformHistory,
+          damages: this.damageHistory,
+        });
+      }
+      return;
+    }
+
+    if (this.roster.size >= 8) {
+      this.relayClient?.publish(
+        relayTopicTo(this.roomCode, peerId),
+        JSON.stringify({ k: 'e', d: { t: 'full' } })
+      );
+      return;
+    }
+
+    const used = new Set(Array.from(this.roster.values()).map((r) => r.colorIndex));
+    let cIdx = 1;
+    for (let i = 1; i <= 7; i++) {
+      if (!used.has(i)) {
+        cIdx = i;
+        break;
+      }
+    }
+
+    const session = {
+      id: peerId,
+      name: cleanName,
+      color: PILOT_COLORS[cIdx % PILOT_COLORS.length],
+      colorIndex: cIdx,
+      ship: cleanShip,
+      via: 'relay',
+      opened: true,
+      lastSeenAt: Date.now(),
+    };
+    this.peers.set(peerId, session);
+    this.onHostPeerChannelReady(session);
+  }
+
+  async startRelayGuest() {
+    this.setStatus('CONNECTING', `Conectando via Relay WSS à sala ${this.roomCode}...`);
+    const code = this.roomCode;
+    let lastErr = null;
+
+    for (let i = 0; i < RELAY_BROKERS.length; i++) {
+      if (this.role !== 'guest' || this.roomCode !== code) {
+        throw new Error('Conexão cancelada.');
+      }
+
+      const client = new MqttRelayClient({
+        onMessage: (topic, text) => this.handleRelayGuestMessage(topic, text),
+      });
+
+      try {
+        await client.connect(i, { timeoutMs: 4500, singleBroker: true });
+      } catch (err) {
+        client.close();
+        lastErr = err;
+        continue;
+      }
+
+      try {
+        await client.subscribe(relayTopicTo(code, this.localId), 4000);
+        await client.subscribe(relayTopicH2C(code), 4000);
+      } catch (err) {
+        client.close();
+        lastErr = err;
+        continue;
+      }
+
+      let welcomeMsg = null;
+      try {
+        welcomeMsg = await new Promise((resolve, reject) => {
+          let settled = false;
+          let retryTimer = null;
+          let waitTimer = null;
+
+          const cleanup = () => {
+            clearInterval(retryTimer);
+            clearTimeout(waitTimer);
+            if (this._relayJoinPending?.abort === abortHandler) {
+              this._relayJoinPending = null;
+            }
+          };
+
+          const abortHandler = (reason) => {
+            if (!settled) {
+              settled = true;
+              cleanup();
+              reject(new Error(reason || 'Conexão cancelada.'));
+            }
+          };
+
+          this._relayJoinPending = {
+            resolve: (msg) => {
+              if (!settled) {
+                settled = true;
+                cleanup();
+                resolve(msg);
+              }
+            },
+            reject: (err) => {
+              if (!settled) {
+                settled = true;
+                cleanup();
+                reject(err);
+              }
+            },
+            abort: abortHandler,
+          };
+
+          const sendJoin = () => {
+            client.publish(
+              relayTopicC2H(code),
+              JSON.stringify({
+                from: this.localId,
+                k: 'e',
+                d: {
+                  t: 'rjoin',
+                  id: this.localId,
+                  name: this.localName,
+                  ship: this.localShip,
+                },
+              })
+            );
+          };
+
+          sendJoin();
+          retryTimer = setInterval(sendJoin, 1200);
+          waitTimer = setTimeout(() => {
+            if (!settled) {
+              settled = true;
+              cleanup();
+              reject(new Error('No host welcome on this broker'));
+            }
+          }, 5500);
+        });
+      } catch (err) {
+        client.close();
+        if (err && err.message && err.message.includes('Sala cheia')) {
+          throw err;
+        }
+        lastErr = err;
+        continue;
+      }
+
+      if (this.role !== 'guest' || this.roomCode !== code) {
+        client.close();
+        throw new Error('Conexão cancelada.');
+      }
+
+      this.relayClient = client;
+      this.relayActive = true;
+      this.relayBrokerIndex = i;
+      this.hostLastSeenAt = Date.now();
+
+      const session = {
+        id: 'relay-host',
+        hostId: welcomeMsg.hostId || 'HOST',
+        name: 'HOST',
+        color: PILOT_COLORS[0],
+        colorIndex: 0,
+        via: 'relay',
+        opened: true,
+        lastSeenAt: Date.now(),
+      };
+      this.peers.set('relay-host', session);
+      this.handleIncomingMessage('relay-host', 'events', welcomeMsg);
+      this.onGuestConnectedToHost(session);
+      return;
+    }
+
+    throw new Error(
+      lastErr?.message?.includes('Sala')
+        ? lastErr.message
+        : `Sala ${this.roomCode} não encontrada no Relay (verifique o código ou se o Host está online).`
+    );
+  }
+
+  handleRelayGuestMessage(_topic, text) {
+    if (this.role !== 'guest') return;
+    let env;
+    try {
+      env = JSON.parse(text);
+    } catch (_) {
+      return;
+    }
+    if (!env || !env.d || !env.d.t) return;
+    if (env.skip && env.skip === this.localId) return;
+
+    this.hostLastSeenAt = Date.now();
+    const msg = env.d;
+
+    if (msg.t === 'full' && this._relayJoinPending) {
+      this._relayJoinPending.reject(new Error('Sala cheia (máximo 8 pilotos).'));
+      return;
+    }
+
+    if (msg.t === 'host_closed') {
+      if (this._relayJoinPending) {
+        this._relayJoinPending.reject(new Error('Sala encerrada pelo Host.'));
+        return;
+      }
+      this.setStatus('OFFLINE', 'Sala encerrada pelo Host');
+      this.leaveRoom();
+      return;
+    }
+
+    if (this._relayJoinPending) {
+      if (msg.t === 'welcome') {
+        this._relayJoinPending.resolve(msg);
+      }
+      return;
+    }
+
+    const kind = env.k === 's' ? 'state' : 'events';
+    this.handleIncomingMessage('relay-host', kind, msg);
+  }
+
+  // =========================================================================
   // Session Handshake, Channel Sending & Star Relay
   // =========================================================================
 
   sendViaSession(session, kind, obj) {
     if (!session) return;
+    const via = session.via || this.transport;
+    if (via === 'relay') {
+      if (!this.relayClient?.isOpen()) return;
+      const k = kind === 'state' ? 's' : 'e';
+      if (this.role === 'host') {
+        this.relayClient.publish(relayTopicTo(this.roomCode, session.id), JSON.stringify({ k, d: obj }));
+      } else if (this.role === 'guest') {
+        this.relayClient.publish(relayTopicC2H(this.roomCode), JSON.stringify({ from: this.localId, k, d: obj }));
+      }
+      return;
+    }
+
     const payload = JSON.stringify(obj);
-    if (this.transport === 'php') {
+    if (via === 'php') {
       const ch = kind === 'state' ? session.stateChannel : session.eventsChannel;
       if (ch && ch.readyState === 'open') {
         try {
           ch.send(payload);
         } catch (_) {}
       }
-    } else if (this.transport === 'peerjs') {
+    } else if (via === 'peerjs') {
       const conn = session.mainConn || (kind === 'state' ? session.stateConn : session.eventsConn);
       if (conn && conn.open) {
         try {
@@ -842,9 +1224,34 @@ export class MultiplayerManager {
   }
 
   broadcast(kind, obj, exceptPeerId = null) {
+    if (this.role === 'guest' && this.transport === 'relay') {
+      if (!this.relayClient?.isOpen()) return;
+      this.relayClient.publish(
+        relayTopicC2H(this.roomCode),
+        JSON.stringify({ from: this.localId, k: kind === 'state' ? 's' : 'e', d: obj })
+      );
+      return;
+    }
+
+    let hasRelayTargets = false;
     for (const [pid, session] of this.peers.entries()) {
       if (pid === exceptPeerId || !session.opened) continue;
-      this.sendViaSession(session, kind, obj);
+      if (session.via === 'relay') {
+        hasRelayTargets = true;
+      } else {
+        this.sendViaSession(session, kind, obj);
+      }
+    }
+
+    if (hasRelayTargets && this.relayClient?.isOpen()) {
+      this.relayClient.publish(
+        relayTopicH2C(this.roomCode),
+        JSON.stringify({
+          k: kind === 'state' ? 's' : 'e',
+          skip: exceptPeerId || null,
+          d: obj,
+        })
+      );
     }
   }
 
@@ -901,6 +1308,20 @@ export class MultiplayerManager {
     this.pingTimer = setInterval(() => {
       const ts = performance.now();
       this.broadcast('events', { t: 'ping', ts, from: this.localId });
+
+      const nowMs = Date.now();
+      if (this.role === 'host') {
+        for (const [pid, session] of Array.from(this.peers.entries())) {
+          if (session.via === 'relay' && nowMs - (session.lastSeenAt || nowMs) > 12000) {
+            this.handlePeerDisconnected(pid);
+          }
+        }
+      } else if (this.role === 'guest' && this.transport === 'relay') {
+        if (this.hostLastSeenAt > 0 && nowMs - this.hostLastSeenAt > 15000) {
+          this.setStatus('OFFLINE', 'Conexão com o Host perdida (Relay)');
+          this.leaveRoom();
+        }
+      }
     }, 2000);
   }
 
@@ -1046,16 +1467,16 @@ export class MultiplayerManager {
       clearTimeout(session.disconnectTimer);
       try {
         session.pc?.close();
-      } catch (_) {}
+      } catch (_) { }
       try {
         session.mainConn?.close();
-      } catch (_) {}
+      } catch (_) { }
       try {
         session.stateConn?.close();
-      } catch (_) {}
+      } catch (_) { }
       try {
         session.eventsConn?.close();
-      } catch (_) {}
+      } catch (_) { }
       this.peers.delete(peerId);
     }
     if (this.roster.has(peerId)) {
@@ -1096,8 +1517,18 @@ export class MultiplayerManager {
 
   sendLocalState(jet) {
     if (!this.isActive() || this.peers.size === 0) return;
+    let usesRelay = this.transport === 'relay';
+    if (!usesRelay) {
+      for (const session of this.peers.values()) {
+        if (session.via === 'relay') {
+          usesRelay = true;
+          break;
+        }
+      }
+    }
+    const minInterval = usesRelay ? 60 : 50;
     const now = performance.now();
-    if (now - this.lastStateSentAt < 50) return; // 20 Hz
+    if (now - this.lastStateSentAt < minInterval) return;
     this.lastStateSentAt = now;
 
     const pkt = {
@@ -1140,8 +1571,20 @@ export class MultiplayerManager {
     const prevTransport = this.transport;
     const prevCode = this.roomCode;
 
+    if (this._relayJoinPending) {
+      this._relayJoinPending.abort('Saiu da sala.');
+      this._relayJoinPending = null;
+    }
+
     if (this.isActive()) {
       this.broadcast('events', { t: 'leave', id: this.localId });
+    }
+
+    if (prevRole === 'host' && prevCode && this.relayClient?.isOpen()) {
+      this.relayClient.publish(
+        relayTopicH2C(prevCode),
+        JSON.stringify({ k: 'e', d: { t: 'host_closed' } })
+      );
     }
 
     if (prevTransport === 'php' && prevCode) {
@@ -1149,7 +1592,7 @@ export class MultiplayerManager {
       if (isUnload && typeof navigator !== 'undefined' && navigator.sendBeacon) {
         navigator.sendBeacon(url);
       } else if (!isUnload && typeof fetch !== 'undefined') {
-        fetch(url, { method: 'POST' }).catch(() => {});
+        fetch(url, { method: 'POST' }).catch(() => { });
       }
     }
 
@@ -1163,25 +1606,32 @@ export class MultiplayerManager {
       clearTimeout(session.disconnectTimer);
       try {
         session.pc?.close();
-      } catch (_) {}
+      } catch (_) { }
       try {
         session.mainConn?.close();
-      } catch (_) {}
+      } catch (_) { }
       try {
         session.stateConn?.close();
-      } catch (_) {}
+      } catch (_) { }
       try {
         session.eventsConn?.close();
-      } catch (_) {}
+      } catch (_) { }
       this.peers.delete(pid);
     }
 
     if (this.peerJsInstance) {
       try {
         this.peerJsInstance.destroy();
-      } catch (_) {}
+      } catch (_) { }
       this.peerJsInstance = null;
     }
+
+    if (this.relayClient) {
+      this.relayClient.close();
+      this.relayClient = null;
+    }
+    this.relayActive = false;
+    this.hostLastSeenAt = 0;
 
     for (const id of Array.from(this.roster.keys())) {
       if (id !== this.localId) {

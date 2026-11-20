@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Sunset Striker — Pixel-Art Fighter Jet</title>
-  <link rel="stylesheet" href="style.css?v=30" />
+  <link rel="stylesheet" href="style.css?v=31" />
 </head>
 <body>
   <canvas id="game-canvas"></canvas>
@@ -253,9 +253,10 @@
             <label class="mp-field">
               <span>SINAL</span>
               <select id="mp-signal-select" class="vp-select">
-                <option value="auto" selected>AUTO (LOCAL / CLOUD)</option>
+                <option value="auto" selected>AUTO (P2P + RELAY ANTI-CGNAT)</option>
+                <option value="relay">RELAY WSS (ANTI-CGNAT DIRETO)</option>
+                <option value="cloud">P2P CLOUD (PEERJS)</option>
                 <option value="local">LOCAL (XAMPP PHP)</option>
-                <option value="cloud">CLOUD (INTERNET)</option>
               </select>
             </label>
 
@@ -556,6 +557,6 @@
       }
     }
   </script>
-  <script type="module" src="js/main.js?v=30"></script>
+  <script type="module" src="js/main.js?v=31"></script>
 </body>
 </html>

@@ -9,14 +9,14 @@ import {
   DEFAULT_WORLD_SEED,
   sanitizeSeedString,
   generateRandomSeed,
-} from './world.js?v=30';
-import { FighterJet, RemoteJet, SHIP_CATALOG, SHIP_IDS, buildJetVisualRig } from './jet.js?v=30';
-import { MissileSystem } from './weapons.js?v=30';
-import { FighterCockpit } from './cockpit.js?v=30';
-import { JetSoundEngine } from './audio.js?v=30';
-import { MultiplayerManager } from './multiplayer.js?v=30';
-import { GamepadController, DEFAULT_GAMEPAD_DEADZONE } from './gamepad.js?v=30';
-import { TouchController } from './touch.js?v=30';
+} from './world.js?v=31';
+import { FighterJet, RemoteJet, SHIP_CATALOG, SHIP_IDS, buildJetVisualRig } from './jet.js?v=31';
+import { MissileSystem } from './weapons.js?v=31';
+import { FighterCockpit } from './cockpit.js?v=31';
+import { JetSoundEngine } from './audio.js?v=31';
+import { MultiplayerManager } from './multiplayer.js?v=31';
+import { GamepadController, DEFAULT_GAMEPAD_DEADZONE } from './gamepad.js?v=31';
+import { TouchController } from './touch.js?v=31';
 
 // 6 live-switchable rendering styles (exclusively configurable inside Settings -> Render, plus V in flight)
 const RENDER_PRESETS = {
@@ -1642,7 +1642,7 @@ function renderRosterInto(targetEl, list) {
 }
 
 const mp = new MultiplayerManager({
-  onStatusChange({ status, transport, roomCode, message }) {
+  onStatusChange({ status, transport, relayActive, roomCode, message }) {
     mpStatusBadge.textContent = status;
     mpStatusBadge.className = `mp-badge ${status.toLowerCase()}`;
 
@@ -1653,8 +1653,15 @@ const mp = new MultiplayerManager({
     if (inRoom) {
       mpRoomCode.textContent = roomCode;
       if (menuPauseRoomCode) menuPauseRoomCode.textContent = roomCode;
-      mpTransportInfo.textContent =
-        transport === 'php' ? 'WEBRTC P2P · SIGNALING LOCAL PHP' : 'WEBRTC P2P · SIGNALING CLOUD';
+      if (transport === 'php') {
+        mpTransportInfo.textContent = 'WEBRTC P2P · SIGNALING LOCAL PHP';
+      } else if (transport === 'relay') {
+        mpTransportInfo.textContent = 'RELAY WSS · ANTI-CGNAT';
+      } else if (transport === 'peerjs' && relayActive) {
+        mpTransportInfo.textContent = 'HÍBRIDO · WEBRTC P2P + RELAY WSS';
+      } else {
+        mpTransportInfo.textContent = 'WEBRTC P2P · SIGNALING CLOUD';
+      }
     }
     if (message !== undefined) {
       mpMsg.textContent = message;
