@@ -899,7 +899,8 @@ function createShipCardEl(id, locked) {
 
   const spdPct = Math.round((spec.abSpeed / 120) * 100);
   const agiPct = Math.round((spec.turnRate / 1.65) * 100);
-  const hpPct = Math.round((spec.maxHp / 150) * 100);
+  const maxCatalogHp = Math.max(150, ...SHIP_IDS.map((k) => SHIP_CATALOG[k].maxHp || 150));
+  const hpPct = Math.min(100, Math.round((spec.maxHp / maxCatalogHp) * 100));
   const mslPct = Math.round((spec.maxMissiles / 8) * 100);
   const thumbUrl = shipThumbDataUrls.get(id) || '';
 

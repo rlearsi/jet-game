@@ -7,7 +7,7 @@ export const spec = {
   turnRate: 1.52,
   abTurnRate: 1.24,
   bankMax: 1.26,
-  maxHp: 110,
+  maxHp: 470,
   maxMissiles: 6,
   cannonCd: 0.060,
   cannonDmg: 17,
