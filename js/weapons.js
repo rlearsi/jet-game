@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { getTerrainHeight, WATER_LEVEL } from './world.js?v=27';
-import { DitheredParticlePool } from './particles.js?v=27';
+import { getTerrainHeight, WATER_LEVEL } from './world.js?v=28';
+import { DitheredParticlePool } from './particles.js?v=28';
 
 const _tmpColor = new THREE.Color();
 const _tmpVel = new THREE.Vector3();
@@ -328,6 +328,35 @@ export class MissileSystem {
     });
   }
 
+  spawnShipMissile(sh, jet) {
+    const origin = new THREE.Vector3(sh.x, 18.0, sh.z);
+    const dir = jet.position.clone().sub(origin).normalize();
+    if (dir.y < 0.25) {
+      dir.y = 0.25;
+      dir.normalize();
+    }
+    const speed = Math.max(185, (jet.speed || 100) + 70);
+    const mesh = new THREE.Mesh(this.missileGeo, this.missileMat);
+    mesh.position.copy(origin);
+    mesh.lookAt(origin.clone().add(dir));
+    this.scene.add(mesh);
+
+    this.missiles.push({
+      mesh,
+      pos: origin,
+      vel: dir.multiplyScalar(speed),
+      speed,
+      target: jet,
+      targetsLocalPlayer: true,
+      isShipMissile: true,
+      homingTimer: 1.0,
+      evaded: false,
+      life: 9.0,
+      smokeAcc: 0,
+      isRemote: true,
+    });
+  }
+
   spawnPickupBurst(pos, isHealth) {
     _tmpPos.set(pos.x, pos.y, pos.z);
     const colA = isHealth ? 0xff4fa3 : 0xffb842;
@@ -591,11 +620,40 @@ export class MissileSystem {
       }
     }
 
+    // Ship SAM missile launchers (fire at player within range, player hears RWR & can evade)
+    const ships = this.world.getShips ? this.world.getShips() : null;
+    if (ships && jet && jet.alive) {
+      for (let sIdx = 0; sIdx < ships.length; sIdx++) {
+        const sh = ships[sIdx];
+        if (!sh.alive) continue;
+        if (sh._fireCooldown === undefined) sh._fireCooldown = 1.0 + Math.random() * 2.0;
+        sh._fireCooldown -= dt;
+        if (sh._fireCooldown <= 0) {
+          const dx = jet.position.x - sh.x;
+          const dz = jet.position.z - sh.z;
+          const d2 = dx * dx + dz * dz;
+          if (d2 >= 8100 && d2 <= 313600) { // 90m to 560m
+            this.spawnShipMissile(sh, jet);
+            sh._fireCooldown = 10.0;
+          } else {
+            sh._fireCooldown = 1.0;
+          }
+        }
+      }
+    }
+
     // Update missiles (heat-seeking homing + evasion + proximity blast + incoming RWR alert!)
     let closestIncoming = null;
     for (let i = this.missiles.length - 1; i >= 0; i--) {
       const m = this.missiles[i];
       m.life -= dt;
+      if (m.homingTimer !== undefined && m.target) {
+        m.homingTimer -= dt;
+        if (m.homingTimer <= 0) {
+          m.target = null;
+          m.evaded = true;
+        }
+      }
 
       if (m.target && m.target.alive) {
         const tx = m.target.position ? m.target.position.x : m.target.x;
@@ -608,8 +666,11 @@ export class MissileSystem {
         const dot = curDir.dot(desiredDir);
         const targetRoll = m.target.rollExtra || 0;
 
-        // Barrel roll or sharp high-G turn breaks seeker lock!
-        if ((Math.abs(targetRoll) > 0.35 && dist < 150) || (dot < 0.36 && dist < 220)) {
+        // Barrel roll, afterburner or sharp turn breaks seeker lock!
+        const evadedByManeuver = m.isShipMissile
+          ? (Math.abs(targetRoll) > 0.25 || !!m.target.afterburner || (dot < 0.65 && dist < 240))
+          : ((Math.abs(targetRoll) > 0.35 && dist < 150) || (dot < 0.36 && dist < 220));
+        if (evadedByManeuver) {
           m.target = null;
           m.evaded = true;
           if (m.targetsLocalPlayer) {
@@ -617,7 +678,8 @@ export class MissileSystem {
             this.killBannerTimer = 1.6;
           }
         } else {
-          curDir.lerp(desiredDir, Math.min(1, dt * 2.65)).normalize();
+          const turnRate = m.isShipMissile ? 4.5 : 2.65;
+          curDir.lerp(desiredDir, Math.min(1, dt * turnRate)).normalize();
           m.vel.copy(curDir).multiplyScalar(m.speed);
           if (m.targetsLocalPlayer && (!closestIncoming || dist < closestIncoming.dist)) {
             closestIncoming = { missile: m, dist, pos: m.pos.clone() };
@@ -635,6 +697,28 @@ export class MissileSystem {
         this.scene.remove(m.mesh);
         this.missiles.splice(i, 1);
         continue;
+      }
+
+      if (m.isShipMissile && jet && jet.alive) {
+        let hitPlayer = false;
+        for (let k = 0; k <= 4; k++) {
+          const sp = mPrev.clone().lerp(m.pos, k / 4);
+          if (sp.distanceTo(jet.position) < 26.0) {
+            hitPlayer = true;
+            break;
+          }
+        }
+        if (hitPlayer) {
+          this.spawnImpact(m.pos, false, time);
+          this.scene.remove(m.mesh);
+          this.missiles.splice(i, 1);
+          if (this.netHooks?.onLocalDamage) {
+            this.netHooks.onLocalDamage(35, 'MÍSSIL NAVAL');
+          } else if (typeof jet.hp === 'number') {
+            jet.hp = Math.max(0, jet.hp - 35);
+          }
+          continue;
+        }
       }
 
       let directHit = false;

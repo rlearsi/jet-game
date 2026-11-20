@@ -9,14 +9,14 @@ import {
   DEFAULT_WORLD_SEED,
   sanitizeSeedString,
   generateRandomSeed,
-} from './world.js?v=27';
-import { FighterJet, RemoteJet, SHIP_CATALOG, SHIP_IDS, buildJetVisualRig } from './jet.js?v=27';
-import { MissileSystem } from './weapons.js?v=27';
-import { FighterCockpit } from './cockpit.js?v=27';
-import { JetSoundEngine } from './audio.js?v=27';
-import { MultiplayerManager } from './multiplayer.js?v=27';
-import { GamepadController, DEFAULT_GAMEPAD_DEADZONE } from './gamepad.js?v=27';
-import { TouchController } from './touch.js?v=27';
+} from './world.js?v=28';
+import { FighterJet, RemoteJet, SHIP_CATALOG, SHIP_IDS, buildJetVisualRig } from './jet.js?v=28';
+import { MissileSystem } from './weapons.js?v=28';
+import { FighterCockpit } from './cockpit.js?v=28';
+import { JetSoundEngine } from './audio.js?v=28';
+import { MultiplayerManager } from './multiplayer.js?v=28';
+import { GamepadController, DEFAULT_GAMEPAD_DEADZONE } from './gamepad.js?v=28';
+import { TouchController } from './touch.js?v=28';
 
 // 6 live-switchable rendering styles (exclusively configurable inside Settings -> Render, plus V in flight)
 const RENDER_PRESETS = {
@@ -1771,12 +1771,24 @@ function resetObjective() {
   updateObjectiveHUD();
 }
 
+weapons.netHooks.onLocalDamage = (dmg = 35, reason = 'MÍSSIL NAVAL') => {
+  if (gameState !== 'playing' || !jet.alive) return;
+  jet.hp = Math.max(0, jet.hp - dmg);
+  jet.damageCooldown = 6.0;
+  weapons.shake = Math.max(weapons.shake, 0.55);
+  sound.playImpact(false);
+  if (jet.hp <= 0) {
+    killLocalJet(reason);
+  }
+};
+
 function killLocalJet(reason, killerId = null) {
   if (!jet.alive) return;
   jet.hp = 0;
   jet.alive = false;
-  jet.respawnTimer = 2.5;
-  jet.setVisible(false);
+  jet.respawnTimer = 3.0;
+  jet.fallVel = jet.getForwardDirection().multiplyScalar(Math.max(55, jet.speed * 0.65));
+  jet.setVisible(true);
   weapons.spawnJetExplosion(jet.position, clock.elapsedTime);
   resetObjective();
   weapons.killBannerText = killerId
@@ -1790,6 +1802,16 @@ updateObjectiveHUD();
 
 weapons.setNetHooks({
   getRemoteJets: () => remoteJets,
+  onLocalDamage(dmg = 35, reason = 'MÍSSIL NAVAL') {
+    if (gameState !== 'playing' || !jet.alive) return;
+    jet.hp = Math.max(0, jet.hp - dmg);
+    jet.damageCooldown = 6.0;
+    weapons.shake = Math.max(weapons.shake, 0.55);
+    sound.playImpact(false);
+    if (jet.hp <= 0) {
+      killLocalJet(reason);
+    }
+  },
   onTargetKilled(o) {
     if (o.type === 'ship') {
       objective.shipsDestroyed++;
@@ -2528,6 +2550,10 @@ function isLookingBackActive() {
 }
 
 function updateCamera(dt) {
+  if (!jet.alive) {
+    camera.lookAt(jet.position);
+    return;
+  }
   const mode = CAMERA_MODES[camModeIdx].id;
   const fwd = jet.getForwardDirection(_camFwd);
   const lookingBack = isLookingBackActive();
@@ -3066,9 +3092,18 @@ function animate() {
         }
       }
     } else {
+      if (jet.fallVel) {
+        jet.fallVel.y -= 36.0 * dt;
+        jet.position.addScaledVector(jet.fallVel, dt);
+        jet.group.position.copy(jet.position);
+        jet.group.rotation.z += 2.6 * dt;
+        jet.group.rotation.x -= 0.9 * dt;
+        jet.spawnDamageFirePuffs(dt, 0.05);
+      }
       jet.updatePuffs(dt);
       jet.respawnTimer -= dt;
       if (jet.respawnTimer <= 0) {
+        jet.fallVel = null;
         jet.respawn(Math.floor(Math.random() * 8));
         weapons.resetAmmo();
         if (!mp.isActive()) world.respawnSunkShips();

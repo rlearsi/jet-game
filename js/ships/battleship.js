@@ -7,7 +7,7 @@ import {
   appendNavalTurret,
   appendRadarMast,
   buildMergedShipGeometry,
-} from './shared.js?v=27';
+} from './shared.js?v=28';
 
 export const spec = {
   id: 'battleship',

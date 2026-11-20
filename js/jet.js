@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { getTerrainHeight, WATER_LEVEL } from './world.js?v=27';
-import { SHIP_IDS, SHIP_CATALOG, buildJetVisualRig, buildAirfoilSurface } from './jets/index.js?v=27';
-import { DitheredParticlePool } from './particles.js?v=27';
+import { getTerrainHeight, WATER_LEVEL } from './world.js?v=28';
+import { SHIP_IDS, SHIP_CATALOG, buildJetVisualRig, buildAirfoilSurface } from './jets/index.js?v=28';
+import { DitheredParticlePool } from './particles.js?v=28';
 
 export { SHIP_IDS, SHIP_CATALOG, buildJetVisualRig, buildAirfoilSurface };
 

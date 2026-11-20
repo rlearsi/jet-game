@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { SHIP_STYLES, createNavalFleetMeshes } from './ships/index.js?v=27';
+import { SHIP_STYLES, createNavalFleetMeshes } from './ships/index.js?v=28';
 
 export const WORLD_SIZE = 2800;
 export const WATER_LEVEL = 0.0;
@@ -348,18 +348,18 @@ function computeInfiniteProceduralHeight(x, z) {
   const nDetail = fbm(sx * 0.015 - 1.1, sz * 0.015 + 2.6, 2);
   const ridge = ridgeNoise(sx * 0.0046 + 1.4, sz * 0.0046 - 2.1);
 
-  // Interconnected navigable ocean channels & island clusters (~45% water, ~55% islands/mountains)
-  let base = (nContinent * 0.56 + nArch * 0.44 - 0.485) * 125.0;
+  // Macro-continents with larger land ratio (~72% land, ~28% wider seas/rivers, fewer tiny lakes)
+  let base = (nContinent * 0.72 + nArch * 0.28 - 0.39) * 125.0;
 
-  // Carve winding sea channels between islands so ships always have deep turquoise passages
-  const channelWave = Math.abs(noise2D(sx * 0.0011 + 7.2, sz * 0.0011 - 5.4) * 2.0 - 1.0);
-  if (channelWave < 0.18) {
-    const chDepth = (1.0 - channelWave / 0.18);
-    base -= chDepth * chDepth * 38.0;
+  // Carve wider, sparser sea channels & rivers between landmasses
+  const channelWave = Math.abs(noise2D(sx * 0.00065 + 7.2, sz * 0.00065 - 5.4) * 2.0 - 1.0);
+  if (channelWave < 0.12) {
+    const chDepth = (1.0 - channelWave / 0.12);
+    base -= chDepth * chDepth * 34.0;
   }
 
-  // Deterministic regional mountain peaks, volcanoes & canyon mesas on a 680m procedural macro-grid
-  const CELL = 680.0;
+  // Deterministic regional mountain peaks, volcanoes & canyon mesas on a 550m procedural macro-grid (+50% frequency)
+  const CELL = 550.0;
   const gx = Math.floor(x / CELL);
   const gz = Math.floor(z / CELL);
 
@@ -368,7 +368,7 @@ function computeInfiniteProceduralHeight(x, z) {
       const cx = gx + dx;
       const cz = gz + dz;
       const h1 = hash2Seed(cx * 1.37, cz * 2.41, sOff);
-      if (h1 < 0.24) continue; // open water / bay cell
+      if (h1 < 0.16) continue; // open water / bay cell
 
       const h2 = hash2Seed(cx * 3.11 + 5.2, cz * 1.73 - 2.9, sOff);
       const h3 = hash2Seed(cx * 2.07 - 7.1, cz * 4.19 + 1.3, sOff);
@@ -1806,7 +1806,7 @@ export function buildWorld(scene) {
       chunk.propMeshes.push(rockMesh);
     }
 
-    const maxWaterRocks = (cx === 0 && cz === 0) ? 75 : 55;
+    const maxWaterRocks = (cx === 0 && cz === 0) ? 22 : 16;
     const waterRockBuckets = [[], [], [], []];
     let totalWaterRocks = 0;
     let wrAttempts = 0;
@@ -1952,7 +1952,7 @@ export function buildWorld(scene) {
               dirtyMeshes.add(houseRoofs);
             },
           };
-          registerDestructible(dObj, true);
+          registerDestructible(dObj, false);
           chunk.destructibles.push(dObj);
         }
       }
@@ -2024,7 +2024,7 @@ export function buildWorld(scene) {
           g.visible = false;
         },
       };
-      registerDestructible(dObj, true);
+      registerDestructible(dObj, false);
       chunk.destructibles.push(dObj);
     }
 
@@ -2395,7 +2395,6 @@ export function buildWorld(scene) {
       },
     };
     balloons.push(balObj);
-    lockableTargets.push(balObj);
   }
 
   // 4e. Sailboats drifting across the turquoise bays
