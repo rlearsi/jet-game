@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Sunset Striker — Pixel-Art Fighter Jet</title>
-  <link rel="stylesheet" href="style.css?v=31" />
+  <link rel="stylesheet" href="style.css?v=32" />
 </head>
 <body>
   <canvas id="game-canvas"></canvas>
@@ -150,7 +150,7 @@
             <button id="menu-btn-resume" class="menu-btn menu-btn-accent hidden" type="button">&#9654; CONTINUAR (ESC)</button>
             <button id="menu-btn-solo" class="menu-btn menu-btn-primary" type="button">INICIAR SOLO</button>
             <button id="menu-btn-mp" class="menu-btn menu-btn-primary" type="button">MULTIPLAYER</button>
-            <button id="menu-btn-controls" class="menu-btn" type="button">CONTROLES</button>
+            <button id="menu-btn-controls" class="menu-btn" type="button">COMO JOGAR</button>
             <button id="menu-btn-settings" class="menu-btn" type="button">CONFIGURAÇÕES</button>
             <button id="menu-btn-quit" class="menu-btn menu-btn-danger hidden" type="button">ENCERRAR PARTIDA</button>
           </div>
@@ -302,7 +302,7 @@
         <div class="menu-header">
           <div class="menu-header-left">
             <button id="controls-back-btn" class="vp-reset-btn" type="button">&larr; VOLTAR</button>
-            <span class="menu-view-title">CONTROLES &amp; COMO JOGAR</span>
+            <span class="menu-view-title">COMO JOGAR</span>
           </div>
           <button id="controls-open-settings-btn" class="vp-reset-btn" type="button">PERSONALIZAR CONTROLES &rarr;</button>
         </div>
@@ -311,8 +311,9 @@
           <div class="guide-card">
             <div class="guide-card-title">VOO &amp; MANOBRAS</div>
             <div class="guide-row"><kbd>MOUSE / WASD / SETAS</kbd><span>Inclinar, subir, mergulhar e fazer curvas</span></div>
+            <div class="guide-row"><kbd>SEGURAR ESQ. + CURVA</kbd><span>Virada súbita fechada (mais potência na curva)</span></div>
             <div class="guide-row"><kbd>CLIQUE ESQ. (RÁPIDO)</kbd><span>Barrel Roll (quebra trava de míssil inimigo)</span></div>
-            <div class="guide-row"><kbd>SEGURAR ESQ. / <span id="guide-key-afterburner">SHIFT</span></kbd><span>Afterburner (velocidade máxima)</span></div>
+            <div class="guide-row"><kbd><span id="guide-key-afterburner">SHIFT</span></kbd><span>Afterburner (velocidade máxima)</span></div>
           </div>
 
           <div class="guide-card">
@@ -351,7 +352,7 @@
             <div class="guide-row"><kbd>BOTÃO B</kbd><span>Ciclar câmeras (Chase &rarr; Cockpit &rarr; Top)</span></div>
             <div class="guide-row"><kbd>R3 (SEGURAR)</kbd><span>Inverter câmera e olhar para trás da nave (soltar volta ao normal)</span></div>
             <div class="guide-row"><kbd>SELECT</kbd><span>Alterar estilo de renderização <i>(apenas modo Solo)</i></span></div>
-            <div class="guide-row"><kbd>LT / LB / RB / Y / START / DIR. Y</kbd><span><b>LT</b> Afterburner &middot; <b>LB / RB / Y</b> Barrel Roll &middot; <b>START</b> Menu / Pausa &middot; <b>DIR. Y</b> Distância câmera</span></div>
+            <div class="guide-row"><kbd>LT / LB / RB / Y / START / DIR. Y</kbd><span><b>LT</b> Afterburner &middot; <b>LB / RB</b> Virada súbita (segurar) &middot; <b>Y</b> Barrel Roll &middot; <b>START</b> Menu / Pausa &middot; <b>DIR. Y</b> Distância câmera</span></div>
           </div>
 
           <div class="guide-card guide-card-wide">
@@ -557,6 +558,6 @@
       }
     }
   </script>
-  <script type="module" src="js/main.js?v=31"></script>
+  <script type="module" src="js/main.js?v=32"></script>
 </body>
 </html>

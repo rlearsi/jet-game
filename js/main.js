@@ -9,14 +9,14 @@ import {
   DEFAULT_WORLD_SEED,
   sanitizeSeedString,
   generateRandomSeed,
-} from './world.js?v=31';
-import { FighterJet, RemoteJet, SHIP_CATALOG, SHIP_IDS, buildJetVisualRig } from './jet.js?v=31';
-import { MissileSystem } from './weapons.js?v=31';
-import { FighterCockpit } from './cockpit.js?v=31';
-import { JetSoundEngine } from './audio.js?v=31';
-import { MultiplayerManager } from './multiplayer.js?v=31';
-import { GamepadController, DEFAULT_GAMEPAD_DEADZONE } from './gamepad.js?v=31';
-import { TouchController } from './touch.js?v=31';
+} from './world.js?v=32';
+import { FighterJet, RemoteJet, SHIP_CATALOG, SHIP_IDS, buildJetVisualRig } from './jet.js?v=32';
+import { MissileSystem } from './weapons.js?v=32';
+import { FighterCockpit } from './cockpit.js?v=32';
+import { JetSoundEngine } from './audio.js?v=32';
+import { MultiplayerManager } from './multiplayer.js?v=32';
+import { GamepadController, DEFAULT_GAMEPAD_DEADZONE } from './gamepad.js?v=32';
+import { TouchController } from './touch.js?v=32';
 
 // 6 live-switchable rendering styles (exclusively configurable inside Settings -> Render, plus V in flight)
 const RENDER_PRESETS = {
@@ -2317,6 +2317,7 @@ window.addEventListener('mousedown', (e) => {
   if (e.button === 0) {
     leftDownAt = performance.now();
     input.boost = true;
+    input.sharpTurnHeld = true;
   } else if (e.button === 2) {
     input.cannonFiring = true;
     weapons.tryFireCannon(jet);
@@ -2329,6 +2330,7 @@ window.addEventListener('mousedown', (e) => {
 window.addEventListener('mouseup', (e) => {
   if (e.button === 0) {
     input.boost = false;
+    input.sharpTurnHeld = false;
     if (
       !menuOpen &&
       gameState === 'playing' &&
@@ -2999,9 +3001,10 @@ function handleGamepadFrame(dt) {
     }
   }
   if (jet.alive) {
-    if (gp.pressed.rollLeft) jet.triggerRoll(-1);
-    else if (gp.pressed.rollRight) jet.triggerRoll(1);
-    else if (gp.pressed.roll) jet.triggerRoll(input.joyX >= 0 ? 1 : -1);
+    input.joySharpTurn = (gp.sharpTurnRightHeld ? 1 : 0) - (gp.sharpTurnLeftHeld ? 1 : 0);
+    if (gp.pressed.roll) jet.triggerRoll(input.joyX >= 0 ? 1 : -1);
+  } else {
+    input.joySharpTurn = 0;
   }
 }
 

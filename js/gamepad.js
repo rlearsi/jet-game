@@ -5,8 +5,6 @@ const EDGE_BUTTONS = {
   camera: 1,      // B / Circle
   cockpit: 2,     // X / Square
   roll: 3,        // Y / Triangle
-  rollLeft: 4,    // LB / L1
-  rollRight: 5,   // RB / R1
   renderCycle: 8, // Select / Back / View / Share
   pause: 9,       // Start / Options / Menu
 };
@@ -22,13 +20,13 @@ function neutralState() {
     cannonHeld: false,
     boostHeld: false,
     lookBackHeld: false,
+    sharpTurnLeftHeld: false,
+    sharpTurnRightHeld: false,
     pressed: {
       missile: false,
       camera: false,
       cockpit: false,
       roll: false,
-      rollLeft: false,
-      rollRight: false,
       renderCycle: false,
       pause: false,
     },
@@ -174,6 +172,8 @@ export class GamepadController {
     }
     const boostHeld = isBtnDown(buttons[6], 0.22);
     const lookBackHeld = isBtnDown(buttons[11], 0.5); // R3 (Right Stick Click)
+    const sharpTurnLeftHeld = isBtnDown(buttons[4], 0.5); // LB / L1
+    const sharpTurnRightHeld = isBtnDown(buttons[5], 0.5); // RB / R1
 
     // Rising-edge button detections
     const pressed = {};
@@ -195,6 +195,8 @@ export class GamepadController {
       cannonHeld ||
       boostHeld ||
       lookBackHeld ||
+      sharpTurnLeftHeld ||
+      sharpTurnRightHeld ||
       dpadDown ||
       anyButtonDown;
 
@@ -208,6 +210,8 @@ export class GamepadController {
       cannonHeld,
       boostHeld,
       lookBackHeld,
+      sharpTurnLeftHeld,
+      sharpTurnRightHeld,
       pressed,
     };
   }

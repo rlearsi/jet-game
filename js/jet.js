@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { getTerrainHeight, WATER_LEVEL } from './world.js?v=31';
-import { SHIP_IDS, SHIP_CATALOG, buildJetVisualRig, buildAirfoilSurface } from './jets/index.js?v=31';
-import { DitheredParticlePool } from './particles.js?v=31';
+import { getTerrainHeight, WATER_LEVEL } from './world.js?v=32';
+import { SHIP_IDS, SHIP_CATALOG, buildJetVisualRig, buildAirfoilSurface } from './jets/index.js?v=32';
+import { DitheredParticlePool } from './particles.js?v=32';
 
 export { SHIP_IDS, SHIP_CATALOG, buildJetVisualRig, buildAirfoilSurface };
 
@@ -410,22 +410,35 @@ export class FighterJet {
     if (keys.KeyW || keys.ArrowUp) steerY = -0.7 * ySign;
     if (keys.KeyS || keys.ArrowDown) steerY = 0.7 * ySign;
 
+    const sharpTurnDir = input.joySharpTurn
+      ? Math.sign(input.joySharpTurn)
+      : (input.sharpTurnHeld && Math.abs(steerX) > 0.12 ? Math.sign(steerX) : 0);
+    if (input.joySharpTurn) {
+      steerX = sharpTurnDir;
+    }
+
     const abKey = input.afterburnerKey || 'ShiftLeft';
     this.afterburner = Boolean(
-      input.boost || input.joyBoost || input.touchBoost || keys[abKey] || (abKey === 'ShiftLeft' && keys.ShiftRight)
+      input.boost || input.joyBoost || input.touchBoost || sharpTurnDir !== 0 || keys[abKey] || (abKey === 'ShiftLeft' && keys.ShiftRight)
     );
 
     const targetThrottle = this.afterburner ? 1.0 : 0.64;
     this.throttle = THREE.MathUtils.lerp(this.throttle, targetThrottle, 1 - Math.exp(-5.0 * dt));
 
-    const targetBank = -steerX * this.stats.bankMax;
+    const bankLimit = sharpTurnDir !== 0 ? Math.min(1.38, this.stats.bankMax * 1.28) : this.stats.bankMax;
+    const bankRate = sharpTurnDir !== 0 ? 11.5 : 6.5;
+    const targetBank = -steerX * bankLimit;
     const targetPitch = THREE.MathUtils.clamp(-steerY * 0.68, -0.62, 0.62);
 
-    this.bank = THREE.MathUtils.lerp(this.bank, targetBank, 1 - Math.exp(-6.5 * dt));
+    this.bank = THREE.MathUtils.lerp(this.bank, targetBank, 1 - Math.exp(-bankRate * dt));
     this.pitch = THREE.MathUtils.lerp(this.pitch, targetPitch, 1 - Math.exp(-5.2 * dt));
 
-    const turnSpeed = this.afterburner ? this.stats.abTurnRate : this.stats.turnRate;
+    const baseTurnSpeed = this.afterburner ? this.stats.abTurnRate : this.stats.turnRate;
+    const turnSpeed = sharpTurnDir !== 0 ? baseTurnSpeed * 1.75 : baseTurnSpeed;
     this.yaw += Math.sin(this.bank) * turnSpeed * dt;
+    if (sharpTurnDir !== 0) {
+      this.yaw += -sharpTurnDir * baseTurnSpeed * 0.35 * dt;
+    }
 
     const climbDrag = -Math.sin(this.pitch) * 14.0;
     const targetSpeed = (this.afterburner ? this.stats.abSpeed : this.stats.cruiseSpeed) + climbDrag;
