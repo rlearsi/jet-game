@@ -175,6 +175,12 @@ const camSwitchBtn = document.getElementById('cam-switch-btn');
 const cockpitToggleBtn = document.getElementById('cockpit-toggle-btn');
 
 const objectiveHudEl = document.getElementById('objective-hud');
+const objWinsListEl = document.getElementById('obj-wins-list');
+const matchEndOverlay = document.getElementById('match-end-overlay');
+const matchEndWinner = document.getElementById('match-end-winner');
+const matchEndScoreboard = document.getElementById('match-end-scoreboard');
+const matchEndCountdown = document.getElementById('match-end-countdown');
+const matchEndRestartBtn = document.getElementById('match-end-restart-btn');
 const objTitleEl = document.getElementById('obj-title');
 const objCountEl = document.getElementById('obj-count');
 const objBarFillEl = document.getElementById('obj-bar-fill');
@@ -1727,6 +1733,10 @@ const mp = new MultiplayerManager({
       world.spawnDroppedPickup(ev.kind, ev.x, ev.y, ev.z, ev.id);
     } else if (ev.t === 'def') {
       weapons.applyRemoteDeform(ev.x, ev.z, ev.r, ev.d, ev.dx, ev.dz);
+    } else if (ev.t === 'win') {
+      const rj = remoteJets.get(ev.from);
+      if (rj) rj.wins = (rj.wins || 0) + 1;
+      triggerMatchComplete(ev.winner || rj?.callsign || 'PILOTO', false);
     } else if (ev.t === 'dmg') {
       weapons.applyRemoteDamage(ev.x, ev.y, ev.z, ev.r, ev.w, clock.elapsedTime);
     } else if (ev.t === 'rst') {
@@ -1757,11 +1767,101 @@ const mp = new MultiplayerManager({
 });
 
 const OBJECTIVE_SHIP_GOAL = 20;
+let matchEndTimer = 0;
+let matchEndActive = false;
+
+function buildMatchEndScoreboard() {
+  if (!matchEndScoreboard) return;
+  const rows = [];
+  const localName = mp.isActive() ? (mp.localName || 'VOCÊ') : 'VOCÊ (SOLO)';
+  rows.push({ name: localName, ships: objective.shipsDestroyed, total: weapons.destroyed, isLocal: true });
+  if (mp.isActive() && mp.remoteJets) {
+    for (const [pid, rj] of mp.remoteJets.entries()) {
+      rows.push({
+        name: rj.callsign || `PILOTO ${String(pid).slice(0, 4)}`,
+        ships: rj.shipsDestroyed || 0,
+        total: rj.destroyed || 0,
+        isLocal: false,
+      });
+    }
+  }
+  rows.sort((a, b) => b.ships - a.ships || b.total - a.total);
+  matchEndScoreboard.innerHTML = rows
+    .map(
+      (r, idx) =>
+        `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:${
+          r.isLocal ? 'rgba(255,180,60,0.16)' : 'rgba(255,255,255,0.06)'
+        };border:1px solid ${r.isLocal ? 'rgba(255,190,80,0.55)' : 'rgba(255,255,255,0.14)'};border-radius:6px;font-size:13px;">` +
+        `<span><b>#${idx + 1}</b> ${r.name}</span>` +
+        `<span><b>${r.ships}</b> navios &middot; ${r.total} alvos</span>` +
+        `</div>`
+    )
+    .join('');
+}
+
+function triggerMatchComplete(winnerName = null, isLocalWin = true) {
+  if (matchEndActive) return;
+  matchEndActive = true;
+  matchEndTimer = 6.0;
+  const localName = mp.isActive() ? (mp.localName || 'Você') : 'Você';
+  const finalWinner = winnerName || localName;
+  if (isLocalWin) {
+    objective.wins = (objective.wins || 0) + 1;
+    if (mp.isActive()) {
+      mp.sendEvent({ t: 'win', winner: localName });
+    }
+  }
+  if (matchEndWinner) {
+    matchEndWinner.textContent = `VENCEDOR: ${String(finalWinner).toUpperCase()}`;
+  }
+  buildMatchEndScoreboard();
+  updateObjectiveHUD();
+  if (matchEndCountdown) matchEndCountdown.textContent = 'Recomeçando em 6s...';
+  if (matchEndOverlay) matchEndOverlay.classList.remove('hidden');
+}
+
+function restartMatchAfterComplete() {
+  if (!matchEndActive) return;
+  matchEndActive = false;
+  matchEndTimer = 0;
+  if (matchEndOverlay) matchEndOverlay.classList.add('hidden');
+  resetObjective();
+  weapons.destroyed = 0;
+  weapons.resetAmmo();
+  jet.reset();
+  if (gameMode === 'solo' && !mp.isActive()) {
+    world.resetTerrain();
+  }
+}
+
+matchEndRestartBtn?.addEventListener('click', restartMatchAfterComplete);
+
 const objective = {
   shipsDestroyed: 0,
   goal: OBJECTIVE_SHIP_GOAL,
   completed: false,
+  wins: 0,
 };
+
+function updateWinsHUD() {
+  if (!objWinsListEl) return;
+  const rows = [];
+  const localName = mp.isActive() ? (mp.localName || 'Você') : 'Você';
+  rows.push({ name: localName, wins: objective.wins || 0 });
+  if (mp.isActive() && mp.remoteJets) {
+    for (const [pid, rj] of mp.remoteJets.entries()) {
+      rows.push({
+        name: rj.callsign || `Piloto ${String(pid).slice(0, 4)}`,
+        wins: rj.wins || 0,
+      });
+    }
+  }
+  const html = rows.map((r) => `<div>${r.name}: <b>${r.wins}</b></div>`).join('');
+  if (objWinsListEl._lastHtml !== html) {
+    objWinsListEl._lastHtml = html;
+    objWinsListEl.innerHTML = html;
+  }
+}
 
 function updateObjectiveHUD() {
   const cur = Math.min(objective.goal, objective.shipsDestroyed);
@@ -1772,6 +1872,7 @@ function updateObjectiveHUD() {
   objTitleEl.textContent = objective.completed
     ? 'OBJETIVO COMPLETO!'
     : 'OBJETIVO: DESTRUIR NAVIOS';
+  updateWinsHUD();
 }
 
 function resetObjective() {
@@ -1829,6 +1930,7 @@ weapons.setNetHooks({
         sound.playPickup('health');
         weapons.killBannerText = 'OBJETIVO COMPLETO! 20/20 NAVIOS DESTRUÍDOS!';
         weapons.killBannerTimer = 3.2;
+        triggerMatchComplete();
       }
       updateObjectiveHUD();
     }
@@ -2960,6 +3062,16 @@ function handleGamepadFrame(dt) {
     return;
   }
 
+  if (matchEndActive) {
+    matchEndTimer = Math.max(0, matchEndTimer - dt);
+    if (matchEndCountdown) {
+      matchEndCountdown.textContent = `Recomeçando em ${Math.ceil(matchEndTimer)}s...`;
+    }
+    if (matchEndTimer <= 0) {
+      restartMatchAfterComplete();
+    }
+  }
+
   if (gameState !== 'playing' || menuOpen) {
     input.joyX = 0;
     input.joyY = 0;
@@ -3027,6 +3139,16 @@ function animate() {
   const dt = Math.min(0.05, clock.getDelta());
   const elapsed = clock.elapsedTime;
   handleGamepadFrame(dt);
+
+  if (matchEndActive) {
+    matchEndTimer = Math.max(0, matchEndTimer - dt);
+    if (matchEndCountdown) {
+      matchEndCountdown.textContent = `Recomeçando em ${Math.ceil(matchEndTimer)}s...`;
+    }
+    if (matchEndTimer <= 0) {
+      restartMatchAfterComplete();
+    }
+  }
 
   if (gameState !== 'playing' || menuOpen) {
     input.touchX = 0;

@@ -81,6 +81,10 @@
       <span id="obj-count" class="obj-count">0 / 20</span>
       <span class="obj-bar"><span id="obj-bar-fill" class="obj-bar-fill" style="width:0%"></span></span>
     </div>
+    <div id="obj-wins-box" style="margin-top:6px;padding-top:5px;border-top:1px solid rgba(255,255,255,0.14);font-size:11px;line-height:1.45;color:#e6e0d4;">
+      <div style="color:#ffd479;font-weight:700;margin-bottom:2px;">Vitórias:</div>
+      <div id="obj-wins-list"></div>
+    </div>
   </div>
 
   <!-- Subtle camera & destruction telemetry badge (bottom-left) -->
@@ -103,6 +107,17 @@
       <span class="player-hp-label">TURBO</span>
       <span class="player-hp-bar"><span id="player-stamina-fill" class="player-stamina-fill" style="width:100%"></span></span>
     </span>
+  </div>
+
+  <!-- Match End Scoreboard Overlay (20/20 Objectives) -->
+  <div id="match-end-overlay" class="menu-overlay hidden">
+    <div class="menu-shell" style="max-width: 520px; text-align: center;">
+      <div class="menu-brand" style="margin-bottom: 10px;">MISSÃO COMPLETA!</div>
+      <div id="match-end-winner" class="menu-badge" style="display:inline-block; margin-bottom: 14px;">20 / 20 OBJETIVOS CONCLUÍDOS</div>
+      <div id="match-end-scoreboard" style="display:flex; flex-direction:column; gap:8px; margin-bottom: 16px; text-align:left;"></div>
+      <div id="match-end-countdown" style="font-size: 13px; color: #ffd479; margin-bottom: 12px;">Recomeçando em 6s...</div>
+      <button id="match-end-restart-btn" class="menu-btn menu-btn-primary" type="button">RECOMEÇAR AGORA</button>
+    </div>
   </div>
 
   <!-- Multi-touch Mobile Flight Controls -->
