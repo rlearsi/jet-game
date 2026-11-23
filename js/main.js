@@ -2897,9 +2897,9 @@ function updatePlayingHUD(elapsed) {
       rec.el.style.top = `${sp.y}px`;
       const distM = Math.round(jet.position.distanceTo(rj.position));
       rec.nameEl.textContent = `${rj.name} ${distM}M`;
-      const rPct = Math.max(0, Math.min(100, (rj.hp / Math.max(1, rj.maxHp || 100)) * 100));
-      rec.fillEl.style.width = `${rPct}%`;
-      rec.fillEl.style.background = rPct <= 30 ? '#ff4534' : rPct <= 60 ? '#ffb842' : '#4cff88';
+      if (rec.fillEl?.parentElement) {
+        rec.fillEl.parentElement.style.display = 'none';
+      }
     } else {
       rec.el.classList.add('hidden');
     }
