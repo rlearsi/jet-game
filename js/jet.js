@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { getTerrainHeight, WATER_LEVEL } from './world.js?v=33';
-import { SHIP_IDS, SHIP_CATALOG, buildJetVisualRig, buildAirfoilSurface } from './jets/index.js?v=33';
-import { DitheredParticlePool } from './particles.js?v=33';
+import { getTerrainHeight, WATER_LEVEL } from './world.js?v=34';
+import { SHIP_IDS, SHIP_CATALOG, buildJetVisualRig, buildAirfoilSurface } from './jets/index.js?v=34';
+import { DitheredParticlePool } from './particles.js?v=34';
 
 export { SHIP_IDS, SHIP_CATALOG, buildJetVisualRig, buildAirfoilSurface };
 
@@ -446,7 +446,7 @@ export class FighterJet {
         this.afterburner = false;
       }
     } else {
-      this.stamina = Math.min(this.maxStamina, this.stamina + 16 * dt);
+      this.stamina = Math.min(this.maxStamina, this.stamina + 11.5 * dt);
     }
 
     const targetThrottle = this.afterburner ? 1.0 : 0.64;

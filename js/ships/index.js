@@ -1,8 +1,8 @@
 import * as THREE from 'three';
-import * as destroyer from './destroyer.js?v=33';
-import * as carrier from './carrier.js?v=33';
-import * as cargo from './cargo.js?v=33';
-import * as battleship from './battleship.js?v=33';
+import * as destroyer from './destroyer.js?v=34';
+import * as carrier from './carrier.js?v=34';
+import * as cargo from './cargo.js?v=34';
+import * as battleship from './battleship.js?v=34';
 
 export const SHIP_STYLES = [
   destroyer,

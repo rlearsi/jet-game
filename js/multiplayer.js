@@ -1,4 +1,4 @@
-import { MqttRelayClient, RELAY_BROKERS } from './relay.js?v=33';
+import { MqttRelayClient, RELAY_BROKERS } from './relay.js?v=34';
 
 export const PILOT_COLORS = [
   '#e55238',
