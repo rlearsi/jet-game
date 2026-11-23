@@ -6,7 +6,7 @@ import {
   appendBridgeWindows,
   appendRadarMast,
   buildMergedShipGeometry,
-} from './shared.js?v=35';
+} from './shared.js?v=36';
 
 export const spec = {
   id: 'carrier',
@@ -30,26 +30,26 @@ export function buildGeometry() {
   const target = { positions: [], normals: [], colors: [] };
   const m = new THREE.Matrix4();
 
-  // 1. Heavy armored carrier lower hull with deep crimson waterline
+  // 1. Heavy armored carrier lower hull with bright naval grey & vivid crimson waterline
   appendLoftedNavalHull(target, HULL_STATIONS, {
-    hull: 0x4f5c73,
-    hullDark: 0x3b4559,
-    waterline: 0x9c2e24,
-    deck: 0x323746,
-    deckTrim: 0x59667d,
+    hull: 0x92a4bd,
+    hullDark: 0x72849e,
+    waterline: 0xd93b2b,
+    deck: 0x5b677d,
+    deckTrim: 0xb6c4d8,
   });
 
   // 2. Overhanging armored flight deck platform + port angled waist sponson + bow ski-jump ramp
   const mainRunway = new THREE.BoxGeometry(8.8, 0.55, 27.6);
   m.makeTranslation(0, 3.65, -0.2);
-  appendColoredGeometry(target, mainRunway, 0x303645, m);
+  appendColoredGeometry(target, mainRunway, 0x586478, m);
   mainRunway.dispose();
 
   // Port-side (-X) angled recovery deck sponson overhang
   const sponson = new THREE.BoxGeometry(2.1, 0.50, 17.5);
   m.makeRotationY(0.08);
   m.setPosition(-4.85, 3.64, -1.2);
-  appendColoredGeometry(target, sponson, 0x363c4d, m);
+  appendColoredGeometry(target, sponson, 0x67748a, m);
   sponson.dispose();
 
   // Forward ski-jump bow flight ramp (+Z)
@@ -63,23 +63,37 @@ export function buildGeometry() {
     lenTop: 2.8,
     h: 0.92,
     frontRake: -0.4,
-    color: 0x3b4254,
-    sideColor: 0x4a556b,
-    topColor: 0x303645,
+    color: 0x68768c,
+    sideColor: 0x8595ad,
+    topColor: 0x586478,
   });
 
-  // 3. Flight deck runway lines (white & golden-amber arrestor/catapult tracks)
-  const stripeGeo = new THREE.BoxGeometry(0.36, 0.08, 3.2);
+  // 3. Flight deck runway lines (bright white & golden-amber arrestor/catapult tracks)
+  const stripeGeo = new THREE.BoxGeometry(0.42, 0.10, 3.2);
   for (let sz = -11.5; sz <= 10.5; sz += 4.4) {
     m.makeTranslation(-1.15, 3.96, sz);
-    appendColoredGeometry(target, stripeGeo, 0xf2f4f8, m);
+    appendColoredGeometry(target, stripeGeo, 0xffffff, m);
   }
   stripeGeo.dispose();
 
-  const catLineGeo = new THREE.BoxGeometry(0.28, 0.08, 22.5);
+  const catLineGeo = new THREE.BoxGeometry(0.32, 0.10, 22.5);
   m.makeTranslation(1.1, 3.96, 0.5);
-  appendColoredGeometry(target, catLineGeo, 0xe8ab36, m);
+  appendColoredGeometry(target, catLineGeo, 0xffc83d, m);
   catLineGeo.dispose();
+
+  // Parked deck fighters (adds unmistakable silhouette & scale!)
+  const jetBodyGeo = new THREE.BoxGeometry(0.65, 0.42, 2.3);
+  const jetWingGeo = new THREE.BoxGeometry(2.2, 0.14, 0.95);
+  for (const [px, pz, rot] of [[-3.1, -8.2, 0.35], [-3.2, -4.0, 0.35], [2.4, 7.2, -0.25]]) {
+    m.makeRotationY(rot);
+    m.setPosition(px, 4.18, pz);
+    appendColoredGeometry(target, jetBodyGeo, 0xf2f5fa, m);
+    m.makeRotationY(rot);
+    m.setPosition(px, 4.14, pz - 0.15);
+    appendColoredGeometry(target, jetWingGeo, 0xe84d3c, m);
+  }
+  jetBodyGeo.dispose();
+  jetWingGeo.dispose();
 
   // 4. Starboard (+X) Command Island Tower (iconic aircraft carrier side tower!)
   appendTaperedSuperstructure(target, {
@@ -92,9 +106,9 @@ export function buildGeometry() {
     lenTop: 5.8,
     h: 2.8,
     frontRake: 0.65,
-    color: 0x74839c,
-    sideColor: 0x5f6d85,
-    topColor: 0x4b566b,
+    color: 0xb8c6d9,
+    sideColor: 0x9aaac2,
+    topColor: 0x7c8ca6,
   });
 
   // Island upper air-boss bridge deck
@@ -108,9 +122,9 @@ export function buildGeometry() {
     lenTop: 3.6,
     h: 1.75,
     frontRake: 0.35,
-    color: 0xdce4f0,
-    sideColor: 0xc2ccd9,
-    topColor: 0x536075,
+    color: 0xf4f7fc,
+    sideColor: 0xdce4f0,
+    topColor: 0x8696ad,
   });
 
   appendBridgeWindows(target, {

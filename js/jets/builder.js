@@ -8,7 +8,7 @@ import {
   buildSculptedFuselage,
   buildAirfoilSurface,
   buildVerticalFin,
-} from './shared.js?v=35';
+} from './shared.js?v=36';
 
 function addSymmetricAirfoil(hullGroup, airfoilCfg, mat) {
   if (!airfoilCfg) return;

@@ -7,7 +7,7 @@ import {
   appendNavalTurret,
   appendRadarMast,
   buildMergedShipGeometry,
-} from './shared.js?v=35';
+} from './shared.js?v=36';
 
 export const spec = {
   id: 'battleship',
@@ -32,13 +32,13 @@ export function buildGeometry() {
   const target = { positions: [], normals: [], colors: [] };
   const m = new THREE.Matrix4();
 
-  // 1. Armored battleship/heavy cruiser hull with warm teak-wood deck & deep red lower hull
+  // 1. Armored battleship/heavy cruiser hull with bright teak-wood deck & vivid crimson waterline
   appendLoftedNavalHull(target, HULL_STATIONS, {
-    hull: 0x56647d,
-    hullDark: 0x3e495e,
-    waterline: 0x992b22,
-    deck: 0x8c6d46, // classic naval teak wood plank deck!
-    deckTrim: 0x62718a,
+    hull: 0xa2b2c7,
+    hullDark: 0x7e90a8,
+    waterline: 0xd93b2b,
+    deck: 0xc99c5e, // classic warm naval teak wood plank deck!
+    deckTrim: 0xc4d1e2,
   });
 
   // 2. Superfiring Forward Main Battery: Turret A (bow) + elevated barbette & Turret B
@@ -46,24 +46,24 @@ export function buildGeometry() {
     x: 0,
     y: 3.62,
     z: 9.8,
-    scale: 1.12,
-    turretColor: 0x76859e,
-    barrelColor: 0x262c3b,
+    scale: 1.15,
+    turretColor: 0xc8d4e3,
+    barrelColor: 0x4b586e,
     facing: 1,
   });
 
   const barbetteB = new THREE.CylinderGeometry(1.55, 1.65, 1.35, 8);
   m.makeTranslation(0, 3.82, 5.8);
-  appendColoredGeometry(target, barbetteB, 0x5c6a82, m);
+  appendColoredGeometry(target, barbetteB, 0x9aaac2, m);
   barbetteB.dispose();
 
   appendNavalTurret(target, {
     x: 0,
     y: 4.48,
     z: 5.8,
-    scale: 1.12,
-    turretColor: 0x7f8fa8,
-    barrelColor: 0x262c3b,
+    scale: 1.15,
+    turretColor: 0xd4dfed,
+    barrelColor: 0x4b586e,
     facing: 1,
   });
 
@@ -72,9 +72,9 @@ export function buildGeometry() {
     x: 0,
     y: 2.85,
     z: -10.2,
-    scale: 1.12,
-    turretColor: 0x76859e,
-    barrelColor: 0x262c3b,
+    scale: 1.15,
+    turretColor: 0xc8d4e3,
+    barrelColor: 0x4b586e,
     facing: -1,
   });
 
@@ -89,9 +89,9 @@ export function buildGeometry() {
     lenTop: 8.2,
     h: 2.2,
     frontRake: 0.7,
-    color: 0x66758f,
-    sideColor: 0x54627a,
-    topColor: 0x455066,
+    color: 0xb6c4d8,
+    sideColor: 0x9aaac2,
+    topColor: 0x7c8ca6,
   });
 
   // Tier 2 Forward Armored Conning Bridge
@@ -105,10 +105,18 @@ export function buildGeometry() {
     lenTop: 3.0,
     h: 2.0,
     frontRake: 0.45,
-    color: 0xd5deeb,
-    sideColor: 0xbbc6d6,
-    topColor: 0x556278,
+    color: 0xf4f7fc,
+    sideColor: 0xdce4f0,
+    topColor: 0x8a99b0,
   });
+
+  // Side lifeboats (orange) for strong maritime silhouette
+  const lifeboatGeo = new THREE.BoxGeometry(0.68, 0.58, 2.4);
+  for (const bx of [-2.9, 2.9]) {
+    m.makeTranslation(bx, 3.85, -1.8);
+    appendColoredGeometry(target, lifeboatGeo, 0xff6b2b, m);
+  }
+  lifeboatGeo.dispose();
 
   appendBridgeWindows(target, {
     x: 0,

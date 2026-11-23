@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { getTerrainHeight, WATER_LEVEL } from './world.js?v=35';
-import { DitheredParticlePool } from './particles.js?v=35';
+import { getTerrainHeight, WATER_LEVEL } from './world.js?v=36';
+import { DitheredParticlePool } from './particles.js?v=36';
 
 const _tmpColor = new THREE.Color();
 const _tmpVel = new THREE.Vector3();
@@ -42,6 +42,9 @@ export class MissileSystem {
 
     this.missileGeo = new THREE.BoxGeometry(0.32, 0.32, 2.3);
     this.missileMat = new THREE.MeshBasicMaterial({ color: 0xfff3a8 });
+
+    this.shipMissileGeo = new THREE.BoxGeometry(0.62, 0.62, 3.8);
+    this.shipMissileMat = new THREE.MeshBasicMaterial({ color: 0xff5a26 });
 
     this.bulletGeo = new THREE.BoxGeometry(0.18, 0.18, 4.8);
     this.bulletMat = new THREE.MeshBasicMaterial({ color: 0xfff59e });
@@ -336,7 +339,7 @@ export class MissileSystem {
       dir.normalize();
     }
     const speed = Math.max(185, (jet.speed || 100) + 70);
-    const mesh = new THREE.Mesh(this.missileGeo, this.missileMat);
+    const mesh = new THREE.Mesh(this.shipMissileGeo, this.shipMissileMat);
     mesh.position.copy(origin);
     mesh.lookAt(origin.clone().add(dir));
     this.scene.add(mesh);

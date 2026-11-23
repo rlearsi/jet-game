@@ -6,7 +6,7 @@ import {
   appendBridgeWindows,
   appendRadarMast,
   buildMergedShipGeometry,
-} from './shared.js?v=35';
+} from './shared.js?v=36';
 
 export const spec = {
   id: 'cargo',
@@ -30,13 +30,13 @@ export function buildGeometry() {
   const target = { positions: [], normals: [], colors: [] };
   const m = new THREE.Matrix4();
 
-  // 1. Deep dark-navy/teal merchant hull with bright oxide-red lower boot-top
+  // 1. Vibrant maritime blue merchant hull with bright oxide-red lower boot-top & gold trim
   appendLoftedNavalHull(target, HULL_STATIONS, {
-    hull: 0x26354a,
-    hullDark: 0x1b2638,
-    waterline: 0xb83d2e,
-    deck: 0x3b4454,
-    deckTrim: 0xd49b35,
+    hull: 0x3b6594,
+    hullDark: 0x2b4d73,
+    waterline: 0xe04832,
+    deck: 0x627087,
+    deckTrim: 0xf2b729,
   });
 
   // 2. Forward raised forecastle windlass deck at the bow
@@ -50,10 +50,23 @@ export function buildGeometry() {
     lenTop: 3.4,
     h: 1.05,
     frontRake: -0.6,
-    color: 0x32435c,
-    sideColor: 0x28364b,
-    topColor: 0x4d586b,
+    color: 0x4d79ab,
+    sideColor: 0x3b6594,
+    topColor: 0x7c8ca6,
   });
+
+  // Deck cargo cranes (bright industrial yellow) between container bays
+  const cranePostGeo = new THREE.BoxGeometry(0.65, 4.6, 0.65);
+  const craneBoomGeo = new THREE.BoxGeometry(0.45, 0.45, 4.4);
+  for (const cz of [3.4, -1.0]) {
+    m.makeTranslation(0, 5.4, cz);
+    appendColoredGeometry(target, cranePostGeo, 0xf2b729, m);
+    m.makeRotationX(-0.38);
+    m.setPosition(0, 8.1, cz + 1.6);
+    appendColoredGeometry(target, craneBoomGeo, 0xffca42, m);
+  }
+  cranePostGeo.dispose();
+  craneBoomGeo.dispose();
 
   // 3. Multi-layered intermodal shipping container bays along the main cargo deck
   const containerBayA = new THREE.BoxGeometry(2.7, 1.35, 3.8);

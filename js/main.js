@@ -9,14 +9,14 @@ import {
   DEFAULT_WORLD_SEED,
   sanitizeSeedString,
   generateRandomSeed,
-} from './world.js?v=35';
-import { FighterJet, RemoteJet, SHIP_CATALOG, SHIP_IDS, buildJetVisualRig } from './jet.js?v=35';
-import { MissileSystem } from './weapons.js?v=35';
-import { FighterCockpit } from './cockpit.js?v=35';
-import { JetSoundEngine } from './audio.js?v=35';
-import { MultiplayerManager } from './multiplayer.js?v=35';
-import { GamepadController, DEFAULT_GAMEPAD_DEADZONE } from './gamepad.js?v=35';
-import { TouchController } from './touch.js?v=35';
+} from './world.js?v=36';
+import { FighterJet, RemoteJet, SHIP_CATALOG, SHIP_IDS, buildJetVisualRig } from './jet.js?v=36';
+import { MissileSystem } from './weapons.js?v=36';
+import { FighterCockpit } from './cockpit.js?v=36';
+import { JetSoundEngine } from './audio.js?v=36';
+import { MultiplayerManager } from './multiplayer.js?v=36';
+import { GamepadController, DEFAULT_GAMEPAD_DEADZONE } from './gamepad.js?v=36';
+import { TouchController } from './touch.js?v=36';
 
 // 6 live-switchable rendering styles (exclusively configurable inside Settings -> Render, plus V in flight)
 const RENDER_PRESETS = {
@@ -561,8 +561,7 @@ const postMat = new THREE.ShaderMaterial({
       }
 
       if (uOutlineEnabled > 0.5) {
-        float stepPx = max(1.0, floor(uResolution.y / 380.0));
-        vec2 oStep = texel * stepPx;
+        vec2 oStep = texel;
         float center = texture2D(tJetMask, vUv).r;
         if (center < 0.5) {
           float nL = texture2D(tJetMask, vUv + vec2(-oStep.x, 0.0)).r;
@@ -570,7 +569,7 @@ const postMat = new THREE.ShaderMaterial({
           float nU = texture2D(tJetMask, vUv + vec2(0.0,  oStep.y)).r;
           float nD = texture2D(tJetMask, vUv + vec2(0.0, -oStep.y)).r;
           if (max(max(nL, nR), max(nU, nD)) > 0.5) {
-            col = vec3(0.10, 0.11, 0.18);
+            col = mix(col, vec3(0.12, 0.14, 0.22), 0.52);
           }
         }
       }

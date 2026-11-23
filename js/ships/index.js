@@ -1,8 +1,8 @@
 import * as THREE from 'three';
-import * as destroyer from './destroyer.js?v=35';
-import * as carrier from './carrier.js?v=35';
-import * as cargo from './cargo.js?v=35';
-import * as battleship from './battleship.js?v=35';
+import * as destroyer from './destroyer.js?v=36';
+import * as carrier from './carrier.js?v=36';
+import * as cargo from './cargo.js?v=36';
+import * as battleship from './battleship.js?v=36';
 
 export const SHIP_STYLES = [
   destroyer,
@@ -16,9 +16,8 @@ export const SHIP_STYLES = [
  * Each ship style has its own sculpted BufferGeometry with per-vertex colors and flat Lambert shading.
  */
 export function createNavalFleetMeshes(scene, maxPerStyle = 24) {
-  const mat = new THREE.MeshLambertMaterial({
+  const mat = new THREE.MeshBasicMaterial({
     vertexColors: true,
-    flatShading: true,
   });
 
   const styleMeshes = SHIP_STYLES.map((styleMod) => {

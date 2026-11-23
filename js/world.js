@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { SHIP_STYLES, createNavalFleetMeshes } from './ships/index.js?v=35';
+import { SHIP_STYLES, createNavalFleetMeshes } from './ships/index.js?v=36';
 
 export const WORLD_SIZE = 2800;
 export const WATER_LEVEL = 0.0;
@@ -2353,11 +2353,33 @@ export function buildWorld(scene) {
   }
   markShipsMatricesDirty();
 
-  // 4g. Rare Sky Balloons carrying Pink-Cross Full-Heal Medkits (3 rare balloons in the sky!)
+  // 4g. Rare Sky Balloons carrying Pink-Cross Full-Heal Medkits (3 vibrant multi-style balloons!)
   const balloons = [];
-  const balRoseMat = new THREE.MeshLambertMaterial({ color: 0xe84b86, flatShading: true });
-  const balCreamMat = new THREE.MeshLambertMaterial({ color: 0xfff2dc, flatShading: true });
-  const balBasketMat = new THREE.MeshLambertMaterial({ color: 0x7a4b36, flatShading: true });
+  const balloonStyles = [
+    {
+      main: 0xff4fa3,   // Rosa vibrante
+      band: 0xffe042,   // Amarelo sol
+      crown: 0xffffff,  // Topo branco
+      basket: 0xd97a36, // Cesto caramelo
+      scale: [1.0, 1.18, 1.0],
+    },
+    {
+      main: 0x24d8e8,   // Turquesa brilhante
+      band: 0xff5544,   // Coral vivo
+      crown: 0xffe042,  // Topo amarelo
+      basket: 0xc87432,
+      scale: [0.95, 1.28, 0.95],
+    },
+    {
+      main: 0x9b4dff,   // Violeta vibrante
+      band: 0x4dff88,   // Verde-lima
+      crown: 0xffc83d,  // Topo dourado
+      basket: 0xe09648,
+      scale: [1.08, 1.12, 1.08],
+    },
+  ];
+  const balBurnerMat = new THREE.MeshBasicMaterial({ color: 0xffc83d });
+  const balRopeMat = new THREE.MeshBasicMaterial({ color: 0xf5e8c8 });
   const balloonSpawnPool = [
     [-68, 78, 85],
     [135, 95, -95],
@@ -2372,13 +2394,31 @@ export function buildWorld(scene) {
   ];
   for (let bi = 0; bi < 3; bi++) {
     const [bx, by, bz] = balloonSpawnPool[bi];
+    const st = balloonStyles[bi % balloonStyles.length];
+    const mainMat = new THREE.MeshBasicMaterial({ color: st.main });
+    const bandMat = new THREE.MeshBasicMaterial({ color: st.band });
+    const crownMat = new THREE.MeshBasicMaterial({ color: st.crown });
+    const basketMat = new THREE.MeshBasicMaterial({ color: st.basket });
+
     const bg = new THREE.Group();
-    const env1 = new THREE.Mesh(new THREE.IcosahedronGeometry(6.8, 1), balRoseMat);
-    env1.scale.set(1.0, 1.18, 1.0);
-    const band = new THREE.Mesh(new THREE.CylinderGeometry(6.9, 6.9, 3.2, 8), balCreamMat);
-    const basket = new THREE.Mesh(new THREE.BoxGeometry(2.8, 2.4, 2.8), balBasketMat);
-    basket.position.y = -10.5;
-    bg.add(env1, band, basket);
+    const env1 = new THREE.Mesh(new THREE.IcosahedronGeometry(6.8, 1), mainMat);
+    env1.scale.set(st.scale[0], st.scale[1], st.scale[2]);
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(6.95 * st.scale[0], 6.95 * st.scale[0], 3.0, 10), bandMat);
+    const crown = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 5.2, 2.2, 10), crownMat);
+    crown.position.y = 6.2 * st.scale[1];
+    const skirt = new THREE.Mesh(new THREE.CylinderGeometry(4.4, 2.2, 2.4, 10), crownMat);
+    skirt.position.y = -6.0 * st.scale[1];
+    const burner = new THREE.Mesh(new THREE.OctahedronGeometry(1.05, 0), balBurnerMat);
+    burner.position.y = -8.2;
+    const basket = new THREE.Mesh(new THREE.BoxGeometry(3.0, 2.5, 3.0), basketMat);
+    basket.position.y = -11.0;
+
+    for (const [rx, rz] of [[-1.2, -1.2], [1.2, -1.2], [-1.2, 1.2], [1.2, 1.2]]) {
+      const rope = new THREE.Mesh(new THREE.BoxGeometry(0.18, 4.2, 0.18), balRopeMat);
+      rope.position.set(rx, -8.5, rz);
+      bg.add(rope);
+    }
+    bg.add(env1, band, crown, skirt, burner, basket);
     bg.position.set(bx, by, bz);
     scene.add(bg);
 
@@ -2390,7 +2430,7 @@ export function buildWorld(scene) {
       z: bz,
       r: 10.5,
       h: 16.0,
-      color: 0xff62a8,
+      color: st.main,
       group: bg,
       baseY: by,
       phase: rand() * Math.PI * 2,

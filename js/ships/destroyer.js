@@ -7,7 +7,7 @@ import {
   appendNavalTurret,
   appendRadarMast,
   buildMergedShipGeometry,
-} from './shared.js?v=35';
+} from './shared.js?v=36';
 
 export const spec = {
   id: 'destroyer',
@@ -32,19 +32,19 @@ export function buildGeometry() {
   const target = { positions: [], normals: [], colors: [] };
   const m = new THREE.Matrix4();
 
-  // 1. Sleek tapered naval destroyer hull with raised forecastle bow & crimson boot-top
+  // 1. Sleek tapered naval destroyer hull with bright naval silver-grey & vivid crimson boot-top
   appendLoftedNavalHull(target, HULL_STATIONS, {
-    hull: 0x5b6a82,
-    hullDark: 0x455268,
-    waterline: 0xa63429,
-    deck: 0x394050,
-    deckTrim: 0x73829c,
+    hull: 0x9eb0c8,
+    hullDark: 0x7a8ca6,
+    waterline: 0xd93b2b,
+    deck: 0x627087,
+    deckTrim: 0xc2d0e2,
   });
 
   // 2. Forward VLS (Vertical Launch System) armored hatch deck plate
-  const vlsGeo = new THREE.BoxGeometry(2.4, 0.35, 2.8);
+  const vlsGeo = new THREE.BoxGeometry(2.5, 0.38, 2.9);
   m.makeTranslation(0, 3.38, 5.2);
-  appendColoredGeometry(target, vlsGeo, 0x8794ab, m);
+  appendColoredGeometry(target, vlsGeo, 0xd4dfed, m);
   vlsGeo.dispose();
 
   // 3. Forward main 127mm dual-purpose naval gun turret on the bow
@@ -52,9 +52,9 @@ export function buildGeometry() {
     x: 0,
     y: 3.42,
     z: 8.6,
-    scale: 1.0,
-    turretColor: 0x7a88a1,
-    barrelColor: 0x293040,
+    scale: 1.08,
+    turretColor: 0xc4d1e2,
+    barrelColor: 0x4b586e,
     facing: 1,
   });
 
@@ -69,12 +69,12 @@ export function buildGeometry() {
     lenTop: 5.8,
     h: 2.1,
     frontRake: 0.9,
-    color: 0x718099,
-    sideColor: 0x5e6c85,
-    topColor: 0x495469,
+    color: 0xb4c2d6,
+    sideColor: 0x9aaac2,
+    topColor: 0x76869e,
   });
 
-  // 5. Upper command bridge cabin + dark wrap-around armored windows
+  // 5. Upper command bridge cabin + glowing wrap-around armored windows
   appendTaperedSuperstructure(target, {
     x: 0,
     y: 5.02,
@@ -85,9 +85,9 @@ export function buildGeometry() {
     lenTop: 3.2,
     h: 1.85,
     frontRake: 0.55,
-    color: 0xd9e1ec,
-    sideColor: 0xbfc9d9,
-    topColor: 0x58657a,
+    color: 0xf4f7fc,
+    sideColor: 0xdce4f0,
+    topColor: 0x8a99b0,
   });
 
   appendBridgeWindows(target, {
@@ -95,22 +95,41 @@ export function buildGeometry() {
     y: 5.75,
     zFront: 2.85,
     w: 3.48,
-    h: 0.56,
+    h: 0.58,
     rake: 0.16,
     depth: 1.5,
-    color: 0x1b2334,
+    color: 0x7ce8ff,
   });
 
-  // 6. Raked twin exhaust smokestacks (amidships-aft) with black soot caps
+  // Side lifeboats (high-visibility orange) & bridge navigation lights
+  const boatGeo = new THREE.BoxGeometry(0.62, 0.55, 2.2);
+  for (const bx of [-2.55, 2.55]) {
+    m.makeTranslation(bx, 3.65, -2.0);
+    appendColoredGeometry(target, boatGeo, 0xff6b2b, m);
+  }
+  boatGeo.dispose();
+
+  const navLightGeo = new THREE.BoxGeometry(0.32, 0.32, 0.32);
+  m.makeTranslation(-2.05, 6.2, 2.1);
+  appendColoredGeometry(target, navLightGeo, 0xff3b30, m);
+  m.makeTranslation(2.05, 6.2, 2.1);
+  appendColoredGeometry(target, navLightGeo, 0x38ff7a, m);
+  navLightGeo.dispose();
+
+  // 6. Raked twin exhaust smokestacks (amidships-aft) with red-band accents
   const stackGeo = new THREE.CylinderGeometry(0.88, 1.15, 2.8, 6);
+  const bandGeo = new THREE.CylinderGeometry(0.98, 1.04, 0.52, 6);
   const capGeo = new THREE.CylinderGeometry(0.92, 0.92, 0.48, 6);
   for (const sz of [-1.4, -4.4]) {
     m.makeTranslation(0, 5.8, sz);
-    appendColoredGeometry(target, stackGeo, 0x697791, m);
+    appendColoredGeometry(target, stackGeo, 0xb8c5d9, m);
+    m.makeTranslation(0, 6.55, sz);
+    appendColoredGeometry(target, bandGeo, 0xd93b2b, m);
     m.makeTranslation(0, 7.25, sz);
-    appendColoredGeometry(target, capGeo, 0x242938, m);
+    appendColoredGeometry(target, capGeo, 0x3b4457, m);
   }
   stackGeo.dispose();
+  bandGeo.dispose();
   capGeo.dispose();
 
   // 7. Aft helicopter hangar & CIWS Phalanx dome + stern helipad markings
