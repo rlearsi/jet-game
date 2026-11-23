@@ -119,17 +119,10 @@ function updateJetPuffPool(puffs, puffPool, dt, abGrow = 3.6, cruiseGrow = 2.4) 
         alpha = Math.max(0, 1.0 - sootT) * (0.65 + p.dmg * 0.3);
       }
     } else {
-      scale = p.initSize * (1.0 + t * (p.ab ? abGrow : cruiseGrow));
-      if (t < 0.25) {
-        TMP_COLOR.copy(COL_YELLOW);
-        alpha = 1.0;
-      } else if (t < 0.55) {
-        TMP_COLOR.copy(COL_ORANGE);
-        alpha = 1.0 - (t - 0.25) * 0.6;
-      } else {
-        TMP_COLOR.copy(COL_SMOKE);
-        alpha = Math.max(0, (1.0 - t) / 0.45) * 0.85;
-      }
+      // Pequeno foguinho amarelo do motor (~1/3 da nave), sem gerar fumaça
+      scale = p.initSize * (1.0 - t * 0.65);
+      TMP_COLOR.copy(COL_YELLOW);
+      alpha = Math.max(0, 1.0 - t * 0.9);
     }
 
     puffPool.push(p.x, p.y, p.z, scale, TMP_COLOR.r, TMP_COLOR.g, TMP_COLOR.b, alpha);
@@ -380,7 +373,7 @@ export class FighterJet {
   }
 
   spawnExhaustPuffs() {
-    pushExhaustPuffsForJet(this, 180, 12, 0.76, 0.48, 0.52, 0.34);
+    pushExhaustPuffsForJet(this, 180, 10, 0.16, 0.10, 0.24, 0.16);
   }
 
   spawnDamageFirePuffs(dmgRatio) {
