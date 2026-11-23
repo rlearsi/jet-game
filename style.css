@@ -704,6 +704,17 @@ body.touch-active #game-canvas {
   background: #ff4534;
 }
 
+.player-stamina-fill {
+  display: block;
+  height: 100%;
+  background: #38d9ff;
+  transition: width 0.08s linear;
+}
+
+.player-stamina-fill.low {
+  background: #ff7a33;
+}
+
 .player-hp-text {
   color: #88ffa8;
   font-weight: 700;

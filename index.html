@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Sunset Striker — Pixel-Art Fighter Jet</title>
-  <link rel="stylesheet" href="style.css?v=32" />
+  <link rel="stylesheet" href="style.css?v=33" />
 </head>
 <body>
   <canvas id="game-canvas"></canvas>
@@ -97,6 +97,11 @@
       <span class="player-hp-label">HP</span>
       <span class="player-hp-bar"><span id="player-hp-fill" class="player-hp-fill" style="width:100%"></span></span>
       <span id="player-hp-text" class="player-hp-text">100/100</span>
+    </span>
+    <span class="sep">&middot;</span>
+    <span id="player-stamina-wrap" class="player-hp-wrap">
+      <span class="player-hp-label">TURBO</span>
+      <span class="player-hp-bar"><span id="player-stamina-fill" class="player-stamina-fill" style="width:100%"></span></span>
     </span>
   </div>
 
@@ -558,6 +563,6 @@
       }
     }
   </script>
-  <script type="module" src="js/main.js?v=32"></script>
+  <script type="module" src="js/main.js?v=33"></script>
 </body>
 </html>

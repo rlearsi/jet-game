@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { getTerrainHeight, WATER_LEVEL } from './world.js?v=32';
-import { SHIP_IDS, SHIP_CATALOG, buildJetVisualRig, buildAirfoilSurface } from './jets/index.js?v=32';
-import { DitheredParticlePool } from './particles.js?v=32';
+import { getTerrainHeight, WATER_LEVEL } from './world.js?v=33';
+import { SHIP_IDS, SHIP_CATALOG, buildJetVisualRig, buildAirfoilSurface } from './jets/index.js?v=33';
+import { DitheredParticlePool } from './particles.js?v=33';
 
 export { SHIP_IDS, SHIP_CATALOG, buildJetVisualRig, buildAirfoilSurface };
 
@@ -267,6 +267,11 @@ export class FighterJet {
 
     this.maxHp = this.stats.maxHp;
     this.hp = this.maxHp;
+    this.stamina = this.maxStamina;
+    this.staminaExhausted = false;
+    this.maxStamina = 100;
+    this.stamina = 100;
+    this.staminaExhausted = false;
     this.alive = true;
     this.respawnTimer = 0;
     this.spawnProtection = 2.0;
@@ -327,6 +332,8 @@ export class FighterJet {
     this.rollExtra = 0;
     this.speed = this.stats.cruiseSpeed;
     this.hp = this.maxHp;
+    this.stamina = this.maxStamina;
+    this.staminaExhausted = false;
     this.alive = true;
     this.respawnTimer = 0;
     this.spawnProtection = 2.0;
@@ -410,17 +417,37 @@ export class FighterJet {
     if (keys.KeyW || keys.ArrowUp) steerY = -0.7 * ySign;
     if (keys.KeyS || keys.ArrowDown) steerY = 0.7 * ySign;
 
-    const sharpTurnDir = input.joySharpTurn
+    const rawSharpTurnDir = input.joySharpTurn
       ? Math.sign(input.joySharpTurn)
       : (input.sharpTurnHeld && Math.abs(steerX) > 0.12 ? Math.sign(steerX) : 0);
     if (input.joySharpTurn) {
-      steerX = sharpTurnDir;
+      steerX = rawSharpTurnDir;
     }
 
     const abKey = input.afterburnerKey || 'ShiftLeft';
-    this.afterburner = Boolean(
-      input.boost || input.joyBoost || input.touchBoost || sharpTurnDir !== 0 || keys[abKey] || (abKey === 'ShiftLeft' && keys.ShiftRight)
+    const wantsBoost = Boolean(
+      input.boost || input.joyBoost || input.touchBoost || keys[abKey] || (abKey === 'ShiftLeft' && keys.ShiftRight)
     );
+    const wantsSharpTurn = rawSharpTurnDir !== 0;
+    const wantsTurbo = wantsBoost || wantsSharpTurn;
+
+    if (this.staminaExhausted && this.stamina >= 18) {
+      this.staminaExhausted = false;
+    }
+    const canUseTurbo = !this.staminaExhausted && this.stamina > 0;
+    this.afterburner = wantsTurbo && canUseTurbo;
+    const sharpTurnDir = (wantsSharpTurn && canUseTurbo) ? rawSharpTurnDir : 0;
+
+    if (this.afterburner) {
+      const drainRate = wantsSharpTurn ? 28 : 18;
+      this.stamina = Math.max(0, this.stamina - drainRate * dt);
+      if (this.stamina <= 0) {
+        this.staminaExhausted = true;
+        this.afterburner = false;
+      }
+    } else {
+      this.stamina = Math.min(this.maxStamina, this.stamina + 16 * dt);
+    }
 
     const targetThrottle = this.afterburner ? 1.0 : 0.64;
     this.throttle = THREE.MathUtils.lerp(this.throttle, targetThrottle, 1 - Math.exp(-5.0 * dt));
@@ -584,6 +611,8 @@ export class RemoteJet {
     this.afterburner = false;
     this.maxHp = SHIP_CATALOG[this.shipId].maxHp;
     this.hp = this.maxHp;
+    this.stamina = this.maxStamina;
+    this.staminaExhausted = false;
     this.alive = true;
     this.muzzleTimer = 0;
     this.hasReceivedState = false;

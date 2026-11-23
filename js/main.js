@@ -9,14 +9,14 @@ import {
   DEFAULT_WORLD_SEED,
   sanitizeSeedString,
   generateRandomSeed,
-} from './world.js?v=32';
-import { FighterJet, RemoteJet, SHIP_CATALOG, SHIP_IDS, buildJetVisualRig } from './jet.js?v=32';
-import { MissileSystem } from './weapons.js?v=32';
-import { FighterCockpit } from './cockpit.js?v=32';
-import { JetSoundEngine } from './audio.js?v=32';
-import { MultiplayerManager } from './multiplayer.js?v=32';
-import { GamepadController, DEFAULT_GAMEPAD_DEADZONE } from './gamepad.js?v=32';
-import { TouchController } from './touch.js?v=32';
+} from './world.js?v=33';
+import { FighterJet, RemoteJet, SHIP_CATALOG, SHIP_IDS, buildJetVisualRig } from './jet.js?v=33';
+import { MissileSystem } from './weapons.js?v=33';
+import { FighterCockpit } from './cockpit.js?v=33';
+import { JetSoundEngine } from './audio.js?v=33';
+import { MultiplayerManager } from './multiplayer.js?v=33';
+import { GamepadController, DEFAULT_GAMEPAD_DEADZONE } from './gamepad.js?v=33';
+import { TouchController } from './touch.js?v=33';
 
 // 6 live-switchable rendering styles (exclusively configurable inside Settings -> Render, plus V in flight)
 const RENDER_PRESETS = {
@@ -186,6 +186,7 @@ const distBadge = document.getElementById('dist-badge');
 const destroyedBadge = document.getElementById('destroyed-badge');
 const playerHpFill = document.getElementById('player-hp-fill');
 const playerHpText = document.getElementById('player-hp-text');
+const playerStaminaFill = document.getElementById('player-stamina-fill');
 
 const mobileControlsEl = document.getElementById('mobile-controls');
 const touchStickZoneEl = document.getElementById('touch-stick-zone');
@@ -2749,6 +2750,19 @@ function updatePlayingHUD(elapsed) {
   if (hpText !== lastHpText) {
     lastHpText = hpText;
     playerHpText.textContent = hpText;
+  }
+  const stamPct = Math.max(0, Math.min(100, (jet.stamina / Math.max(1, jet.maxStamina)) * 100));
+  const stamPctStr = `${stamPct}%`;
+  if (playerStaminaFill) {
+    if (playerStaminaFill._lastWidth !== stamPctStr) {
+      playerStaminaFill._lastWidth = stamPctStr;
+      playerStaminaFill.style.width = stamPctStr;
+    }
+    const stamCls = 'player-stamina-fill' + (jet.staminaExhausted || stamPct <= 25 ? ' low' : '');
+    if (playerStaminaFill._lastCls !== stamCls) {
+      playerStaminaFill._lastCls = stamCls;
+      playerStaminaFill.className = stamCls;
+    }
   }
   const hpColor = hpPct <= 30 ? '#ff5a44' : hpPct <= 60 ? '#ffd066' : '#88ffa8';
   if (hpColor !== lastHpColor) {
