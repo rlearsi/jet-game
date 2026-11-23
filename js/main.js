@@ -3101,7 +3101,7 @@ function animate() {
           if (p.type === 'health') return jet.hp < jet.maxHp;
           if (p.type === 'missile') return weapons.ammo < weapons.maxAmmo;
           return false;
-        });
+        }, dt);
         if (picked) {
           if (picked.type === 'health') {
             jet.hp = jet.maxHp;

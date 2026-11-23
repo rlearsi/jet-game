@@ -2721,10 +2721,10 @@ export function buildWorld(scene) {
     let isSeaSkim = false;
 
     if (type === 'health') {
-      targetY = Math.max(WATER_LEVEL + 10, groundH + 12);
+      targetY = overWater ? WATER_LEVEL + 3.2 : Math.max(WATER_LEVEL + 3.2, groundH + 5.0);
       startY = Math.max(targetY, y);
       falling = startY > targetY + 0.5;
-      fallSpeed = 9.5;
+      fallSpeed = 12.0;
     } else {
       isSeaSkim = overWater;
       targetY = overWater ? WATER_LEVEL + 3.2 : groundH + 4.5;
@@ -2800,15 +2800,33 @@ export function buildWorld(scene) {
     return pickups;
   }
 
-  function collectPickup(jetPos, canCollectFn) {
+  function collectPickup(jetPos, canCollectFn, dt = 0.016) {
+    const MAGNET_RADIUS = 85;
+    const MAGNET_RADIUS_SQ = MAGNET_RADIUS * MAGNET_RADIUS;
     for (let i = pickups.length - 1; i >= 0; i--) {
       const p = pickups[i];
       if (!p.active) continue;
       if (canCollectFn && !canCollectFn(p)) continue;
 
-      const dx = jetPos.x - p.x;
-      const dy = jetPos.y - p.y;
-      const dz = jetPos.z - p.z;
+      let dx = jetPos.x - p.x;
+      let dy = jetPos.y - p.y;
+      let dz = jetPos.z - p.z;
+      const distSq = dx * dx + dy * dy + dz * dz;
+      if (distSq < MAGNET_RADIUS_SQ && distSq > 0.01) {
+        const dist = Math.sqrt(distSq);
+        const pullSpeed = 115 + (1 - dist / MAGNET_RADIUS) * 145;
+        const step = Math.min(dist, pullSpeed * Math.max(0.001, dt));
+        p.x += (dx / dist) * step;
+        p.y += (dy / dist) * step;
+        p.z += (dz / dist) * step;
+        p.baseY = p.y;
+        p.falling = false;
+        p.group.position.set(p.x, p.y, p.z);
+        dx = jetPos.x - p.x;
+        dy = jetPos.y - p.y;
+        dz = jetPos.z - p.z;
+      }
+
       let hit = false;
       if (p.type === 'missile') {
         hit = dx * dx + dz * dz <= 22 * 22 && jetPos.y <= p.y + 12.5 && jetPos.y >= p.y - 8.0;
