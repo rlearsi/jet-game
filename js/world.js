@@ -1414,10 +1414,20 @@ export function buildWorld(scene) {
 
         const t = Math.sqrt(dSq) / effRadius;
         const idx = row + ix;
+        if (effDepth <= 0.001) {
+          const nextScorch = Math.min(1.0, scorchData[idx] + Math.pow(1.0 - t, 0.72) * 0.65);
+          if (nextScorch > scorchData[idx] + 0.005) {
+            scorchData[idx] = nextScorch;
+            changed = true;
+          }
+          continue;
+        }
         const cragVar = 0.84 + 0.32 * hash2(vx * 0.17, vz * 0.23);
         const carve = Math.pow(1.0 - t * t, 1.35) * effDepth * cragVar;
 
-        const newH = Math.max(-34.0, liveHeights[idx] - carve);
+        // Nunca escava terra firme abaixo do nível da água (impede criação de novos lagos)
+        const minFloor = liveHeights[idx] > WATER_LEVEL + 0.6 ? WATER_LEVEL + 0.6 : -34.0;
+        const newH = Math.max(minFloor, liveHeights[idx] - carve);
         if (newH < liveHeights[idx] - 0.01) {
           liveHeights[idx] = newH;
           posAttr.setY(idx, newH);

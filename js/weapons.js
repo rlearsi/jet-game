@@ -608,8 +608,8 @@ export class MissileSystem {
               const hl = Math.hypot(b.vel.x, b.vel.z) || 1;
               const dx = b.vel.x / hl;
               const dz = b.vel.z / hl;
-              if (this.world.deformTerrain(b.pos.x, b.pos.z, 18, 10.5, dx, dz)) {
-                this.netHooks.onDeform?.(b.pos.x, b.pos.z, 18, 10.5, dx, dz);
+              if (this.world.deformTerrain(b.pos.x, b.pos.z, 10, 0, dx, dz)) {
+                this.netHooks.onDeform?.(b.pos.x, b.pos.z, 10, 0, dx, dz);
               }
             }
             this.destroyAt(b.pos, isWater ? 8.5 : 16, time);
