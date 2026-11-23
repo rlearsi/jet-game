@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { getTerrainHeight, WATER_LEVEL } from './world.js?v=34';
-import { SHIP_IDS, SHIP_CATALOG, buildJetVisualRig, buildAirfoilSurface } from './jets/index.js?v=34';
-import { DitheredParticlePool } from './particles.js?v=34';
+import { getTerrainHeight, WATER_LEVEL } from './world.js?v=35';
+import { SHIP_IDS, SHIP_CATALOG, buildJetVisualRig, buildAirfoilSurface } from './jets/index.js?v=35';
+import { DitheredParticlePool } from './particles.js?v=35';
 
 export { SHIP_IDS, SHIP_CATALOG, buildJetVisualRig, buildAirfoilSurface };
 
@@ -452,7 +452,10 @@ export class FighterJet {
     const targetThrottle = this.afterburner ? 1.0 : 0.64;
     this.throttle = THREE.MathUtils.lerp(this.throttle, targetThrottle, 1 - Math.exp(-5.0 * dt));
 
-    const bankLimit = sharpTurnDir !== 0 ? Math.min(1.38, this.stats.bankMax * 1.28) : this.stats.bankMax;
+    // Ângulo de inclinação (bank): 90° (PI/2) na virada súbita com turbo, ~70° no turbo, ~55° na curva normal
+    const bankLimit = sharpTurnDir !== 0
+      ? Math.PI * 0.5
+      : (this.afterburner ? 1.22 : 0.96);
     const bankRate = sharpTurnDir !== 0 ? 11.5 : 6.5;
     const targetBank = -steerX * bankLimit;
     const targetPitch = THREE.MathUtils.clamp(-steerY * 0.68, -0.62, 0.62);
@@ -460,7 +463,8 @@ export class FighterJet {
     this.bank = THREE.MathUtils.lerp(this.bank, targetBank, 1 - Math.exp(-bankRate * dt));
     this.pitch = THREE.MathUtils.lerp(this.pitch, targetPitch, 1 - Math.exp(-5.2 * dt));
 
-    const baseTurnSpeed = this.afterburner ? this.stats.abTurnRate : this.stats.turnRate;
+    // Curva normal sem turbo é 30% menos eficiente (abre mais a curva)
+    const baseTurnSpeed = this.afterburner ? this.stats.abTurnRate : this.stats.turnRate * 0.7;
     const turnSpeed = sharpTurnDir !== 0 ? baseTurnSpeed * 1.75 : baseTurnSpeed;
     this.yaw += Math.sin(this.bank) * turnSpeed * dt;
     if (sharpTurnDir !== 0) {
