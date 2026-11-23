@@ -2317,7 +2317,7 @@ export function buildWorld(scene) {
       alive: true,
       respawnTimer: 0,
       kill() {
-        this.respawnTimer = 38.0;
+        this.respawnTimer = 60.0;
         writeShipInstance(this.idx, this, WATER_LEVEL, false);
         markShipsMatricesDirty();
       },
