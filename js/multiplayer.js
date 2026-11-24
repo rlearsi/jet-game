@@ -1515,7 +1515,7 @@ export class MultiplayerManager {
     }
   }
 
-  sendLocalState(jet) {
+  sendLocalState(jet, shipsDestroyed = 0) {
     if (!this.isActive() || this.peers.size === 0) return;
     let usesRelay = this.transport === 'relay';
     if (!usesRelay) {
@@ -1548,6 +1548,7 @@ export class MultiplayerManager {
       hp: Math.round(jet.hp),
       al: jet.alive ? 1 : 0,
       sh: jet.shipId || this.localShip,
+      sc: shipsDestroyed | 0,
     };
     this.broadcast('state', pkt);
   }

@@ -1708,6 +1708,10 @@ const mp = new MultiplayerManager({
       rj = spawnRemotePilot(peerId, rInfo?.name || 'PILOT', rInfo?.color || '#36d6ff', st.sh || rInfo?.ship || 'striker');
     }
     rj.applyNetworkState(st);
+    if (st.sc !== undefined && rj.shipsDestroyed !== (st.sc | 0)) {
+      rj.shipsDestroyed = st.sc | 0;
+      updateWinsHUD();
+    }
   },
   onSyncSnapshot(deforms, damages) {
     for (const d of deforms) {
@@ -1846,16 +1850,26 @@ function updateWinsHUD() {
   if (!objWinsListEl) return;
   const rows = [];
   const localName = mp.isActive() ? (mp.localName || 'Você') : 'Você';
-  rows.push({ name: localName, wins: objective.wins || 0 });
+  rows.push({
+    name: localName,
+    score: Math.min(objective.goal, objective.shipsDestroyed || 0),
+    wins: objective.wins || 0,
+    isLocal: true,
+  });
   if (mp.isActive() && mp.remoteJets) {
     for (const [pid, rj] of mp.remoteJets.entries()) {
       rows.push({
         name: rj.callsign || `Piloto ${String(pid).slice(0, 4)}`,
+        score: Math.min(objective.goal, rj.shipsDestroyed || 0),
         wins: rj.wins || 0,
+        isLocal: false,
       });
     }
   }
-  const html = rows.map((r) => `<div>${r.name}: <b>${r.wins}</b></div>`).join('');
+  rows.sort((a, b) => (b.score - a.score) || (b.wins - a.wins));
+  const html = rows
+    .map((r) => `<div>${r.isLocal ? '<b>' + r.name + '</b>' : r.name}: <b>${r.score}/${objective.goal}</b> <span style="opacity:0.75">(${r.wins} vit.)</span></div>`)
+    .join('');
   if (objWinsListEl._lastHtml !== html) {
     objWinsListEl._lastHtml = html;
     objWinsListEl.innerHTML = html;
@@ -3260,7 +3274,7 @@ function animate() {
     for (const rj of remoteJets.values()) {
       rj.update(dt, jet.position);
     }
-    mp.sendLocalState(jet);
+    mp.sendLocalState(jet, objective.shipsDestroyed);
     weapons.update(dt, elapsed, jet);
     updateCamera(dt);
     world.update(elapsed, camera.position, dt);
