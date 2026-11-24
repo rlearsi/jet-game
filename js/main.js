@@ -1659,6 +1659,11 @@ const mp = new MultiplayerManager({
     if (inRoom) {
       mpRoomCode.textContent = roomCode;
       if (menuPauseRoomCode) menuPauseRoomCode.textContent = roomCode;
+      if (mpLaunchBtn) {
+        const waitingHost = mp.role === 'guest' && !mp.matchStarted;
+        mpLaunchBtn.disabled = waitingHost;
+        mpLaunchBtn.textContent = waitingHost ? 'AGUARDANDO O HOST INICIAR...' : 'INICIAR PARTIDA (DECOLAR)';
+      }
       if (transport === 'php') {
         mpTransportInfo.textContent = 'WEBRTC P2P · SIGNALING LOCAL PHP';
       } else if (transport === 'relay') {
@@ -1700,6 +1705,9 @@ const mp = new MultiplayerManager({
   },
   onPeerLeft(peerId) {
     removeRemotePilot(peerId);
+  },
+  onMatchStart() {
+    startMultiplayerMatch();
   },
   onRemoteState(peerId, st) {
     let rj = remoteJets.get(peerId);
@@ -2142,6 +2150,14 @@ function startMultiplayerMatch() {
   if (!mp.isActive()) {
     mpMsg.textContent = 'Crie ou entre em uma sala primeiro!';
     return;
+  }
+  if (mp.role === 'guest' && !mp.matchStarted) {
+    mpMsg.textContent = 'Aguardando o Host iniciar a partida...';
+    return;
+  }
+  if (mp.role === 'host') {
+    mp.matchStarted = true;
+    mp.sendEvent({ t: 'start' });
   }
 
   gameMode = 'multiplayer';

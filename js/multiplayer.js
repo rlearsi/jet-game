@@ -1275,6 +1275,7 @@ export class MultiplayerManager {
       hostId: this.localId,
       terrainConfig: this.hostTerrainConfig,
       roster: Array.from(this.roster.values()),
+      started: !!this.matchStarted,
     });
 
     if (this.deformHistory.length || this.damageHistory.length) {
@@ -1382,6 +1383,16 @@ export class MultiplayerManager {
         this.cb.onTerrainConfig?.(this.hostTerrainConfig);
       }
       this.syncRosterFromList(msg.roster || []);
+      if (msg.started) {
+        this.matchStarted = true;
+        this.cb.onMatchStart?.();
+      }
+      return;
+    }
+
+    if (msg.t === 'start' && this.role === 'guest') {
+      this.matchStarted = true;
+      this.cb.onMatchStart?.();
       return;
     }
 
