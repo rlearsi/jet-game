@@ -1778,8 +1778,8 @@ function buildMatchEndScoreboard() {
   const rows = [];
   const localName = mp.isActive() ? (mp.localName || 'VOCÊ') : 'VOCÊ (SOLO)';
   rows.push({ name: localName, ships: objective.shipsDestroyed, total: weapons.destroyed, isLocal: true });
-  if (mp.isActive() && mp.remoteJets) {
-    for (const [pid, rj] of mp.remoteJets.entries()) {
+  if (mp.isActive() && remoteJets) {
+    for (const [pid, rj] of remoteJets.entries()) {
       rows.push({
         name: rj.callsign || `PILOTO ${String(pid).slice(0, 4)}`,
         ships: rj.shipsDestroyed || 0,
@@ -1856,8 +1856,8 @@ function updateWinsHUD() {
     wins: objective.wins || 0,
     isLocal: true,
   });
-  if (mp.isActive() && mp.remoteJets) {
-    for (const [pid, rj] of mp.remoteJets.entries()) {
+  if (mp.isActive() && remoteJets) {
+    for (const [pid, rj] of remoteJets.entries()) {
       rows.push({
         name: rj.callsign || `Piloto ${String(pid).slice(0, 4)}`,
         score: Math.min(objective.goal, rj.shipsDestroyed || 0),
